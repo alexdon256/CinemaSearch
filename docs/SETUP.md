@@ -58,6 +58,11 @@ This command will:
    - Enables and starts MongoDB
    - Enables and starts Nginx
 
+7. **Configure Auto-Start:**
+   - Creates CineStream master startup target
+   - Ensures all services start automatically on system boot
+   - Coordinates startup order (MongoDB → Nginx → Apps)
+
 ### 1.3 Verify Installation
 
 Check that services are running:

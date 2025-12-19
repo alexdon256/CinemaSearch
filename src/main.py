@@ -193,39 +193,73 @@ def api_showtimes():
     
     return jsonify(showtimes)
 
+@app.route('/api/scrape/status/<city_name>')
+def api_scrape_status(city_name):
+    """Check scraping status for a city"""
+    city = db.locations.find_one({'city_name': city_name})
+    if not city:
+        return jsonify({'status': 'not_found', 'message': 'City not scraped yet'})
+    
+    status = city.get('status', 'unknown')
+    last_updated = city.get('last_updated')
+    
+    return jsonify({
+        'status': status,
+        'last_updated': last_updated.isoformat() if last_updated else None,
+        'ready': status == 'fresh'
+    })
+
 @app.route('/api/scrape', methods=['POST'])
 def api_scrape():
     """On-demand scraping endpoint"""
     data = request.get_json() or {}
-    city_name = data.get('city_name')
+    city = data.get('city') or data.get('city_name')  # Support both formats
+    country = data.get('country')
     
-    if not city_name:
-        return jsonify({'error': 'city_name required'}), 400
+    if not city:
+        return jsonify({'error': 'city required'}), 400
     
-    # Check if city exists and is fresh (within last 24 hours)
-    city = db.locations.find_one({'city_name': city_name})
-    if city and city.get('status') == 'fresh':
-        last_updated = city.get('last_updated')
+    # Build location identifier (city, country format)
+    if country:
+        location_id = f"{city}, {country}"
+    elif ', ' in city:
+        # Already in "City, Country" format
+        location_id = city
+    else:
+        location_id = city
+    
+    # Check if location exists and is fresh (within last 24 hours)
+    location = db.locations.find_one({'city_name': location_id})
+    if location and location.get('status') == 'fresh':
+        last_updated = location.get('last_updated')
         if last_updated:
             hours_old = (datetime.utcnow() - last_updated).total_seconds() / 3600
             if hours_old < 24:
-                return jsonify({'status': 'fresh', 'message': 'Data already available'})
+                # Return existing showtimes immediately
+                showtimes = get_showtimes_for_city(location_id)
+                return jsonify({
+                    'status': 'fresh', 
+                    'message': 'Data already available',
+                    'showtimes': showtimes
+                })
     
     # Try to acquire lock
-    if not acquire_lock(db, city_name):
+    if not acquire_lock(db, location_id):
         return jsonify({'status': 'processing', 'message': 'Scraping already in progress'}), 202
     
     try:
         # Spawn AI agent to scrape
         agent = ClaudeAgent()
-        result = agent.scrape_city_showtimes(city_name)
+        result = agent.scrape_city_showtimes(city, country)
         
         if result.get('success'):
-            # Update location status
+            # Update location status with city/country info
             db.locations.update_one(
-                {'city_name': city_name},
+                {'city_name': location_id},
                 {
                     '$set': {
+                        'city': city,
+                        'country': country,
                         'status': 'fresh',
                         'last_updated': datetime.utcnow()
                     }
@@ -234,30 +268,58 @@ def api_scrape():
             )
             
             # Insert showtimes (remove old ones first)
+            showtimes_to_insert = []
             if result.get('showtimes'):
-                # Add city_id to each showtime
+                # Ensure city_id is set correctly
                 for st in result['showtimes']:
-                    st['city_id'] = city_name
-                # Delete old showtimes for this city
-                db.showtimes.delete_many({'city_id': city_name})
+                    st['city_id'] = location_id
+                    showtimes_to_insert.append(st)
+                # Delete old showtimes for this location
+                db.showtimes.delete_many({'city_id': location_id})
                 # Insert new showtimes
-                db.showtimes.insert_many(result['showtimes'])
+                db.showtimes.insert_many(showtimes_to_insert)
             
-            release_lock(db, city_name)
+            release_lock(db, location_id)
+            
+            # Return showtimes immediately so user doesn't need another request
+            formatted_showtimes = get_showtimes_for_city(location_id)
             return jsonify({
                 'status': 'success', 
                 'message': 'Scraping completed',
-                'showtimes_count': len(result.get('showtimes', []))
+                'city': city,
+                'country': country,
+                'showtimes_count': len(formatted_showtimes),
+                'showtimes': formatted_showtimes
             })
         else:
-            release_lock(db, city_name)
+            release_lock(db, location_id)
             return jsonify({'status': 'error', 'message': result.get('error', 'Unknown error')}), 500
             
     except Exception as e:
-        release_lock(db, city_name)
+        release_lock(db, location_id)
         import traceback
         print(f"Scraping error: {traceback.format_exc()}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+def get_showtimes_for_city(city_name):
+    """Helper to get formatted showtimes for a city"""
+    query = {'city_id': city_name}
+    showtimes = list(db.showtimes.find(query).sort('start_time', 1))
+    
+    # Filter out past showtimes
+    now = datetime.utcnow()
+    showtimes = [s for s in showtimes if s.get('start_time') and s['start_time'] > now]
+    
+    # Convert datetime objects to ISO strings for JSON
+    for st in showtimes:
+        if isinstance(st.get('start_time'), datetime):
+            st['start_time'] = st['start_time'].isoformat()
+        if isinstance(st.get('created_at'), datetime):
+            st['created_at'] = st['created_at'].isoformat()
+        if '_id' in st:
+            st['_id'] = str(st['_id'])
+    
+    return showtimes
 
 @app.route('/set-language/<lang>')
 def set_lang(lang):

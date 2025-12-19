@@ -179,6 +179,26 @@ sudo ./deploy.sh stop-all
 
 Stops all services gracefully.
 
+### Enable Auto-Start on Boot
+
+```bash
+sudo ./deploy.sh enable-autostart
+```
+
+Ensures all services (MongoDB, Nginx, and all apps) start automatically when the server boots. This is also done automatically during `init-server` and `add-site`.
+
+### Check System Status
+
+```bash
+sudo ./deploy.sh status
+```
+
+Shows the status of all services including:
+- Core services (MongoDB, Nginx)
+- Auto-start status
+- Application processes running/total
+- Daily refresh timer status
+
 ### Individual Service Management
 
 You can also manage individual services:

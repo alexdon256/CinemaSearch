@@ -216,6 +216,78 @@
             transform: scale(1.02);
         }
         
+        .city-input-group {
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        .city-input-group input {
+            flex: 1;
+        }
+        
+        .search-btn {
+            padding: 0.75rem 1.5rem;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            width: 100%;
+        }
+        
+        .search-btn:hover {
+            background: var(--accent-hover);
+            transform: translateY(-2px);
+        }
+        
+        .location-input-group {
+            position: relative;
+        }
+        
+        .location-input-group input {
+            width: 100%;
+        }
+        
+        .suggestions-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--charcoal);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-top: none;
+            border-radius: 0 0 5px 5px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+        }
+        
+        .suggestions-dropdown.show {
+            display: block;
+        }
+        
+        .suggestion-item {
+            padding: 0.75rem;
+            cursor: pointer;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            transition: background 0.2s;
+        }
+        
+        .suggestion-item:hover {
+            background: var(--accent);
+        }
+        
+        .suggestion-item:last-child {
+            border-bottom: none;
+        }
+        
+        .suggestion-item small {
+            opacity: 0.7;
+        }
+        
         /* Footer */
         footer {
             background: rgba(26, 31, 58, 0.95);
@@ -280,21 +352,24 @@
         </div>
         
         <div class="filters">
-            <div class="filter-group">
+            <div class="filter-group" style="grid-column: span 2;">
                 <label>{{ translations.select_city }}</label>
-                <select id="city-select">
-                    <option value="">-- {{ translations.select_city }} --</option>
-                    {% for location in locations %}
-                    <option value="{{ location.city_name }}">{{ location.city_name.en or location.city_name }}</option>
-                    {% endfor %}
+                <div class="location-input-group">
+                    <input type="text" id="city-input" placeholder="Enter city name..." autocomplete="off">
+                    <div id="city-suggestions" class="suggestions-dropdown"></div>
+                </div>
+            </div>
+            
+            <div class="filter-group">
+                <label>Country</label>
+                <select id="country-select">
+                    <option value="">All Countries</option>
                 </select>
             </div>
             
             <div class="filter-group">
-                <label>{{ translations.filter_by_genre }}</label>
-                <select id="genre-filter">
-                    <option value="">All Genres</option>
-                </select>
+                <label>&nbsp;</label>
+                <button id="search-btn" class="search-btn">🔍 Search Showtimes</button>
             </div>
             
             <div class="filter-group">
@@ -304,6 +379,8 @@
                     <option value="2D">2D</option>
                     <option value="3D">3D</option>
                     <option value="IMAX">IMAX</option>
+                    <option value="4DX">4DX</option>
+                    <option value="Dolby Atmos">Dolby Atmos</option>
                 </select>
             </div>
             
@@ -314,6 +391,7 @@
                     <option value="Ukrainian">Ukrainian</option>
                     <option value="English">English</option>
                     <option value="Russian">Russian</option>
+                    <option value="Original">Original</option>
                 </select>
             </div>
         </div>
@@ -333,49 +411,275 @@
     </footer>
     
     <script>
-        const citySelect = document.getElementById('city-select');
-        const genreFilter = document.getElementById('genre-filter');
+        const cityInput = document.getElementById('city-input');
+        const countrySelect = document.getElementById('country-select');
+        const citySuggestions = document.getElementById('city-suggestions');
+        const searchBtn = document.getElementById('search-btn');
         const formatFilter = document.getElementById('format-filter');
         const languageFilter = document.getElementById('language-filter');
         const container = document.getElementById('showtimes-container');
         
         let currentCity = null;
+        let currentCountry = null;
         let showtimes = [];
+        let pollingInterval = null;
+        let autocompleteTimeout = null;
         
-        citySelect.addEventListener('change', async (e) => {
-            const cityName = e.target.value;
-            if (!cityName) {
-                container.innerHTML = '<div class="empty-state"><p>{{ translations.select_city }}</p></div>';
+        // Comprehensive country list (ISO 3166-1)
+        const countries = [
+            "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Argentina", "Armenia", 
+            "Australia", "Austria", "Azerbaijan", "Bahamas", "Bahrain", "Bangladesh", "Barbados", 
+            "Belarus", "Belgium", "Belize", "Benin", "Bhutan", "Bolivia", "Bosnia and Herzegovina", 
+            "Botswana", "Brazil", "Brunei", "Bulgaria", "Burkina Faso", "Burundi", "Cambodia", 
+            "Cameroon", "Canada", "Cape Verde", "Central African Republic", "Chad", "Chile", 
+            "China", "Colombia", "Comoros", "Congo", "Costa Rica", "Croatia", "Cuba", "Cyprus", 
+            "Czech Republic", "Denmark", "Djibouti", "Dominican Republic", "Ecuador", "Egypt", 
+            "El Salvador", "Equatorial Guinea", "Eritrea", "Estonia", "Eswatini", "Ethiopia", 
+            "Fiji", "Finland", "France", "Gabon", "Gambia", "Georgia", "Germany", "Ghana", 
+            "Greece", "Grenada", "Guatemala", "Guinea", "Guinea-Bissau", "Guyana", "Haiti", 
+            "Honduras", "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland", 
+            "Israel", "Italy", "Ivory Coast", "Jamaica", "Japan", "Jordan", "Kazakhstan", "Kenya", 
+            "Kiribati", "Kuwait", "Kyrgyzstan", "Laos", "Latvia", "Lebanon", "Lesotho", "Liberia", 
+            "Libya", "Liechtenstein", "Lithuania", "Luxembourg", "Madagascar", "Malawi", "Malaysia", 
+            "Maldives", "Mali", "Malta", "Mauritania", "Mauritius", "Mexico", "Moldova", "Monaco", 
+            "Mongolia", "Montenegro", "Morocco", "Mozambique", "Myanmar", "Namibia", "Nauru", 
+            "Nepal", "Netherlands", "New Zealand", "Nicaragua", "Niger", "Nigeria", "North Korea", 
+            "North Macedonia", "Norway", "Oman", "Pakistan", "Palau", "Palestine", "Panama", 
+            "Papua New Guinea", "Paraguay", "Peru", "Philippines", "Poland", "Portugal", "Qatar", 
+            "Romania", "Russia", "Rwanda", "Saint Lucia", "Samoa", "San Marino", "Saudi Arabia", 
+            "Senegal", "Serbia", "Seychelles", "Sierra Leone", "Singapore", "Slovakia", "Slovenia", 
+            "Solomon Islands", "Somalia", "South Africa", "South Korea", "South Sudan", "Spain", 
+            "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland", "Syria", "Taiwan", 
+            "Tajikistan", "Tanzania", "Thailand", "Timor-Leste", "Togo", "Tonga", "Trinidad and Tobago", 
+            "Tunisia", "Turkey", "Turkmenistan", "Tuvalu", "Uganda", "Ukraine", "United Arab Emirates", 
+            "United Kingdom", "United States", "Uruguay", "Uzbekistan", "Vanuatu", "Vatican City", 
+            "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe"
+        ];
+        
+        // Populate country dropdown
+        countries.forEach(country => {
+            const option = document.createElement('option');
+            option.value = country;
+            option.textContent = country;
+            countrySelect.appendChild(option);
+        });
+        
+        // City autocomplete using OpenStreetMap Nominatim (free API)
+        cityInput.addEventListener('input', (e) => {
+            const query = e.target.value.trim();
+            
+            // Clear previous timeout
+            if (autocompleteTimeout) {
+                clearTimeout(autocompleteTimeout);
+            }
+            
+            if (query.length < 2) {
+                citySuggestions.classList.remove('show');
                 return;
             }
+            
+            // Debounce API calls (500ms delay)
+            autocompleteTimeout = setTimeout(() => fetchCitySuggestions(query), 500);
+        });
+        
+        async function fetchCitySuggestions(query) {
+            try {
+                const countryCode = getCountryCode(countrySelect.value);
+                let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&featuretype=city`;
+                
+                if (countryCode) {
+                    url += `&countrycodes=${countryCode}`;
+                }
+                
+                const response = await fetch(url, {
+                    headers: { 'Accept-Language': '{{ lang }}' }
+                });
+                
+                const results = await response.json();
+                displayCitySuggestions(results);
+            } catch (e) {
+                console.error('Autocomplete error:', e);
+                citySuggestions.classList.remove('show');
+            }
+        }
+        
+        function displayCitySuggestions(results) {
+            if (results.length === 0) {
+                citySuggestions.classList.remove('show');
+                return;
+            }
+            
+            citySuggestions.innerHTML = '';
+            results.forEach(result => {
+                const div = document.createElement('div');
+                div.className = 'suggestion-item';
+                
+                // Extract city and country from display_name
+                const parts = result.display_name.split(', ');
+                const cityName = parts[0];
+                const countryName = parts[parts.length - 1];
+                
+                div.innerHTML = `${cityName} <small>(${countryName})</small>`;
+                div.addEventListener('click', () => {
+                    cityInput.value = cityName;
+                    
+                    // Try to match and select the country
+                    const matchedCountry = countries.find(c => 
+                        c.toLowerCase() === countryName.toLowerCase() ||
+                        countryName.toLowerCase().includes(c.toLowerCase())
+                    );
+                    if (matchedCountry) {
+                        countrySelect.value = matchedCountry;
+                    }
+                    
+                    citySuggestions.classList.remove('show');
+                });
+                
+                citySuggestions.appendChild(div);
+            });
+            
+            citySuggestions.classList.add('show');
+        }
+        
+        // ISO 3166-1 alpha-2 country codes for Nominatim
+        function getCountryCode(countryName) {
+            const codes = {
+                "Afghanistan": "af", "Albania": "al", "Algeria": "dz", "Argentina": "ar",
+                "Armenia": "am", "Australia": "au", "Austria": "at", "Azerbaijan": "az",
+                "Bangladesh": "bd", "Belarus": "by", "Belgium": "be", "Bolivia": "bo",
+                "Bosnia and Herzegovina": "ba", "Brazil": "br", "Bulgaria": "bg", "Cambodia": "kh",
+                "Canada": "ca", "Chile": "cl", "China": "cn", "Colombia": "co", "Croatia": "hr",
+                "Cuba": "cu", "Cyprus": "cy", "Czech Republic": "cz", "Denmark": "dk",
+                "Dominican Republic": "do", "Ecuador": "ec", "Egypt": "eg", "Estonia": "ee",
+                "Ethiopia": "et", "Finland": "fi", "France": "fr", "Georgia": "ge", "Germany": "de",
+                "Ghana": "gh", "Greece": "gr", "Guatemala": "gt", "Hungary": "hu", "Iceland": "is",
+                "India": "in", "Indonesia": "id", "Iran": "ir", "Iraq": "iq", "Ireland": "ie",
+                "Israel": "il", "Italy": "it", "Jamaica": "jm", "Japan": "jp", "Jordan": "jo",
+                "Kazakhstan": "kz", "Kenya": "ke", "Kuwait": "kw", "Kyrgyzstan": "kg", "Latvia": "lv",
+                "Lebanon": "lb", "Libya": "ly", "Lithuania": "lt", "Luxembourg": "lu",
+                "Malaysia": "my", "Mexico": "mx", "Moldova": "md", "Mongolia": "mn", "Montenegro": "me",
+                "Morocco": "ma", "Myanmar": "mm", "Nepal": "np", "Netherlands": "nl",
+                "New Zealand": "nz", "Nigeria": "ng", "North Macedonia": "mk", "Norway": "no",
+                "Pakistan": "pk", "Palestine": "ps", "Panama": "pa", "Paraguay": "py", "Peru": "pe",
+                "Philippines": "ph", "Poland": "pl", "Portugal": "pt", "Qatar": "qa", "Romania": "ro",
+                "Russia": "ru", "Saudi Arabia": "sa", "Senegal": "sn", "Serbia": "rs",
+                "Singapore": "sg", "Slovakia": "sk", "Slovenia": "si", "South Africa": "za",
+                "South Korea": "kr", "Spain": "es", "Sri Lanka": "lk", "Sudan": "sd", "Sweden": "se",
+                "Switzerland": "ch", "Syria": "sy", "Taiwan": "tw", "Tajikistan": "tj",
+                "Tanzania": "tz", "Thailand": "th", "Tunisia": "tn", "Turkey": "tr",
+                "Turkmenistan": "tm", "Uganda": "ug", "Ukraine": "ua", "United Arab Emirates": "ae",
+                "United Kingdom": "gb", "United States": "us", "Uruguay": "uy", "Uzbekistan": "uz",
+                "Venezuela": "ve", "Vietnam": "vn", "Yemen": "ye", "Zambia": "zm", "Zimbabwe": "zw"
+            };
+            return codes[countryName] || '';
+        }
+        
+        // Hide suggestions when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!cityInput.contains(e.target) && !citySuggestions.contains(e.target)) {
+                citySuggestions.classList.remove('show');
+            }
+        });
+        
+        // Search button click handler
+        searchBtn.addEventListener('click', async () => {
+            const city = cityInput.value.trim();
+            const country = countrySelect.value;
+            
+            // Hide suggestions
+            citySuggestions.classList.remove('show');
+            
+            // Clear any existing polling
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
+            
+            if (!city) {
+                container.innerHTML = '<div class="empty-state"><p>Please enter a city name</p></div>';
+                return;
+            }
+            
+            currentCity = city;
+            currentCountry = country;
             
             container.innerHTML = '<div class="loading">{{ translations.loading }}</div>';
             
             // Trigger scraping if needed
+            await fetchShowtimes(city, country);
+        });
+        
+        // Also trigger search on Enter key in city input
+        cityInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                citySuggestions.classList.remove('show');
+                searchBtn.click();
+            }
+        });
+        
+        async function fetchShowtimes(city, country) {
             try {
                 const scrapeResponse = await fetch('/api/scrape', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({city_name: cityName})
+                    body: JSON.stringify({city: city, country: country})
                 });
                 
+                const data = await scrapeResponse.json();
+                
                 if (scrapeResponse.status === 202) {
-                    // Still processing, poll again
-                    setTimeout(() => citySelect.dispatchEvent(new Event('change')), 5000);
+                    // Scraping in progress by another request - start polling
+                    const locationId = country ? `${city}, ${country}` : city;
+                    container.innerHTML = '<div class="loading">🎬 {{ translations.loading }} (scraping in progress...)</div>';
+                    startPolling(locationId);
                     return;
+                }
+                
+                // Check if response contains showtimes directly
+                if (data.showtimes && Array.isArray(data.showtimes)) {
+                    // Use showtimes from response immediately!
+                    showtimes = applyFilters(data.showtimes);
+                    renderShowtimes();
+                } else if (data.status === 'success' || data.status === 'fresh') {
+                    // Fallback: fetch showtimes separately (shouldn't happen with new API)
+                    const locationId = country ? `${city}, ${country}` : city;
+                    await loadShowtimes(locationId);
+                } else if (data.status === 'error') {
+                    container.innerHTML = `<div class="empty-state"><p>Error: ${data.message}</p></div>`;
                 }
             } catch (e) {
                 console.error('Scrape error:', e);
+                container.innerHTML = '<div class="empty-state"><p>Error connecting to server</p></div>';
             }
-            
-            // Load showtimes
-            loadShowtimes(cityName);
-        });
+        }
         
-        async function loadShowtimes(cityName) {
-            currentCity = cityName;
-            const params = new URLSearchParams({city_name: cityName});
-            if (genreFilter.value) params.append('genre', genreFilter.value);
+        function startPolling(locationId) {
+            // Poll every 2 seconds for status updates
+            pollingInterval = setInterval(async () => {
+                try {
+                    const statusResponse = await fetch(`/api/scrape/status/${encodeURIComponent(locationId)}`);
+                    const statusData = await statusResponse.json();
+                    
+                    if (statusData.ready || statusData.status === 'fresh') {
+                        // Data is ready! Stop polling and load showtimes
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
+                        await loadShowtimes(locationId);
+                    } else if (statusData.status === 'stale' || statusData.status === 'error') {
+                        // Scraping failed, stop polling
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
+                        container.innerHTML = '<div class="empty-state"><p>{{ translations.no_showtimes }}</p></div>';
+                    }
+                    // Otherwise keep polling (status is 'processing')
+                } catch (e) {
+                    console.error('Polling error:', e);
+                }
+            }, 2000); // Poll every 2 seconds
+        }
+        
+        async function loadShowtimes(locationId) {
+            const params = new URLSearchParams({city_name: locationId});
             if (formatFilter.value) params.append('format', formatFilter.value);
             if (languageFilter.value) params.append('language', languageFilter.value);
             
@@ -387,6 +691,26 @@
                 console.error('Error loading showtimes:', e);
                 container.innerHTML = '<div class="empty-state"><p>Error loading showtimes</p></div>';
             }
+        }
+        
+        function applyFilters(data) {
+            let filtered = [...data];
+            
+            if (genreFilter.value) {
+                filtered = filtered.filter(s => 
+                    (s.movie?.genre || '').toLowerCase().includes(genreFilter.value.toLowerCase())
+                );
+            }
+            if (formatFilter.value) {
+                filtered = filtered.filter(s => s.format === formatFilter.value);
+            }
+            if (languageFilter.value) {
+                filtered = filtered.filter(s => 
+                    (s.language || '').toLowerCase().includes(languageFilter.value.toLowerCase())
+                );
+            }
+            
+            return filtered;
         }
         
         function renderShowtimes() {
@@ -402,14 +726,18 @@
                 const card = document.createElement('div');
                 card.className = 'showtime-card';
                 
-                const movieTitle = st.movie?.en || st.movie?.ua || st.movie?.ru || 'Unknown Movie';
+                const movieTitle = st.movie?.en || st.movie?.local || st.movie?.ua || st.movie?.ru || 'Unknown Movie';
                 const startTime = new Date(st.start_time).toLocaleString('{{ lang }}');
+                const cinemaInfo = st.cinema_address 
+                    ? `${st.cinema_name || st.cinema_id}<br><small>${st.cinema_address}</small>`
+                    : (st.cinema_name || st.cinema_id);
+                const hallInfo = st.hall ? ` | ${st.hall}` : '';
                 
                 card.innerHTML = `
                     <h3>${movieTitle}</h3>
                     <div class="time">${startTime}</div>
-                    <div class="cinema">${st.cinema_name || st.cinema_id}</div>
-                    <div>${st.format || '2D'} | ${st.language || ''} | ${st.price || ''}</div>
+                    <div class="cinema">${cinemaInfo}</div>
+                    <div>${st.format || '2D'} | ${st.language || ''}${hallInfo} | ${st.price || ''}</div>
                     <a href="${st.buy_link || '#'}" target="_blank" class="buy-btn">{{ translations.buy_tickets }}</a>
                 `;
                 
@@ -418,10 +746,18 @@
         }
         
         // Filter event listeners
-        [genreFilter, formatFilter, languageFilter].forEach(filter => {
+        [formatFilter, languageFilter].forEach(filter => {
             filter.addEventListener('change', () => {
-                if (currentCity) loadShowtimes(currentCity);
+                if (currentCity) {
+                    const locationId = currentCountry ? `${currentCity}, ${currentCountry}` : currentCity;
+                    loadShowtimes(locationId);
+                }
             });
+        });
+        
+        // Cleanup polling on page unload
+        window.addEventListener('beforeunload', () => {
+            if (pollingInterval) clearInterval(pollingInterval);
         });
     </script>
 </body>

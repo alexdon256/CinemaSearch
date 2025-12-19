@@ -89,9 +89,53 @@ init_server() {
     systemctl enable nginx.service
     systemctl start nginx.service
     
+    # Create CineStream master target for coordinated startup
+    create_master_target
+    
     log_success "Server initialization complete!"
     log_info "MongoDB is running on 127.0.0.1:27017"
     log_info "Nginx is configured and running"
+    log_info "All services configured to auto-start on boot"
+}
+
+# Create master systemd target for coordinated startup
+create_master_target() {
+    log_info "Creating CineStream master startup target..."
+    
+    # Create a target that groups all CineStream services
+    cat > "$SYSTEMD_DIR/cinestream.target" <<EOF
+[Unit]
+Description=CineStream Application Stack
+After=network.target mongodb.service nginx.service
+Wants=mongodb.service nginx.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Create a startup service that ensures everything is running
+    cat > "$SYSTEMD_DIR/cinestream-startup.service" <<EOF
+[Unit]
+Description=CineStream Startup Service
+After=network-online.target mongodb.service nginx.service
+Wants=network-online.target mongodb.service nginx.service
+PartOf=cinestream.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c 'sleep 5 && for conf in /var/www/*/.deploy_config; do [ -f "\$conf" ] && source "\$conf" && for i in \$(seq 0 \$((PROCESS_COUNT-1))); do systemctl start "\${APP_NAME}@\$((START_PORT+i)).service" 2>/dev/null || true; done; done'
+ExecStop=/bin/true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable cinestream.target
+    systemctl enable cinestream-startup.service
+    
+    log_success "Master startup target created and enabled"
 }
 
 # Install MongoDB manually
@@ -225,6 +269,10 @@ add_site() {
 MONGO_URI=$MONGO_URI
 ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 SECRET_KEY=$SECRET_KEY
+
+# Claude model selection (optional)
+# Options: haiku (default, cheapest), sonnet (more capable)
+CLAUDE_MODEL=haiku
 EOF
     chmod 600 "$APP_DIR/.env"
     
@@ -275,10 +323,16 @@ EOF
     # Setup daily cron job
     setup_daily_cron "$APP_NAME" "$APP_DIR"
     
+    # Ensure master startup target exists
+    if [[ ! -f "$SYSTEMD_DIR/cinestream.target" ]]; then
+        create_master_target
+    fi
+    
     log_success "Site $APP_NAME deployed successfully!"
     log_info "Domain: $DOMAIN_NAME"
     log_info "Processes: $PROCESS_COUNT (ports $START_PORT-$((START_PORT + PROCESS_COUNT - 1)))"
     log_info "App directory: $APP_DIR"
+    log_info "Auto-start: ENABLED (services will start on system boot)"
 }
 
 # Generate systemd service files for each process
@@ -685,6 +739,12 @@ main() {
         start-all)
             start_all
             ;;
+        enable-autostart)
+            enable_autostart
+            ;;
+        status)
+            show_status
+            ;;
         *)
             echo "CineStream Master Deployment Script v21.0"
             echo ""
@@ -697,9 +757,105 @@ main() {
             echo "  remove-site <app>              Remove a site"
             echo "  start-all                      Start all services"
             echo "  stop-all                       Stop all services"
+            echo "  enable-autostart               Enable all services to start on boot"
+            echo "  status                         Show status of all services"
             exit 1
             ;;
     esac
+}
+
+# Enable all services to auto-start on boot
+enable_autostart() {
+    log_info "Enabling all services for auto-start on boot..."
+    
+    # Enable core services
+    systemctl enable mongodb.service 2>/dev/null || true
+    systemctl enable nginx.service 2>/dev/null || true
+    
+    # Create master target if it doesn't exist
+    if [[ ! -f "$SYSTEMD_DIR/cinestream.target" ]]; then
+        create_master_target
+    fi
+    
+    # Enable all app services
+    for app_dir in "$WWW_ROOT"/*; do
+        if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
+            source "$app_dir/.deploy_config"
+            APP_NAME=$(basename "$app_dir")
+            
+            log_info "Enabling $APP_NAME services..."
+            
+            for ((i=0; i<PROCESS_COUNT; i++)); do
+                local port=$((START_PORT + i))
+                systemctl enable "${APP_NAME}@${port}.service" 2>/dev/null || true
+            done
+            
+            # Enable daily refresh timer
+            systemctl enable "${APP_NAME}-refresh.timer" 2>/dev/null || true
+        fi
+    done
+    
+    # Enable master target
+    systemctl enable cinestream.target 2>/dev/null || true
+    systemctl enable cinestream-startup.service 2>/dev/null || true
+    
+    systemctl daemon-reload
+    
+    log_success "All services enabled for auto-start on boot!"
+    log_info "Run 'sudo systemctl status cinestream.target' to verify"
+}
+
+# Show status of all services
+show_status() {
+    echo "=== CineStream System Status ==="
+    echo ""
+    
+    echo "--- Core Services ---"
+    echo -n "MongoDB:     "
+    systemctl is-active mongodb.service 2>/dev/null || echo "not installed"
+    echo -n "Nginx:       "
+    systemctl is-active nginx.service 2>/dev/null || echo "not installed"
+    echo ""
+    
+    echo "--- Auto-Start Status ---"
+    echo -n "MongoDB enabled:     "
+    systemctl is-enabled mongodb.service 2>/dev/null || echo "no"
+    echo -n "Nginx enabled:       "
+    systemctl is-enabled nginx.service 2>/dev/null || echo "no"
+    echo -n "CineStream target:   "
+    systemctl is-enabled cinestream.target 2>/dev/null || echo "no"
+    echo ""
+    
+    echo "--- Application Services ---"
+    for app_dir in "$WWW_ROOT"/*; do
+        if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
+            source "$app_dir/.deploy_config"
+            APP_NAME=$(basename "$app_dir")
+            
+            echo "[$APP_NAME] Domain: $DOMAIN_NAME"
+            
+            local running=0
+            local total=$PROCESS_COUNT
+            for ((i=0; i<PROCESS_COUNT; i++)); do
+                local port=$((START_PORT + i))
+                if systemctl is-active --quiet "${APP_NAME}@${port}.service" 2>/dev/null; then
+                    ((running++))
+                fi
+            done
+            
+            echo "  Processes: $running/$total running (ports $START_PORT-$((START_PORT + PROCESS_COUNT - 1)))"
+            echo -n "  Auto-start: "
+            systemctl is-enabled "${APP_NAME}@${START_PORT}.service" 2>/dev/null || echo "no"
+            echo -n "  Daily refresh: "
+            systemctl is-active "${APP_NAME}-refresh.timer" 2>/dev/null || echo "inactive"
+            echo ""
+        fi
+    done
+    
+    if [[ ! -d "$WWW_ROOT" ]] || [[ -z "$(ls -A $WWW_ROOT 2>/dev/null)" ]]; then
+        echo "  No applications deployed yet."
+        echo ""
+    fi
 }
 
 main "$@"

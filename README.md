@@ -144,6 +144,16 @@ sudo ./deploy.sh start-all
 sudo ./deploy.sh stop-all
 ```
 
+### Enable Auto-Start on Boot
+```bash
+sudo ./deploy.sh enable-autostart
+```
+
+### Check System Status
+```bash
+sudo ./deploy.sh status
+```
+
 ## Requirements
 
 ### Server Requirements
@@ -170,9 +180,20 @@ Each application requires a `.env` file with:
 MONGO_URI=mongodb://user:pass@127.0.0.1:27017/movie_db?authSource=admin
 ANTHROPIC_API_KEY=sk-ant-api03-...
 SECRET_KEY=your-secret-key-here
+
+# Optional: Claude model selection
+# Options: haiku (default, cheapest/fastest), sonnet (more capable)
+CLAUDE_MODEL=haiku
 ```
 
 These are configured interactively during `add-site`.
+
+### Model Comparison
+
+| Model | Cost | Speed | Best For |
+|-------|------|-------|----------|
+| `haiku` (default) | $0.25/$1.25 per 1M tokens | Fastest | Structured tasks, JSON extraction |
+| `sonnet` | $3/$15 per 1M tokens | Balanced | Complex reasoning if needed |
 
 ## Database Schema
 
