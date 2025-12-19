@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ translations.title }}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            --midnight-blue: #1a1f3a;
+            --charcoal: #2c3e50;
+            --slate: #34495e;
+            --accent: #3498db;
+            --accent-hover: #2980b9;
+            --text-light: #ecf0f1;
+            --text-dark: #2c3e50;
+            --success: #27ae60;
+            --warning: #f39c12;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, var(--midnight-blue) 0%, var(--charcoal) 100%);
+            color: var(--text-light);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        
+        /* Header */
+        header {
+            background: rgba(26, 31, 58, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 1rem 0;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+        
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--accent);
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .donate-btn {
+            background: var(--success);
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 5px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            display: inline-block;
+        }
+        
+        .donate-btn:hover {
+            background: #229954;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(39, 174, 96, 0.4);
+        }
+        
+        .lang-selector {
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        .lang-btn {
+            padding: 0.5rem 1rem;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: var(--text-light);
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.3s ease;
+        }
+        
+        .lang-btn:hover, .lang-btn.active {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        
+        /* Main Content */
+        main {
+            padding: 2rem 0;
+        }
+        
+        .hero {
+            text-align: center;
+            padding: 3rem 0;
+        }
+        
+        .hero h1 {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--accent), #9b59b6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .filters {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            padding: 1.5rem;
+            border-radius: 10px;
+            margin: 2rem 0;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+        
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .filter-group label {
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: var(--accent);
+        }
+        
+        .filter-group select,
+        .filter-group input {
+            padding: 0.75rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-light);
+            border-radius: 5px;
+            font-size: 1rem;
+        }
+        
+        .showtimes-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+        
+        .showtime-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            padding: 1.5rem;
+            transition: all 0.3s ease;
+        }
+        
+        .showtime-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            border-color: var(--accent);
+        }
+        
+        .showtime-card h3 {
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+        
+        .showtime-card .time {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin: 0.5rem 0;
+        }
+        
+        .showtime-card .cinema {
+            color: var(--text-light);
+            opacity: 0.8;
+            margin-bottom: 1rem;
+        }
+        
+        .buy-btn {
+            display: inline-block;
+            width: 100%;
+            padding: 0.75rem;
+            background: var(--accent);
+            color: white;
+            text-align: center;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            margin-top: 1rem;
+        }
+        
+        .buy-btn:hover {
+            background: var(--accent-hover);
+            transform: scale(1.02);
+        }
+        
+        /* Footer */
+        footer {
+            background: rgba(26, 31, 58, 0.95);
+            padding: 2rem 0;
+            margin-top: 4rem;
+            text-align: center;
+        }
+        
+        .visitor-counter {
+            font-size: 1.2rem;
+            color: var(--accent);
+            font-weight: bold;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            font-size: 1.5rem;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+        
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2rem;
+            }
+            
+            nav {
+                flex-direction: column;
+                gap: 1rem;
+            }
+            
+            .filters {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <nav class="container">
+            <div class="logo">CineStream</div>
+            <div class="nav-links">
+                <div class="lang-selector">
+                    <a href="/set-language/en" class="lang-btn {{ 'active' if lang == 'en' else '' }}">EN</a>
+                    <a href="/set-language/ua" class="lang-btn {{ 'active' if lang == 'ua' else '' }}">UA</a>
+                    <a href="/set-language/ru" class="lang-btn {{ 'active' if lang == 'ru' else '' }}">RU</a>
+                </div>
+                <a href="{{ donation_url }}" target="_blank" class="donate-btn">{{ translations.donate }}</a>
+            </div>
+        </nav>
+    </header>
+    
+    <main class="container">
+        <div class="hero">
+            <h1>{{ translations.title }}</h1>
+            <p>{{ translations.select_city }}</p>
+        </div>
+        
+        <div class="filters">
+            <div class="filter-group">
+                <label>{{ translations.select_city }}</label>
+                <select id="city-select">
+                    <option value="">-- {{ translations.select_city }} --</option>
+                    {% for location in locations %}
+                    <option value="{{ location.city_name }}">{{ location.city_name.en or location.city_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="filter-group">
+                <label>{{ translations.filter_by_genre }}</label>
+                <select id="genre-filter">
+                    <option value="">All Genres</option>
+                </select>
+            </div>
+            
+            <div class="filter-group">
+                <label>{{ translations.filter_by_format }}</label>
+                <select id="format-filter">
+                    <option value="">All Formats</option>
+                    <option value="2D">2D</option>
+                    <option value="3D">3D</option>
+                    <option value="IMAX">IMAX</option>
+                </select>
+            </div>
+            
+            <div class="filter-group">
+                <label>{{ translations.filter_by_language }}</label>
+                <select id="language-filter">
+                    <option value="">All Languages</option>
+                    <option value="Ukrainian">Ukrainian</option>
+                    <option value="English">English</option>
+                    <option value="Russian">Russian</option>
+                </select>
+            </div>
+        </div>
+        
+        <div id="showtimes-container">
+            <div class="empty-state">
+                <p>{{ translations.select_city }}</p>
+            </div>
+        </div>
+    </main>
+    
+    <footer>
+        <div class="container">
+            <p class="visitor-counter">{{ translations.visitor_count }}: {{ visitor_count }}</p>
+            <p style="margin-top: 1rem; opacity: 0.7;">© 2025 CineStream. All rights reserved.</p>
+        </div>
+    </footer>
+    
+    <script>
+        const citySelect = document.getElementById('city-select');
+        const genreFilter = document.getElementById('genre-filter');
+        const formatFilter = document.getElementById('format-filter');
+        const languageFilter = document.getElementById('language-filter');
+        const container = document.getElementById('showtimes-container');
+        
+        let currentCity = null;
+        let showtimes = [];
+        
+        citySelect.addEventListener('change', async (e) => {
+            const cityName = e.target.value;
+            if (!cityName) {
+                container.innerHTML = '<div class="empty-state"><p>{{ translations.select_city }}</p></div>';
+                return;
+            }
+            
+            container.innerHTML = '<div class="loading">{{ translations.loading }}</div>';
+            
+            // Trigger scraping if needed
+            try {
+                const scrapeResponse = await fetch('/api/scrape', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({city_name: cityName})
+                });
+                
+                if (scrapeResponse.status === 202) {
+                    // Still processing, poll again
+                    setTimeout(() => citySelect.dispatchEvent(new Event('change')), 5000);
+                    return;
+                }
+            } catch (e) {
+                console.error('Scrape error:', e);
+            }
+            
+            // Load showtimes
+            loadShowtimes(cityName);
+        });
+        
+        async function loadShowtimes(cityName) {
+            currentCity = cityName;
+            const params = new URLSearchParams({city_name: cityName});
+            if (genreFilter.value) params.append('genre', genreFilter.value);
+            if (formatFilter.value) params.append('format', formatFilter.value);
+            if (languageFilter.value) params.append('language', languageFilter.value);
+            
+            try {
+                const response = await fetch(`/api/showtimes?${params}`);
+                showtimes = await response.json();
+                renderShowtimes();
+            } catch (e) {
+                console.error('Error loading showtimes:', e);
+                container.innerHTML = '<div class="empty-state"><p>Error loading showtimes</p></div>';
+            }
+        }
+        
+        function renderShowtimes() {
+            if (showtimes.length === 0) {
+                container.innerHTML = '<div class="empty-state"><p>{{ translations.no_showtimes }}</p></div>';
+                return;
+            }
+            
+            container.innerHTML = '<div class="showtimes-grid"></div>';
+            const grid = container.querySelector('.showtimes-grid');
+            
+            showtimes.forEach(st => {
+                const card = document.createElement('div');
+                card.className = 'showtime-card';
+                
+                const movieTitle = st.movie?.en || st.movie?.ua || st.movie?.ru || 'Unknown Movie';
+                const startTime = new Date(st.start_time).toLocaleString('{{ lang }}');
+                
+                card.innerHTML = `
+                    <h3>${movieTitle}</h3>
+                    <div class="time">${startTime}</div>
+                    <div class="cinema">${st.cinema_name || st.cinema_id}</div>
+                    <div>${st.format || '2D'} | ${st.language || ''} | ${st.price || ''}</div>
+                    <a href="${st.buy_link || '#'}" target="_blank" class="buy-btn">{{ translations.buy_tickets }}</a>
+                `;
+                
+                grid.appendChild(card);
+            });
+        }
+        
+        // Filter event listeners
+        [genreFilter, formatFilter, languageFilter].forEach(filter => {
+            filter.addEventListener('change', () => {
+                if (currentCity) loadShowtimes(currentCity);
+            });
+        });
+    </script>
+</body>
+</html>
+
