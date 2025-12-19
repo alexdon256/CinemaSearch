@@ -53,7 +53,7 @@ After running `deploy.sh add-site`, the following structure is created:
 └── <app_name>.conf            # Nginx configuration
 
 /etc/systemd/system/
-├── <app_name>@.service        # Service template (for ports 8001-8024)
+├── <app_name>@.service        # Service template (for ports 8001-8012)
 ├── <app_name>-refresh.service # Daily refresh service
 └── <app_name>-refresh.timer  # Daily refresh timer
 
@@ -132,8 +132,8 @@ Stores visitor counter and other statistics.
 
 ## Process Architecture
 
-Each application runs as **24 independent processes**:
-- Ports: 8001, 8002, 8003, ..., 8024
+Each application runs as **12 independent processes**:
+- Ports: 8001, 8002, 8003, ..., 8012
 - Each process is a separate systemd service
 - Nginx uses sticky sessions (ip_hash) for routing
 - Processes communicate only via MongoDB

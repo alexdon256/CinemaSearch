@@ -15,7 +15,7 @@ from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 from dotenv import load_dotenv
 from core.agent import ClaudeAgent
-from core.lock import acquire_lock, release_lock
+from core.lock import acquire_lock, release_lock, get_lock_info
 
 # Load environment variables
 load_dotenv()
@@ -60,36 +60,77 @@ def refresh_all_cities():
         if not city_name:
             continue
         
+        # Extract city, state, country from document
+        city = city_doc.get('city', '')
+        state = city_doc.get('state', '')
+        country = city_doc.get('country', '')
+        
+        # Fallback: parse from city_name if fields not present
+        if not city or not country:
+            parts = city_name.split(', ')
+            if len(parts) >= 2:
+                city = parts[0]
+                if len(parts) == 3:
+                    state = parts[1]
+                    country = parts[2]
+                else:
+                    country = parts[1]
+        
+        if not country:
+            print(f"  ⚠ Skipping {city_name} (missing country)")
+            continue
+        
         print(f"Refreshing {city_name}...")
         
-        # Try to acquire lock
-        if not acquire_lock(db, city_name):
+        # Check if on-demand scraping is in progress (don't override user requests)
+        lock_info = get_lock_info(db, city_name)
+        if lock_info and lock_info.get('source') == 'on-demand':
+            print(f"  ⚠ Skipping {city_name} (on-demand scraping in progress - will retry later)")
+            continue
+        
+        # Try to acquire lock (daily refresh has lower priority)
+        if not acquire_lock(db, city_name, lock_source='daily-refresh', priority=False):
             print(f"  ⚠ Skipping {city_name} (already processing)")
             continue
         
         try:
-            # Scrape city
-            result = agent.scrape_city_showtimes(city_name)
+            # Scrape city with state and country
+            result = agent.scrape_city_showtimes(city, country, state)
             
             if result.get('success'):
+                # Extract location components from result
+                result_city = result.get('city', city_name)
+                result_state = result.get('state', '')
+                result_country = result.get('country', '')
+                
+                # Build location identifier
+                if result_state:
+                    location_id = f"{result_city}, {result_state}, {result_country}"
+                else:
+                    location_id = f"{result_city}, {result_country}"
+                
                 # Update location status
                 db.locations.update_one(
-                    {'city_name': city_name},
+                    {'city_name': location_id},
                     {
                         '$set': {
+                            'city': result_city,
+                            'state': result_state,
+                            'country': result_country,
                             'status': 'fresh',
                             'last_updated': datetime.utcnow()
                         }
-                    }
+                    },
+                    upsert=True
                 )
                 
                 # Insert new showtimes (delete old ones first)
                 if result.get('showtimes'):
-                    # Add city_id to each showtime
+                    # Ensure city_id is set correctly
                     for st in result['showtimes']:
-                        st['city_id'] = city_name
-                    # Delete old showtimes for this city
-                    db.showtimes.delete_many({'city_id': city_name})
+                        st['city_id'] = location_id
+                    # Delete old showtimes for this location
+                    db.showtimes.delete_many({'city_id': location_id})
                     # Insert new showtimes
                     db.showtimes.insert_many(result['showtimes'])
                     print(f"  ✓ Inserted {len(result['showtimes'])} showtimes")

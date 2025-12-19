@@ -207,7 +207,7 @@ add_site() {
     local DOMAIN_NAME="$2"
     local APP_NAME="$3"
     local START_PORT="${4:-8001}"
-    local PROCESS_COUNT="${5:-24}"
+    local PROCESS_COUNT="${5:-12}"
     
     log_info "Adding site: $APP_NAME for domain: $DOMAIN_NAME"
     
@@ -717,7 +717,7 @@ main() {
                 log_error "Usage: $0 add-site <repo_url> <domain_name> <app_name> [start_port] [process_count]"
                 exit 1
             fi
-            add_site "$2" "$3" "$4" "${5:-8001}" "${6:-24}"
+            add_site "$2" "$3" "$4" "${5:-8001}" "${6:-12}"
             ;;
         edit-site)
             if [[ $# -lt 2 ]]; then

@@ -31,8 +31,8 @@ This document provides a comprehensive overview of the CineStream system archite
          ┌───────────────┴────────────────┐
          │                                 │
     ┌────▼────┐  ┌────▼────┐  ┌────▼────┐
-    │Worker 1 │  │Worker 2 │  │Worker 3 │  ...  │Worker 24│
-    │:8001    │  │:8002    │  │:8003    │       │:8024    │
+    │Worker 1 │  │Worker 2 │  │Worker 3 │  ...  │Worker 12│
+    │:8001    │  │:8002    │  │:8003    │       │:8012    │
     └────┬────┘  └────┬────┘  └────┬────┘       └────┬────┘
          │            │            │                  │
          └────────────┴────────────┴──────────────────┘
@@ -56,8 +56,8 @@ The system uses a **shared-nothing architecture** to maximize CPU utilization an
 
 ### Key Characteristics
 
-- **24 Independent Processes**: Each application runs as 24 separate OS processes
-- **Unique Port Binding**: Each process binds to a unique port (8001-8024)
+- **12 Independent Processes**: Each application runs as 12 separate OS processes
+- **Unique Port Binding**: Each process binds to a unique port (8001-8012)
 - **No Shared Memory**: Processes communicate only via MongoDB
 - **Stateless Workers**: Each process is independent and can be restarted individually
 
@@ -85,7 +85,7 @@ Process Shutdown:
 
 ### Benefits
 
-- **High Concurrency**: 24 processes can handle 24x more concurrent requests
+- **High Concurrency**: 12 processes can handle 12x more concurrent requests
 - **Fault Isolation**: One crashed process doesn't affect others
 - **Horizontal Scaling**: Easy to add more processes
 - **GIL Bypass**: Each process has its own Python interpreter
@@ -365,7 +365,7 @@ upstream movie_app_backend {
     ip_hash;  # Sticky sessions
     server 127.0.0.1:8001;
     server 127.0.0.1:8002;
-    # ... up to 8024
+    # ... up to 8012
 }
 
 server {
@@ -458,7 +458,7 @@ Key metrics to monitor:
 
 The CineStream architecture is designed for:
 
-- **High Concurrency**: 24 processes handle thousands of requests
+- **High Concurrency**: 12 processes handle thousands of requests
 - **Reliability**: Process isolation prevents cascading failures
 - **Scalability**: Easy to add more apps or processes
 - **Maintainability**: Clear separation of concerns

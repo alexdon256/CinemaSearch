@@ -24,7 +24,7 @@ sudo ./deploy.sh add-site <repo_url> <domain_name> <app_name> [start_port] [proc
 - **`domain_name`**: Fully qualified domain name (e.g., `example.com`)
 - **`app_name`**: Internal application name (e.g., `movie_app`)
 - **`start_port`**: Starting port number (default: `8001`)
-- **`process_count`**: Number of worker processes (default: `24`)
+- **`process_count`**: Number of worker processes (default: `12`)
 
 ### Example
 
@@ -34,7 +34,7 @@ sudo ./deploy.sh add-site \
   movies.example.com \
   movie_app \
   8001 \
-  24
+  12
 ```
 
 ### Interactive Configuration
@@ -114,7 +114,7 @@ The script will:
 
 ### Scaling Processes
 
-To increase from 24 to 48 processes:
+To increase from 12 to 24 processes:
 
 ```bash
 sudo ./deploy.sh edit-site movie_app

@@ -12,7 +12,7 @@ CineStream is a high-performance, localized movie showtime aggregation platform 
 
 - 🎬 **AI-Powered Scraping**: Uses Claude AI to discover and extract cinema showtimes automatically
 - 🌍 **Multi-Language Support**: Full localization for Ukrainian (UA), English (EN), and Russian (RU)
-- ⚡ **High Concurrency**: 24 parallel worker processes per application for maximum throughput
+- ⚡ **High Concurrency**: 12 parallel worker processes per application for maximum throughput
 - 🔒 **Enterprise Security**: SSL/TLS encryption, secure environment variables, MongoDB authentication
 - 🎨 **Modern UI**: Professional, responsive design with donation integration
 - 📊 **Visitor Analytics**: Built-in visitor counter with MongoDB persistence
@@ -22,7 +22,7 @@ CineStream is a high-performance, localized movie showtime aggregation platform 
 
 ### Shared-Nothing Parallel Model
 
-- **24 Independent Processes**: Each application runs as 24 separate OS processes
+- **12 Independent Processes**: Each application runs as 12 separate OS processes
 - **Sticky Sessions**: Nginx uses `ip_hash` to route users to the same backend process
 - **GIL Bypass**: Each process has its own Python interpreter, bypassing the GIL
 - **Fault Isolation**: One crashed process doesn't affect others
@@ -67,7 +67,7 @@ sudo ./deploy.sh add-site \
   movies.example.com \
   movie_app \
   8001 \
-  24
+  12
 ```
 
 The script will prompt for:
@@ -226,7 +226,7 @@ Users can switch languages via the header selector. Language preference is store
 
 ## Performance
 
-- **Concurrency**: 24 processes per application
+- **Concurrency**: 12 processes per application
 - **Throughput**: Handles thousands of concurrent requests
 - **Caching**: In-memory caching per worker process
 - **Database**: Optimized indexes and TTL for automatic cleanup

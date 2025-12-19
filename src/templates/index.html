@@ -514,12 +514,36 @@
                 const div = document.createElement('div');
                 div.className = 'suggestion-item';
                 
-                // Extract city and country from display_name
+                // Extract city, state, and country from display_name
+                // Format is typically: "City, State/Province, Country" or "City, Country"
                 const parts = result.display_name.split(', ');
                 const cityName = parts[0];
-                const countryName = parts[parts.length - 1];
+                let stateName = '';
+                let countryName = parts[parts.length - 1];
                 
-                div.innerHTML = `${cityName} <small>(${countryName})</small>`;
+                // If there are 3+ parts, the middle ones are likely state/province
+                if (parts.length >= 3) {
+                    // Try to identify state (usually second-to-last before country)
+                    // But could be multiple parts like "New York, NY, USA"
+                    const potentialState = parts.slice(1, -1).join(', ');
+                    stateName = potentialState;
+                }
+                
+                // Build display text
+                let displayText = cityName;
+                if (stateName) {
+                    displayText += ` <small>(${stateName}, ${countryName})</small>`;
+                } else {
+                    displayText += ` <small>(${countryName})</small>`;
+                }
+                
+                div.innerHTML = displayText;
+                
+                // Store full location data in data attributes
+                div.dataset.city = cityName;
+                div.dataset.state = stateName;
+                div.dataset.country = countryName;
+                
                 div.addEventListener('click', () => {
                     cityInput.value = cityName;
                     
@@ -532,6 +556,13 @@
                         countrySelect.value = matchedCountry;
                     }
                     
+                    // Store state for later use
+                    if (stateName) {
+                        cityInput.dataset.state = stateName;
+                    } else {
+                        delete cityInput.dataset.state;
+                    }
+                    
                     citySuggestions.classList.remove('show');
                 });
                 
@@ -541,35 +572,57 @@
             citySuggestions.classList.add('show');
         }
         
-        // ISO 3166-1 alpha-2 country codes for Nominatim
+        // Complete ISO 3166-1 alpha-2 country codes for Nominatim (matches all countries in list)
         function getCountryCode(countryName) {
             const codes = {
-                "Afghanistan": "af", "Albania": "al", "Algeria": "dz", "Argentina": "ar",
-                "Armenia": "am", "Australia": "au", "Austria": "at", "Azerbaijan": "az",
-                "Bangladesh": "bd", "Belarus": "by", "Belgium": "be", "Bolivia": "bo",
-                "Bosnia and Herzegovina": "ba", "Brazil": "br", "Bulgaria": "bg", "Cambodia": "kh",
-                "Canada": "ca", "Chile": "cl", "China": "cn", "Colombia": "co", "Croatia": "hr",
-                "Cuba": "cu", "Cyprus": "cy", "Czech Republic": "cz", "Denmark": "dk",
-                "Dominican Republic": "do", "Ecuador": "ec", "Egypt": "eg", "Estonia": "ee",
-                "Ethiopia": "et", "Finland": "fi", "France": "fr", "Georgia": "ge", "Germany": "de",
-                "Ghana": "gh", "Greece": "gr", "Guatemala": "gt", "Hungary": "hu", "Iceland": "is",
-                "India": "in", "Indonesia": "id", "Iran": "ir", "Iraq": "iq", "Ireland": "ie",
-                "Israel": "il", "Italy": "it", "Jamaica": "jm", "Japan": "jp", "Jordan": "jo",
-                "Kazakhstan": "kz", "Kenya": "ke", "Kuwait": "kw", "Kyrgyzstan": "kg", "Latvia": "lv",
-                "Lebanon": "lb", "Libya": "ly", "Lithuania": "lt", "Luxembourg": "lu",
-                "Malaysia": "my", "Mexico": "mx", "Moldova": "md", "Mongolia": "mn", "Montenegro": "me",
-                "Morocco": "ma", "Myanmar": "mm", "Nepal": "np", "Netherlands": "nl",
-                "New Zealand": "nz", "Nigeria": "ng", "North Macedonia": "mk", "Norway": "no",
-                "Pakistan": "pk", "Palestine": "ps", "Panama": "pa", "Paraguay": "py", "Peru": "pe",
-                "Philippines": "ph", "Poland": "pl", "Portugal": "pt", "Qatar": "qa", "Romania": "ro",
-                "Russia": "ru", "Saudi Arabia": "sa", "Senegal": "sn", "Serbia": "rs",
-                "Singapore": "sg", "Slovakia": "sk", "Slovenia": "si", "South Africa": "za",
-                "South Korea": "kr", "Spain": "es", "Sri Lanka": "lk", "Sudan": "sd", "Sweden": "se",
-                "Switzerland": "ch", "Syria": "sy", "Taiwan": "tw", "Tajikistan": "tj",
-                "Tanzania": "tz", "Thailand": "th", "Tunisia": "tn", "Turkey": "tr",
-                "Turkmenistan": "tm", "Uganda": "ug", "Ukraine": "ua", "United Arab Emirates": "ae",
-                "United Kingdom": "gb", "United States": "us", "Uruguay": "uy", "Uzbekistan": "uz",
-                "Venezuela": "ve", "Vietnam": "vn", "Yemen": "ye", "Zambia": "zm", "Zimbabwe": "zw"
+                "Afghanistan": "af", "Albania": "al", "Algeria": "dz", "Andorra": "ad", 
+                "Angola": "ao", "Argentina": "ar", "Armenia": "am", "Australia": "au", 
+                "Austria": "at", "Azerbaijan": "az", "Bahamas": "bs", "Bahrain": "bh", 
+                "Bangladesh": "bd", "Barbados": "bb", "Belarus": "by", "Belgium": "be", 
+                "Belize": "bz", "Benin": "bj", "Bhutan": "bt", "Bolivia": "bo", 
+                "Bosnia and Herzegovina": "ba", "Botswana": "bw", "Brazil": "br", 
+                "Brunei": "bn", "Bulgaria": "bg", "Burkina Faso": "bf", "Burundi": "bi", 
+                "Cambodia": "kh", "Cameroon": "cm", "Canada": "ca", "Cape Verde": "cv", 
+                "Central African Republic": "cf", "Chad": "td", "Chile": "cl", "China": "cn", 
+                "Colombia": "co", "Comoros": "km", "Congo": "cg", "Costa Rica": "cr", 
+                "Croatia": "hr", "Cuba": "cu", "Cyprus": "cy", "Czech Republic": "cz", 
+                "Denmark": "dk", "Djibouti": "dj", "Dominican Republic": "do", "Ecuador": "ec", 
+                "Egypt": "eg", "El Salvador": "sv", "Equatorial Guinea": "gq", "Eritrea": "er", 
+                "Estonia": "ee", "Eswatini": "sz", "Ethiopia": "et", "Fiji": "fj", 
+                "Finland": "fi", "France": "fr", "Gabon": "ga", "Gambia": "gm", 
+                "Georgia": "ge", "Germany": "de", "Ghana": "gh", "Greece": "gr", 
+                "Grenada": "gd", "Guatemala": "gt", "Guinea": "gn", "Guinea-Bissau": "gw", 
+                "Guyana": "gy", "Haiti": "ht", "Honduras": "hn", "Hungary": "hu", 
+                "Iceland": "is", "India": "in", "Indonesia": "id", "Iran": "ir", 
+                "Iraq": "iq", "Ireland": "ie", "Israel": "il", "Italy": "it", 
+                "Ivory Coast": "ci", "Jamaica": "jm", "Japan": "jp", "Jordan": "jo", 
+                "Kazakhstan": "kz", "Kenya": "ke", "Kiribati": "ki", "Kuwait": "kw", 
+                "Kyrgyzstan": "kg", "Laos": "la", "Latvia": "lv", "Lebanon": "lb", 
+                "Lesotho": "ls", "Liberia": "lr", "Libya": "ly", "Liechtenstein": "li", 
+                "Lithuania": "lt", "Luxembourg": "lu", "Madagascar": "mg", "Malawi": "mw", 
+                "Malaysia": "my", "Maldives": "mv", "Mali": "ml", "Malta": "mt", 
+                "Mauritania": "mr", "Mauritius": "mu", "Mexico": "mx", "Moldova": "md", 
+                "Monaco": "mc", "Mongolia": "mn", "Montenegro": "me", "Morocco": "ma", 
+                "Mozambique": "mz", "Myanmar": "mm", "Namibia": "na", "Nauru": "nr", 
+                "Nepal": "np", "Netherlands": "nl", "New Zealand": "nz", "Nicaragua": "ni", 
+                "Niger": "ne", "Nigeria": "ng", "North Korea": "kp", "North Macedonia": "mk", 
+                "Norway": "no", "Oman": "om", "Pakistan": "pk", "Palau": "pw", 
+                "Palestine": "ps", "Panama": "pa", "Papua New Guinea": "pg", "Paraguay": "py", 
+                "Peru": "pe", "Philippines": "ph", "Poland": "pl", "Portugal": "pt", 
+                "Qatar": "qa", "Romania": "ro", "Russia": "ru", "Rwanda": "rw", 
+                "Saint Lucia": "lc", "Samoa": "ws", "San Marino": "sm", "Saudi Arabia": "sa", 
+                "Senegal": "sn", "Serbia": "rs", "Seychelles": "sc", "Sierra Leone": "sl", 
+                "Singapore": "sg", "Slovakia": "sk", "Slovenia": "si", "Solomon Islands": "sb", 
+                "Somalia": "so", "South Africa": "za", "South Korea": "kr", "South Sudan": "ss", 
+                "Spain": "es", "Sri Lanka": "lk", "Sudan": "sd", "Suriname": "sr", 
+                "Sweden": "se", "Switzerland": "ch", "Syria": "sy", "Taiwan": "tw", 
+                "Tajikistan": "tj", "Tanzania": "tz", "Thailand": "th", "Timor-Leste": "tl", 
+                "Togo": "tg", "Tonga": "to", "Trinidad and Tobago": "tt", "Tunisia": "tn", 
+                "Turkey": "tr", "Turkmenistan": "tm", "Tuvalu": "tv", "Uganda": "ug", 
+                "Ukraine": "ua", "United Arab Emirates": "ae", "United Kingdom": "gb", 
+                "United States": "us", "Uruguay": "uy", "Uzbekistan": "uz", "Vanuatu": "vu", 
+                "Vatican City": "va", "Venezuela": "ve", "Vietnam": "vn", "Yemen": "ye", 
+                "Zambia": "zm", "Zimbabwe": "zw"
             };
             return codes[countryName] || '';
         }
@@ -585,6 +638,7 @@
         searchBtn.addEventListener('click', async () => {
             const city = cityInput.value.trim();
             const country = countrySelect.value;
+            const state = cityInput.dataset.state || '';  // Get state from autocomplete if available
             
             // Hide suggestions
             citySuggestions.classList.remove('show');
@@ -600,13 +654,18 @@
                 return;
             }
             
+            if (!country) {
+                container.innerHTML = '<div class="empty-state"><p>Please select a country</p></div>';
+                return;
+            }
+            
             currentCity = city;
             currentCountry = country;
             
             container.innerHTML = '<div class="loading">{{ translations.loading }}</div>';
             
             // Trigger scraping if needed
-            await fetchShowtimes(city, country);
+            await fetchShowtimes(city, country, state);
         });
         
         // Also trigger search on Enter key in city input
@@ -617,19 +676,31 @@
             }
         });
         
-        async function fetchShowtimes(city, country) {
+        // Clear state when city input changes manually
+        cityInput.addEventListener('input', (e) => {
+            if (!e.target.dataset.state) {
+                // Only clear if user is typing (not from autocomplete selection)
+                delete cityInput.dataset.state;
+            }
+        });
+        
+        async function fetchShowtimes(city, country, state = '') {
             try {
                 const scrapeResponse = await fetch('/api/scrape', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({city: city, country: country})
+                    body: JSON.stringify({
+                        city: city, 
+                        country: country,
+                        state: state
+                    })
                 });
                 
                 const data = await scrapeResponse.json();
                 
                 if (scrapeResponse.status === 202) {
                     // Scraping in progress by another request - start polling
-                    const locationId = country ? `${city}, ${country}` : city;
+                    const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
                     container.innerHTML = '<div class="loading">🎬 {{ translations.loading }} (scraping in progress...)</div>';
                     startPolling(locationId);
                     return;
@@ -642,7 +713,7 @@
                     renderShowtimes();
                 } else if (data.status === 'success' || data.status === 'fresh') {
                     // Fallback: fetch showtimes separately (shouldn't happen with new API)
-                    const locationId = country ? `${city}, ${country}` : city;
+                    const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
                     await loadShowtimes(locationId);
                 } else if (data.status === 'error') {
                     container.innerHTML = `<div class="empty-state"><p>Error: ${data.message}</p></div>`;

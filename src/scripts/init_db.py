@@ -41,9 +41,10 @@ def create_locations_collection():
     db.locations.create_index([("status", ASCENDING)], name="status_idx")
     db.locations.create_index([("city_name", ASCENDING)], name="city_name_idx", unique=True)
     db.locations.create_index([("country", ASCENDING)], name="country_idx")
-    db.locations.create_index([("city", ASCENDING), ("country", ASCENDING)], name="city_country_idx")
+    db.locations.create_index([("state", ASCENDING)], name="state_idx")
+    db.locations.create_index([("city", ASCENDING), ("state", ASCENDING), ("country", ASCENDING)], name="city_state_country_idx")
     
-    print("  ✓ Created indexes: geo (2dsphere), status, city_name, country, city+country")
+    print("  ✓ Created indexes: geo (2dsphere), status, city_name, country, state, city+state+country")
 
 def create_showtimes_collection():
     """Create showtimes collection with indexes and TTL"""

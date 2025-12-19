@@ -13,7 +13,7 @@ from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 from dotenv import load_dotenv
 from core.agent import ClaudeAgent
-from core.lock import acquire_lock, release_lock
+from core.lock import acquire_lock, release_lock, get_lock_info
 
 # Load environment variables
 load_dotenv()
@@ -202,11 +202,14 @@ def api_scrape_status(city_name):
     
     status = city.get('status', 'unknown')
     last_updated = city.get('last_updated')
+    lock_source = city.get('lock_source')
     
     return jsonify({
         'status': status,
         'last_updated': last_updated.isoformat() if last_updated else None,
-        'ready': status == 'fresh'
+        'lock_source': lock_source,
+        'ready': status == 'fresh',
+        'processing_by': lock_source if status == 'processing' else None
     })
 
 @app.route('/api/scrape', methods=['POST'])
@@ -215,18 +218,19 @@ def api_scrape():
     data = request.get_json() or {}
     city = data.get('city') or data.get('city_name')  # Support both formats
     country = data.get('country')
+    state = data.get('state') or data.get('province') or data.get('region')  # Support multiple field names
     
     if not city:
         return jsonify({'error': 'city required'}), 400
     
-    # Build location identifier (city, country format)
-    if country:
-        location_id = f"{city}, {country}"
-    elif ', ' in city:
-        # Already in "City, Country" format
-        location_id = city
+    if not country:
+        return jsonify({'error': 'country required for accurate location identification'}), 400
+    
+    # Build location identifier (city, state, country format)
+    if state:
+        location_id = f"{city}, {state}, {country}"
     else:
-        location_id = city
+        location_id = f"{city}, {country}"
     
     # Check if location exists and is fresh (within last 24 hours)
     location = db.locations.find_one({'city_name': location_id})
@@ -243,22 +247,33 @@ def api_scrape():
                     'showtimes': showtimes
                 })
     
-    # Try to acquire lock
-    if not acquire_lock(db, location_id):
-        return jsonify({'status': 'processing', 'message': 'Scraping already in progress'}), 202
+    # Try to acquire lock with priority (on-demand requests take precedence)
+    if not acquire_lock(db, location_id, lock_source='on-demand', priority=True):
+        # Check what's holding the lock
+        lock_info = get_lock_info(db, location_id)
+        if lock_info:
+            source = lock_info.get('source', 'unknown')
+            if source == 'daily-refresh':
+                message = 'Daily refresh is currently running. Your request will be processed after it completes.'
+            else:
+                message = 'Scraping already in progress'
+        else:
+            message = 'Scraping already in progress'
+        return jsonify({'status': 'processing', 'message': message}), 202
     
     try:
         # Spawn AI agent to scrape
         agent = ClaudeAgent()
-        result = agent.scrape_city_showtimes(city, country)
+        result = agent.scrape_city_showtimes(city, country, state)
         
         if result.get('success'):
-            # Update location status with city/country info
+            # Update location status with city/state/country info
             db.locations.update_one(
                 {'city_name': location_id},
                 {
                     '$set': {
                         'city': city,
+                        'state': state or '',
                         'country': country,
                         'status': 'fresh',
                         'last_updated': datetime.utcnow()
@@ -287,6 +302,7 @@ def api_scrape():
                 'status': 'success', 
                 'message': 'Scraping completed',
                 'city': city,
+                'state': state or '',
                 'country': country,
                 'showtimes_count': len(formatted_showtimes),
                 'showtimes': formatted_showtimes

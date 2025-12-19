@@ -31,40 +31,42 @@ class ClaudeAgent:
         model_key = model_key or os.getenv('CLAUDE_MODEL', DEFAULT_MODEL)
         self.model = MODELS.get(model_key, MODELS[DEFAULT_MODEL])
     
-    def scrape_city_showtimes(self, city: str, country: str = None) -> Dict:
+    def scrape_city_showtimes(self, city: str, country: str = None, state: str = None) -> Dict:
         """
         Scrape showtimes for a given city
         
         Args:
             city: Name of the city to scrape
-            country: Country name for disambiguation (optional but recommended)
+            country: Country name for disambiguation (required for accuracy)
+            state: State/Province/Region name (optional but recommended for large countries)
             
         Returns:
             Dictionary with 'success', 'showtimes', and optional 'error'
         """
-        # Build location string
-        if country:
-            location = f"{city}, {country}"
-        else:
-            location = city
+        if not country:
+            raise ValueError("Country is required for accurate location identification")
         
-        # Parse city/country from combined string if provided as "City, Country"
-        if not country and ', ' in city:
-            parts = city.rsplit(', ', 1)
-            city = parts[0]
-            country = parts[1] if len(parts) > 1 else None
-            location = f"{city}, {country}" if country else city
+        # Build location string with state if available
+        if state:
+            location = f"{city}, {state}, {country}"
+        else:
+            location = f"{city}, {country}"
         
         prompt = f"""You are a web scraping agent. Your task is to find cinema websites in {location} and extract current movie showtimes.
 
+CRITICAL: Use the EXACT location specified below to avoid confusion with cities of the same name in other countries/states.
+
 Location Details:
 - City: {city}
-- Country: {country or 'Not specified (use context from city name)'}
+- State/Province/Region: {state or 'Not specified'}
+- Country: {country}
+- Full Location: {location}
 
 Requirements:
-1. Search for official cinema chain websites operating in {location}
-2. Look for major cinema chains in that country (e.g., Multiplex, Planeta Kino for Ukraine; AMC, Regal for USA; Odeon, Vue for UK)
-3. Extract showtimes that are in the FUTURE only (not past screenings)
+1. Search for all official cinema chain websites operating SPECIFICALLY in {location}
+2. IMPORTANT: If there are multiple cities with the same name, ensure you are searching in {country}{f', {state}' if state else ''}, NOT other countries or states
+3. Look for major and minor cinema chains in that country/region (e.g., Multiplex, Planeta Kino for Ukraine; AMC, Regal, Cinemark for USA; Odeon, Vue, Cineworld for UK, etc.)
+4. Extract showtimes that are in the FUTURE only (not past screenings)
 4. For each showtime, extract:
    - Movie title (in local language, English, and other available languages)
    - Cinema name and location/address
@@ -81,7 +83,8 @@ Requirements:
 Return your findings as a JSON structure with this format:
 {{
     "city": "{city}",
-    "country": "{country or 'Unknown'}",
+    "state": "{state or ''}",
+    "country": "{country}",
     "cinemas": [
         {{
             "name": "Cinema Name",
@@ -134,7 +137,8 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
             # Transform to database format
             showtimes = []
             result_city = result.get('city', city)
-            result_country = result.get('country', country or 'Unknown')
+            result_state = result.get('state', state or '')
+            result_country = result.get('country', country)
             
             for cinema in result.get('cinemas', []):
                 cinema_name = cinema.get('name', 'Unknown')
@@ -149,10 +153,17 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
                     except:
                         continue  # Skip invalid dates
                     
+                    # Build location identifier with state if available
+                    if result_state:
+                        location_id = f"{result_city}, {result_state}, {result_country}"
+                    else:
+                        location_id = f"{result_city}, {result_country}"
+                    
                     showtime = {
                         'city': result_city,
+                        'state': result_state,
                         'country': result_country,
-                        'city_id': f"{result_city}, {result_country}",  # Combined for lookup
+                        'city_id': location_id,  # Combined for lookup
                         'cinema_id': cinema_name,
                         'cinema_name': cinema_name,
                         'cinema_address': cinema_address,

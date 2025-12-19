@@ -140,10 +140,10 @@ For different applications on different subdomains:
 
 ```bash
 # App 1
-sudo ./deploy.sh add-site <repo> movies.example.com movie_app 8001 24
+sudo ./deploy.sh add-site <repo> movies.example.com movie_app 8001 12
 
 # App 2
-sudo ./deploy.sh add-site <repo> blog.example.com blog_app 8025 24
+sudo ./deploy.sh add-site <repo> blog.example.com blog_app 8013 12
 ```
 
 Each subdomain needs its own **A Record** pointing to the same IP.
