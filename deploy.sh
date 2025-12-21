@@ -85,17 +85,117 @@ init_server() {
     systemctl enable mongodb.service
     systemctl start mongodb.service
     
-    # Start and enable Nginx
-    systemctl enable nginx.service
-    systemctl start nginx.service
-    
     # Create CineStream master target for coordinated startup
     create_master_target
+    
+    # Install CPU affinity management scripts (needed before configuring services)
+    install_cpu_affinity_scripts
+    
+    # Configure Nginx CPU affinity (P-cores)
+    configure_nginx_affinity
+    
+    # Start and enable Nginx
+    systemctl daemon-reload
+    systemctl enable nginx.service
+    systemctl start nginx.service
     
     log_success "Server initialization complete!"
     log_info "MongoDB is running on 127.0.0.1:27017"
     log_info "Nginx is configured and running"
     log_info "All services configured to auto-start on boot"
+    log_info "CPU affinity: MongoDB & Nginx -> P-cores (0-5), Python apps -> E-cores (6-13)"
+}
+
+# Install CPU affinity management scripts
+install_cpu_affinity_scripts() {
+    log_info "Installing CPU affinity management scripts..."
+    
+    # Determine script source directory (scripts are in the same repo)
+    local SCRIPT_SOURCE_DIR="$SCRIPT_DIR/scripts"
+    if [[ ! -d "$SCRIPT_SOURCE_DIR" ]]; then
+        # Try alternative location (if deploy.sh is in root)
+        SCRIPT_SOURCE_DIR="$(dirname "$SCRIPT_DIR")/scripts"
+        if [[ ! -d "$SCRIPT_SOURCE_DIR" ]]; then
+            # Create scripts directory if it doesn't exist
+            mkdir -p "$SCRIPT_DIR/scripts"
+            SCRIPT_SOURCE_DIR="$SCRIPT_DIR/scripts"
+        fi
+    fi
+    
+    # Install affinity scripts to /usr/local/bin
+    if [[ -f "$SCRIPT_SOURCE_DIR/set_cpu_affinity.sh" ]]; then
+        cp "$SCRIPT_SOURCE_DIR/set_cpu_affinity.sh" /usr/local/bin/cinestream-set-cpu-affinity.sh
+        chmod +x /usr/local/bin/cinestream-set-cpu-affinity.sh
+        log_success "Installed CPU affinity script"
+    else
+        log_warning "CPU affinity script not found at $SCRIPT_SOURCE_DIR/set_cpu_affinity.sh"
+        log_info "Creating default CPU affinity script..."
+        
+        # Create a basic script if source not found
+        cat > /usr/local/bin/cinestream-set-cpu-affinity.sh <<'AFFINITY_EOF'
+#!/bin/bash
+# CPU Affinity Management Script for CineStream
+P_CORES="0-5"
+E_CORES="6-13"
+
+set_affinity() {
+    local pattern="$1"
+    local cores="$2"
+    local pids=$(pgrep -f "$pattern" 2>/dev/null || true)
+    for pid in $pids; do
+        taskset -pc "$cores" "$pid" >/dev/null 2>&1 || true
+    done
+}
+
+case "${1:-all}" in
+    mongodb) set_affinity "mongod" "$P_CORES" ;;
+    nginx) set_affinity "nginx" "$P_CORES" ;;
+    python) set_affinity "main.py.*--port" "$E_CORES" ;;
+    all) set_affinity "mongod" "$P_CORES"; sleep 1; set_affinity "nginx" "$P_CORES"; sleep 1; set_affinity "main.py.*--port" "$E_CORES" ;;
+esac
+AFFINITY_EOF
+        chmod +x /usr/local/bin/cinestream-set-cpu-affinity.sh
+    fi
+    
+    # Create CPU affinity monitor service
+    cat > "$SYSTEMD_DIR/cinestream-cpu-affinity.service" <<EOF
+[Unit]
+Description=CineStream CPU Affinity Manager
+After=network.target mongodb.service nginx.service
+PartOf=cinestream.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/cinestream-set-cpu-affinity.sh all
+# Run again after a delay to catch any late-starting processes
+ExecStartPost=/bin/bash -c 'sleep 10 && /usr/local/bin/cinestream-set-cpu-affinity.sh all || true'
+
+[Install]
+WantedBy=cinestream.target
+EOF
+
+    # Create CPU affinity monitor timer (runs every 5 minutes to ensure affinity is maintained)
+    cat > "$SYSTEMD_DIR/cinestream-cpu-affinity.timer" <<EOF
+[Unit]
+Description=CineStream CPU Affinity Monitor Timer
+Requires=cinestream-cpu-affinity.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable cinestream-cpu-affinity.service
+    systemctl enable cinestream-cpu-affinity.timer
+    systemctl start cinestream-cpu-affinity.timer
+    
+    log_success "CPU affinity management installed and enabled"
 }
 
 # Create master systemd target for coordinated startup
@@ -117,7 +217,7 @@ EOF
     cat > "$SYSTEMD_DIR/cinestream-startup.service" <<EOF
 [Unit]
 Description=CineStream Startup Service
-After=network-online.target mongodb.service nginx.service
+After=network-online.target mongodb.service nginx.service cinestream-cpu-affinity.service
 Wants=network-online.target mongodb.service nginx.service
 PartOf=cinestream.target
 
@@ -125,6 +225,8 @@ PartOf=cinestream.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/bash -c 'sleep 5 && for conf in /var/www/*/.deploy_config; do [ -f "\$conf" ] && source "\$conf" && for i in \$(seq 0 \$((PROCESS_COUNT-1))); do systemctl start "\${APP_NAME}@\$((START_PORT+i)).service" 2>/dev/null || true; done; done'
+# Set CPU affinity after starting all services
+ExecStartPost=/bin/bash -c 'sleep 3 && /usr/local/bin/cinestream-set-cpu-affinity.sh all || true'
 ExecStop=/bin/true
 
 [Install]
@@ -172,7 +274,7 @@ install_mongodb() {
         useradd -r -s /bin/false mongodb || true
     fi
     
-    # Create systemd service file
+    # Create systemd service file with CPU affinity for P-cores (0-5)
     cat > "$SYSTEMD_DIR/mongodb.service" <<EOF
 [Unit]
 Description=MongoDB Database Server
@@ -183,11 +285,15 @@ After=network.target
 User=mongodb
 Group=mongodb
 Type=forking
+# CPU Affinity: P-cores (0-5) for Intel i9-12900HK
+CPUAffinity=0 1 2 3 4 5
 ExecStart=$MONGO_DIR/bin/mongod --dbpath=$MONGO_DATA_DIR --logpath=$MONGO_LOG_DIR/mongod.log --logappend --fork
 ExecStop=$MONGO_DIR/bin/mongod --shutdown --dbpath=$MONGO_DATA_DIR
 PIDFile=$MONGO_DATA_DIR/mongod.lock
 Restart=on-failure
 RestartSec=10
+# Ensure affinity is set after start
+ExecStartPost=/bin/bash -c 'sleep 2 && /usr/local/bin/cinestream-set-cpu-affinity.sh mongodb || true'
 
 [Install]
 WantedBy=multi-user.target
@@ -201,453 +307,23 @@ EOF
     log_success "MongoDB installed successfully"
 }
 
-# Add a new site
-add_site() {
-    local REPO_URL="$1"
-    local DOMAIN_NAME="$2"
-    local APP_NAME="$3"
-    local START_PORT="${4:-8001}"
-    local PROCESS_COUNT="${5:-12}"
+# Configure Nginx CPU affinity to P-cores
+configure_nginx_affinity() {
+    log_info "Configuring Nginx CPU affinity to P-cores (0-5)..."
     
-    log_info "Adding site: $APP_NAME for domain: $DOMAIN_NAME"
+    # Create systemd override directory for nginx
+    mkdir -p "$SYSTEMD_DIR/nginx.service.d"
     
-    # Validate inputs
-    if [[ -z "$REPO_URL" || -z "$DOMAIN_NAME" || -z "$APP_NAME" ]]; then
-        log_error "Usage: $0 add-site <repo_url> <domain_name> <app_name> [start_port] [process_count]"
-        exit 1
-    fi
-    
-    local APP_DIR="$WWW_ROOT/$APP_NAME"
-    
-    # Check if app already exists
-    if [[ -d "$APP_DIR" ]]; then
-        log_error "Application $APP_NAME already exists at $APP_DIR"
-        exit 1
-    fi
-    
-    # Create app directory
-    mkdir -p "$APP_DIR"
-    cd "$APP_DIR"
-    
-    # Clone repository
-    log_info "Cloning repository..."
-    git clone "$REPO_URL" src || {
-        log_error "Failed to clone repository"
-        exit 1
-    }
-    
-    # Create virtual environment
-    log_info "Creating Python virtual environment..."
-    python3 -m venv venv
-    source venv/bin/activate
-    
-    # Install dependencies (check multiple locations)
-    if [[ -f "src/requirements.txt" ]]; then
-        log_info "Installing Python dependencies from src/requirements.txt..."
-        pip install --upgrade pip
-        pip install -r src/requirements.txt
-    elif [[ -f "src/src/requirements.txt" ]]; then
-        log_info "Installing Python dependencies from src/src/requirements.txt..."
-        pip install --upgrade pip
-        pip install -r src/src/requirements.txt
-    else
-        log_warning "No requirements.txt found, installing basic dependencies..."
-        pip install --upgrade pip
-        pip install flask python-dotenv pymongo anthropic gunicorn
-    fi
-    
-    # Prompt for environment variables
-    log_info "Configuring environment variables..."
-    echo ""
-    read -p "Enter MONGO_URI (e.g., mongodb://user:pass@127.0.0.1:27017/movie_db?authSource=admin): " MONGO_URI
-    read -p "Enter ANTHROPIC_API_KEY: " ANTHROPIC_API_KEY
-    read -sp "Enter SECRET_KEY (for Flask sessions): " SECRET_KEY
-    echo ""
-    
-    # Create .env file
-    cat > "$APP_DIR/.env" <<EOF
-MONGO_URI=$MONGO_URI
-ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
-SECRET_KEY=$SECRET_KEY
-
-# Claude model selection (optional)
-# Options: haiku (default, cheapest), sonnet (more capable)
-CLAUDE_MODEL=haiku
-EOF
-    chmod 600 "$APP_DIR/.env"
-    
-    # Initialize database schema (check multiple locations)
-    log_info "Initializing database schema..."
-    if [[ -f "src/scripts/init_db.py" ]]; then
-        cd src && python scripts/init_db.py || log_warning "Database initialization script failed"
-        cd "$APP_DIR"
-    elif [[ -f "src/src/scripts/init_db.py" ]]; then
-        cd src/src && python scripts/init_db.py || log_warning "Database initialization script failed"
-        cd "$APP_DIR"
-    fi
-    
-    # Create deployment config
-    cat > "$APP_DIR/.deploy_config" <<EOF
-DOMAIN_NAME=$DOMAIN_NAME
-APP_NAME=$APP_NAME
-START_PORT=$START_PORT
-PROCESS_COUNT=$PROCESS_COUNT
-REPO_URL=$REPO_URL
-DEPLOYED_AT=$(date -Iseconds)
-EOF
-    
-    # Generate systemd service files
-    log_info "Creating systemd services..."
-    generate_systemd_services "$APP_NAME" "$START_PORT" "$PROCESS_COUNT" "$APP_DIR"
-    
-    # Generate Nginx configuration with SSL
-    log_info "Generating Nginx configuration..."
-    generate_nginx_config "$DOMAIN_NAME" "$APP_NAME" "$START_PORT" "$PROCESS_COUNT"
-    
-    # Setup SSL with Let's Encrypt
-    log_info "Setting up SSL certificate..."
-    setup_ssl "$DOMAIN_NAME"
-    
-    # Reload systemd and Nginx
-    systemctl daemon-reload
-    systemctl reload nginx || systemctl restart nginx
-    
-    # Start all processes
-    log_info "Starting application processes..."
-    for ((i=0; i<PROCESS_COUNT; i++)); do
-        local port=$((START_PORT + i))
-        systemctl enable "${APP_NAME}@${port}.service"
-        systemctl start "${APP_NAME}@${port}.service"
-    done
-    
-    # Setup daily cron job
-    setup_daily_cron "$APP_NAME" "$APP_DIR"
-    
-    # Ensure master startup target exists
-    if [[ ! -f "$SYSTEMD_DIR/cinestream.target" ]]; then
-        create_master_target
-    fi
-    
-    log_success "Site $APP_NAME deployed successfully!"
-    log_info "Domain: $DOMAIN_NAME"
-    log_info "Processes: $PROCESS_COUNT (ports $START_PORT-$((START_PORT + PROCESS_COUNT - 1)))"
-    log_info "App directory: $APP_DIR"
-    log_info "Auto-start: ENABLED (services will start on system boot)"
-}
-
-# Generate systemd service files for each process
-generate_systemd_services() {
-    local APP_NAME="$1"
-    local START_PORT="$2"
-    local PROCESS_COUNT="$3"
-    local APP_DIR="$4"
-    
-    # Determine the actual source directory
-    local SRC_DIR="$APP_DIR/src"
-    if [[ -f "$APP_DIR/src/src/main.py" ]]; then
-        SRC_DIR="$APP_DIR/src/src"
-    fi
-    
-    # Create service template
-    cat > "$SYSTEMD_DIR/${APP_NAME}@.service" <<EOF
-[Unit]
-Description=$APP_NAME Web Worker (Port %i)
-After=network.target mongodb.service
-
+    # Create override file with CPU affinity
+    cat > "$SYSTEMD_DIR/nginx.service.d/cpu-affinity.conf" <<EOF
 [Service]
-Type=simple
-User=www-data
-WorkingDirectory=$SRC_DIR
-Environment="PATH=$APP_DIR/venv/bin"
-EnvironmentFile=$APP_DIR/.env
-ExecStart=$APP_DIR/venv/bin/python $SRC_DIR/main.py --port %i
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
+# CPU Affinity: P-cores (0-5) for Intel i9-12900HK
+CPUAffinity=0 1 2 3 4 5
+# Ensure affinity is set after start
+ExecStartPost=/bin/bash -c 'sleep 1 && /usr/local/bin/cinestream-set-cpu-affinity.sh nginx || true'
 EOF
     
-    # Create daily refresh timer
-    cat > "$SYSTEMD_DIR/${APP_NAME}-refresh.service" <<EOF
-[Unit]
-Description=$APP_NAME Daily Data Refresh
-After=network.target mongodb.service
-
-[Service]
-Type=oneshot
-User=www-data
-WorkingDirectory=$SRC_DIR
-Environment="PATH=$APP_DIR/venv/bin"
-EnvironmentFile=$APP_DIR/.env
-ExecStart=$APP_DIR/venv/bin/python $SRC_DIR/scripts/daily_refresh.py
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    
-    cat > "$SYSTEMD_DIR/${APP_NAME}-refresh.timer" <<EOF
-[Unit]
-Description=Daily refresh timer for $APP_NAME
-Requires=${APP_NAME}-refresh.service
-
-[Timer]
-OnCalendar=daily
-OnCalendar=06:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-}
-
-# Generate Nginx configuration with sticky sessions
-generate_nginx_config() {
-    local DOMAIN_NAME="$1"
-    local APP_NAME="$2"
-    local START_PORT="$3"
-    local PROCESS_COUNT="$4"
-    
-    local CONFIG_FILE="$NGINX_CONF_DIR/${APP_NAME}.conf"
-    
-    cat > "$CONFIG_FILE" <<EOF
-# Upstream backend for $APP_NAME
-upstream ${APP_NAME}_backend {
-    ip_hash;  # Sticky sessions
-EOF
-    
-    for ((i=0; i<PROCESS_COUNT; i++)); do
-        local port=$((START_PORT + i))
-        echo "    server 127.0.0.1:$port;" >> "$CONFIG_FILE"
-    done
-    
-    cat >> "$CONFIG_FILE" <<EOF
-}
-
-# HTTP server - redirect to HTTPS
-server {
-    listen 80;
-    listen [::]:80;
-    server_name $DOMAIN_NAME www.$DOMAIN_NAME;
-    
-    # Let's Encrypt challenge
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
-    
-    location / {
-        return 301 https://\$server_name\$request_uri;
-    }
-}
-
-# HTTPS server
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name $DOMAIN_NAME www.$DOMAIN_NAME;
-    
-    ssl_certificate /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
-    
-    # Security headers
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    
-    # Static files
-    location /static/ {
-        alias $WWW_ROOT/$APP_NAME/static/;
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-    }
-    
-    # Proxy to backend
-    location / {
-        proxy_pass http://${APP_NAME}_backend;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-}
-EOF
-    
-    log_success "Nginx configuration created: $CONFIG_FILE"
-}
-
-# Setup SSL certificate with Let's Encrypt
-setup_ssl() {
-    local DOMAIN_NAME="$1"
-    
-    # Install certbot if not present
-    if ! command -v certbot &> /dev/null; then
-        log_info "Installing certbot..."
-        swupd bundle-add certbot -y || {
-            # Fallback: install via pip
-            pip3 install certbot certbot-nginx || {
-                log_error "Failed to install certbot. Please install manually."
-                return 1
-            }
-        }
-    fi
-    
-    # Check if certificate already exists
-    if [[ -d "/etc/letsencrypt/live/$DOMAIN_NAME" ]]; then
-        log_info "SSL certificate already exists for $DOMAIN_NAME"
-        return 0
-    fi
-    
-    # Obtain certificate
-    log_info "Obtaining SSL certificate for $DOMAIN_NAME..."
-    log_warning "Ensure DNS A record for $DOMAIN_NAME points to this server's IP"
-    log_warning "Waiting 10 seconds for DNS propagation check..."
-    sleep 10
-    
-    certbot certonly --nginx -d "$DOMAIN_NAME" -d "www.$DOMAIN_NAME" --non-interactive --agree-tos --email "admin@$DOMAIN_NAME" || {
-        log_error "Failed to obtain SSL certificate. Please check DNS configuration."
-        log_info "You can retry SSL setup later with: certbot certonly --nginx -d $DOMAIN_NAME"
-        return 1
-    }
-    
-    log_success "SSL certificate obtained successfully"
-}
-
-# Setup daily cron job
-setup_daily_cron() {
-    local APP_NAME="$1"
-    local APP_DIR="$2"
-    
-    systemctl enable "${APP_NAME}-refresh.timer"
-    systemctl start "${APP_NAME}-refresh.timer"
-    
-    log_success "Daily refresh timer enabled (runs at 06:00 AM)"
-}
-
-# Edit an existing site
-edit_site() {
-    local APP_NAME="$1"
-    local APP_DIR="$WWW_ROOT/$APP_NAME"
-    
-    if [[ ! -d "$APP_DIR" ]]; then
-        log_error "Application $APP_NAME not found"
-        exit 1
-    fi
-    
-    # Load current config
-    source "$APP_DIR/.deploy_config"
-    
-    log_info "Editing site: $APP_NAME"
-    echo "Current configuration:"
-    echo "  Domain: $DOMAIN_NAME"
-    echo "  Start Port: $START_PORT"
-    echo "  Process Count: $PROCESS_COUNT"
-    echo ""
-    
-    read -p "New domain name (press Enter to keep current): " NEW_DOMAIN
-    read -p "New start port (press Enter to keep current): " NEW_START_PORT
-    read -p "New process count (press Enter to keep current): " NEW_PROCESS_COUNT
-    
-    NEW_DOMAIN="${NEW_DOMAIN:-$DOMAIN_NAME}"
-    NEW_START_PORT="${NEW_START_PORT:-$START_PORT}"
-    NEW_PROCESS_COUNT="${NEW_PROCESS_COUNT:-$PROCESS_COUNT}"
-    
-    # Stop all current processes
-    log_info "Stopping current processes..."
-    for ((i=0; i<PROCESS_COUNT; i++)); do
-        local port=$((START_PORT + i))
-        systemctl stop "${APP_NAME}@${port}.service" || true
-        systemctl disable "${APP_NAME}@${port}.service" || true
-    done
-    
-    # Update config
-    sed -i "s/DOMAIN_NAME=.*/DOMAIN_NAME=$NEW_DOMAIN/" "$APP_DIR/.deploy_config"
-    sed -i "s/START_PORT=.*/START_PORT=$NEW_START_PORT/" "$APP_DIR/.deploy_config"
-    sed -i "s/PROCESS_COUNT=.*/PROCESS_COUNT=$NEW_PROCESS_COUNT/" "$APP_DIR/.deploy_config"
-    
-    # Regenerate systemd services
-    generate_systemd_services "$APP_NAME" "$NEW_START_PORT" "$NEW_PROCESS_COUNT" "$APP_DIR"
-    
-    # Regenerate Nginx config
-    generate_nginx_config "$NEW_DOMAIN" "$APP_NAME" "$NEW_START_PORT" "$NEW_PROCESS_COUNT"
-    
-    # Setup SSL if domain changed
-    if [[ "$NEW_DOMAIN" != "$DOMAIN_NAME" ]]; then
-        setup_ssl "$NEW_DOMAIN"
-    fi
-    
-    # Reload systemd and Nginx
-    systemctl daemon-reload
-    systemctl reload nginx
-    
-    # Start new processes
-    log_info "Starting new processes..."
-    for ((i=0; i<NEW_PROCESS_COUNT; i++)); do
-        local port=$((NEW_START_PORT + i))
-        systemctl enable "${APP_NAME}@${port}.service"
-        systemctl start "${APP_NAME}@${port}.service"
-    done
-    
-    log_success "Site $APP_NAME updated successfully!"
-}
-
-# Remove a site
-remove_site() {
-    local APP_NAME="$1"
-    local APP_DIR="$WWW_ROOT/$APP_NAME"
-    
-    if [[ ! -d "$APP_DIR" ]]; then
-        log_error "Application $APP_NAME not found"
-        exit 1
-    fi
-    
-    # Load config
-    source "$APP_DIR/.deploy_config"
-    
-    log_warning "This will permanently delete $APP_NAME and all its data!"
-    read -p "Are you sure? Type 'yes' to confirm: " CONFIRM
-    
-    if [[ "$CONFIRM" != "yes" ]]; then
-        log_info "Cancelled."
-        exit 0
-    fi
-    
-    # Stop all processes
-    log_info "Stopping all processes..."
-    for ((i=0; i<PROCESS_COUNT; i++)); do
-        local port=$((START_PORT + i))
-        systemctl stop "${APP_NAME}@${port}.service" || true
-        systemctl disable "${APP_NAME}@${port}.service" || true
-    done
-    
-    # Stop and remove timer
-    systemctl stop "${APP_NAME}-refresh.timer" || true
-    systemctl disable "${APP_NAME}-refresh.timer" || true
-    
-    # Remove systemd files
-    rm -f "$SYSTEMD_DIR/${APP_NAME}@.service"
-    rm -f "$SYSTEMD_DIR/${APP_NAME}-refresh.service"
-    rm -f "$SYSTEMD_DIR/${APP_NAME}-refresh.timer"
-    
-    # Remove Nginx config
-    rm -f "$NGINX_CONF_DIR/${APP_NAME}.conf"
-    
-    # Remove app directory
-    log_info "Removing application files..."
-    rm -rf "$APP_DIR"
-    
-    # Reload systemd and Nginx
-    systemctl daemon-reload
-    systemctl reload nginx
-    
-    log_success "Site $APP_NAME removed successfully!"
+    log_success "Nginx CPU affinity configured"
 }
 
 # Stop all services
@@ -703,6 +379,140 @@ start_all() {
     log_success "All services started"
 }
 
+# Uninitialize server: Remove all CineStream components
+uninit_server() {
+    local REMOVE_MONGODB="${1:-no}"
+    
+    log_warning "This will remove ALL CineStream components from the server!"
+    log_warning "This includes:"
+    log_warning "  - All deployed sites and applications"
+    log_warning "  - All systemd services"
+    log_warning "  - All Nginx configurations"
+    log_warning "  - CPU affinity configurations"
+    log_warning "  - CineStream systemd targets and timers"
+    if [[ "$REMOVE_MONGODB" == "yes" ]]; then
+        log_warning "  - MongoDB service and data (DESTRUCTIVE!)"
+    fi
+    echo ""
+    read -p "Are you sure you want to continue? Type 'yes' to confirm: " CONFIRM
+    
+    if [[ "$CONFIRM" != "yes" ]]; then
+        log_info "Cancelled."
+        exit 0
+    fi
+    
+    log_info "Starting server cleanup..."
+    
+    # Stop all services first
+    log_info "Stopping all services..."
+    stop_all
+    
+    # Remove all deployed sites
+    log_info "Removing all deployed sites..."
+    if [[ -d "$WWW_ROOT" ]]; then
+        for app_dir in "$WWW_ROOT"/*; do
+            if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
+                source "$app_dir/.deploy_config"
+                APP_NAME=$(basename "$app_dir")
+                log_info "Removing site: $APP_NAME"
+                
+                # Stop and remove all process services
+                for ((i=0; i<PROCESS_COUNT; i++)); do
+                    local port=$((START_PORT + i))
+                    systemctl stop "${APP_NAME}@${port}.service" 2>/dev/null || true
+                    systemctl disable "${APP_NAME}@${port}.service" 2>/dev/null || true
+                done
+                
+                # Stop and remove timer
+                systemctl stop "${APP_NAME}-refresh.timer" 2>/dev/null || true
+                systemctl disable "${APP_NAME}-refresh.timer" 2>/dev/null || true
+                
+                # Remove systemd files
+                rm -f "$SYSTEMD_DIR/${APP_NAME}@.service"
+                rm -f "$SYSTEMD_DIR/${APP_NAME}-refresh.service"
+                rm -f "$SYSTEMD_DIR/${APP_NAME}-refresh.timer"
+                
+                # Remove Nginx config
+                rm -f "$NGINX_CONF_DIR/${APP_NAME}.conf"
+            fi
+        done
+        
+        # Remove all app directories
+        rm -rf "$WWW_ROOT"/*
+        log_success "All deployed sites removed"
+    fi
+    
+    # Remove CineStream systemd services and targets
+    log_info "Removing CineStream systemd services..."
+    systemctl stop cinestream-cpu-affinity.timer 2>/dev/null || true
+    systemctl disable cinestream-cpu-affinity.timer 2>/dev/null || true
+    systemctl stop cinestream-cpu-affinity.service 2>/dev/null || true
+    systemctl disable cinestream-cpu-affinity.service 2>/dev/null || true
+    systemctl stop cinestream-startup.service 2>/dev/null || true
+    systemctl disable cinestream-startup.service 2>/dev/null || true
+    systemctl stop cinestream.target 2>/dev/null || true
+    systemctl disable cinestream.target 2>/dev/null || true
+    
+    # Remove systemd files
+    rm -f "$SYSTEMD_DIR/cinestream.target"
+    rm -f "$SYSTEMD_DIR/cinestream-startup.service"
+    rm -f "$SYSTEMD_DIR/cinestream-cpu-affinity.service"
+    rm -f "$SYSTEMD_DIR/cinestream-cpu-affinity.timer"
+    
+    # Remove CPU affinity script
+    log_info "Removing CPU affinity management script..."
+    rm -f /usr/local/bin/cinestream-set-cpu-affinity.sh
+    
+    # Remove Nginx CPU affinity override
+    log_info "Removing Nginx CPU affinity configuration..."
+    rm -rf "$SYSTEMD_DIR/nginx.service.d"
+    
+    # Remove MongoDB if requested
+    if [[ "$REMOVE_MONGODB" == "yes" ]]; then
+        log_warning "Removing MongoDB (this will delete all data!)..."
+        systemctl stop mongodb.service 2>/dev/null || true
+        systemctl disable mongodb.service 2>/dev/null || true
+        rm -f "$SYSTEMD_DIR/mongodb.service"
+        
+        # Ask for confirmation before deleting data
+        read -p "Delete MongoDB data directory? Type 'yes' to confirm: " DELETE_DATA
+        if [[ "$DELETE_DATA" == "yes" ]]; then
+            rm -rf "$MONGO_DATA_DIR"
+            rm -rf "$MONGO_LOG_DIR"
+            log_warning "MongoDB data deleted"
+        else
+            log_info "MongoDB data preserved at $MONGO_DATA_DIR"
+        fi
+        
+        # Remove MongoDB installation
+        read -p "Remove MongoDB installation? Type 'yes' to confirm: " REMOVE_INSTALL
+        if [[ "$REMOVE_INSTALL" == "yes" ]]; then
+            rm -rf /opt/mongodb
+            log_warning "MongoDB installation removed"
+        fi
+    else
+        log_info "MongoDB service and data preserved (use 'uninit-server yes' to remove)"
+    fi
+    
+    # Reload systemd
+    systemctl daemon-reload
+    
+    # Clean up log files
+    log_info "Cleaning up log files..."
+    rm -f /var/log/cinestream-cpu-affinity.log
+    rm -f /var/log/cinestream-cpu-affinity-monitor.log
+    
+    log_success "Server cleanup complete!"
+    log_info "Remaining components:"
+    if [[ "$REMOVE_MONGODB" != "yes" ]]; then
+        log_info "  - MongoDB (service and data preserved)"
+    fi
+    log_info "  - Nginx (service preserved, configurations removed)"
+    log_info "  - System packages (not removed)"
+    log_info ""
+    log_info "To completely reinitialize, run: $0 init-server"
+}
+
 # Main command dispatcher
 main() {
     check_root
@@ -712,26 +522,8 @@ main() {
         init-server)
             init_server
             ;;
-        add-site)
-            if [[ $# -lt 4 ]]; then
-                log_error "Usage: $0 add-site <repo_url> <domain_name> <app_name> [start_port] [process_count]"
-                exit 1
-            fi
-            add_site "$2" "$3" "$4" "${5:-8001}" "${6:-12}"
-            ;;
-        edit-site)
-            if [[ $# -lt 2 ]]; then
-                log_error "Usage: $0 edit-site <app_name>"
-                exit 1
-            fi
-            edit_site "$2"
-            ;;
-        remove-site)
-            if [[ $# -lt 2 ]]; then
-                log_error "Usage: $0 remove-site <app_name>"
-                exit 1
-            fi
-            remove_site "$2"
+        uninit-server)
+            uninit_server "${2:-no}"
             ;;
         stop-all)
             stop_all
@@ -752,9 +544,8 @@ main() {
             echo ""
             echo "Commands:"
             echo "  init-server                    Initialize Clear Linux server"
-            echo "  add-site <repo> <domain> <app> [port] [count]  Add a new site"
-            echo "  edit-site <app>                Edit an existing site"
-            echo "  remove-site <app>              Remove a site"
+            echo "  uninit-server [yes]            Remove all CineStream components"
+            echo "                                (use 'yes' to also remove MongoDB)"
             echo "  start-all                      Start all services"
             echo "  stop-all                       Stop all services"
             echo "  enable-autostart               Enable all services to start on boot"

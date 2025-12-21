@@ -1,14 +1,14 @@
 # Domain Configuration Guide
 
-This guide explains how to configure domain names for your CineStream deployments. Proper DNS configuration is **critical** for SSL certificate provisioning and Nginx routing.
+This guide explains how to configure domain names for CineStream deployments. Proper DNS configuration is **critical** for SSL certificate provisioning and Nginx routing.
 
 ## Overview
 
-Before running `deploy.sh add-site`, you must:
+For any deployment, you must:
 
 1. **Point DNS A Record** to your server's public IP address
 2. **Wait for DNS Propagation** (can take up to 48 hours, typically 1-24 hours)
-3. **Verify DNS Resolution** before running `add-site`
+3. **Verify DNS Resolution** before configuring SSL certificates
 
 ## Step 1: Get Your Server's Public IP
 
@@ -98,7 +98,7 @@ TTL: 3600 (or default)
 
 ### Check DNS Resolution
 
-Before running `add-site`, verify DNS is pointing correctly:
+Before configuring SSL certificates, verify DNS is pointing correctly:
 
 ```bash
 # Check A record
@@ -121,49 +121,21 @@ Use these tools to check propagation globally:
 - [dnschecker.org](https://dnschecker.org/)
 - [mxtoolbox.com](https://mxtoolbox.com/DNSLookup.aspx)
 
-**Important**: Wait until DNS shows your server IP in **all regions** before proceeding.
+**Important**: Wait until DNS shows your server IP in **all regions** before proceeding with SSL certificate setup.
 
-## Step 4: Handling Multiple Domains
-
-### Root Domain vs. www Subdomain
-
-The deployment script automatically handles both:
-
-- `example.com` (root domain)
-- `www.example.com` (www subdomain)
-
-When you enter `example.com` as the domain name, the script configures Nginx for both.
-
-### Multiple Subdomains
-
-For different applications on different subdomains:
-
-```bash
-# App 1
-sudo ./deploy.sh add-site <repo> movies.example.com movie_app 8001 12
-
-# App 2
-sudo ./deploy.sh add-site <repo> blog.example.com blog_app 8013 12
-```
-
-Each subdomain needs its own **A Record** pointing to the same IP.
-
-### Same Domain, Different Ports
-
-If you need multiple apps on the same domain but different paths:
-
-This requires manual Nginx configuration. The deployment script is designed for one app per domain.
-
-## Step 5: SSL Certificate Provisioning
+## Step 4: SSL Certificate Provisioning
 
 ### Automatic SSL with Let's Encrypt
 
-The `add-site` command automatically:
+SSL certificates can be obtained using certbot:
 
-1. Installs `certbot` (if not present)
-2. Obtains SSL certificate via Let's Encrypt
-3. Configures Nginx with SSL
-4. Sets up automatic renewal
+```bash
+# Install certbot if needed
+sudo swupd bundle-add certbot
+
+# Obtain certificate
+sudo certbot certonly --nginx -d example.com -d www.example.com
+```
 
 ### SSL Certificate Requirements
 
@@ -200,41 +172,6 @@ Renew manually if needed:
 sudo certbot renew
 ```
 
-## Step 6: Domain Input Format
-
-### Correct Format
-
-When running `add-site`, use:
-
-```bash
-# Root domain
-sudo ./deploy.sh add-site <repo> example.com app_name
-
-# Subdomain
-sudo ./deploy.sh add-site <repo> movies.example.com app_name
-
-# With www (handled automatically)
-sudo ./deploy.sh add-site <repo> example.com app_name
-# This configures both example.com AND www.example.com
-```
-
-### Incorrect Format
-
-❌ Don't include protocol:
-```
-https://example.com  # WRONG
-```
-
-❌ Don't include trailing slash:
-```
-example.com/  # WRONG
-```
-
-❌ Don't include path:
-```
-example.com/app  # WRONG
-```
-
 ## DNS Propagation Timeline
 
 ### Typical Propagation Times
@@ -252,7 +189,7 @@ example.com/app  # WRONG
 
 ### Best Practice
 
-**Wait at least 1 hour** after creating DNS records before running `add-site`. Use DNS checkers to verify propagation globally.
+**Wait at least 1 hour** after creating DNS records before configuring SSL certificates. Use DNS checkers to verify propagation globally.
 
 ## Common Issues
 
@@ -268,7 +205,7 @@ example.com/app  # WRONG
 
 ### Issue: SSL Certificate Fails
 
-**Symptoms**: Certbot error during `add-site`
+**Symptoms**: Certbot error during certificate provisioning
 
 **Solutions**:
 1. Verify DNS: `dig example.com` must return your IP
@@ -296,7 +233,7 @@ example.com/app  # WRONG
 
 ## Testing Domain Configuration
 
-### Before Running `add-site`
+### Before Configuring SSL
 
 Run these checks:
 
@@ -330,18 +267,8 @@ All checks should pass before proceeding.
 - Auto-renewal is configured automatically
 - Use **TLS 1.2+** only (configured in Nginx)
 
-## Next Steps
-
-After DNS is configured:
-
-1. **Verify DNS Propagation** (wait 1-24 hours)
-2. **Run `add-site`** command
-3. **Monitor SSL Certificate** provisioning
-4. **Test Website** accessibility
-
 ## Additional Resources
 
 - [Let's Encrypt Documentation](https://letsencrypt.org/docs/)
 - [DNS Propagation Checker](https://www.whatsmydns.net/)
 - [Clear Linux Network Configuration](https://docs.clearlinux.org/latest/guides/network/network-config.html)
-

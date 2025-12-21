@@ -5,13 +5,14 @@ This document provides a comprehensive overview of the CineStream system archite
 ## Table of Contents
 
 1. [High-Level Architecture](#high-level-architecture)
-2. [Shared-Nothing Parallel Model](#shared-nothing-parallel-model)
-3. [Multi-Site Multi-Tenancy](#multi-site-multi-tenancy)
-4. [AI Agent Layer](#ai-agent-layer)
-5. [Data Flow](#data-flow)
-6. [Concurrency Control](#concurrency-control)
-7. [Database Schema](#database-schema)
-8. [Deployment Architecture](#deployment-architecture)
+2. [CPU Affinity Configuration](#cpu-affinity-configuration)
+3. [Shared-Nothing Parallel Model](#shared-nothing-parallel-model)
+4. [Multi-Site Multi-Tenancy](#multi-site-multi-tenancy)
+5. [AI Agent Layer](#ai-agent-layer)
+6. [Data Flow](#data-flow)
+7. [Concurrency Control](#concurrency-control)
+8. [Database Schema](#database-schema)
+9. [Deployment Architecture](#deployment-architecture)
 
 ## High-Level Architecture
 
@@ -26,13 +27,15 @@ This document provides a comprehensive overview of the CineStream system archite
          │         Nginx                  │
          │    (Reverse Proxy + SSL)       │
          │    Sticky Sessions (ip_hash)   │
+         │      P-cores (0-5)             │
          └───────────────┬────────────────┘
                          │
          ┌───────────────┴────────────────┐
          │                                 │
     ┌────▼────┐  ┌────▼────┐  ┌────▼────┐
-    │Worker 1 │  │Worker 2 │  │Worker 3 │  ...  │Worker 12│
-    │:8001    │  │:8002    │  │:8003    │       │:8012    │
+    │Worker 1 │  │Worker 2 │  │Worker 3 │  ...  │Worker 10│
+    │:8001    │  │:8002    │  │:8003    │       │:8010    │
+    │E-cores  │  │E-cores  │  │E-cores  │       │E-cores  │
     └────┬────┘  └────┬────┘  └────┬────┘       └────┬────┘
          │            │            │                  │
          └────────────┴────────────┴──────────────────┘
@@ -40,6 +43,7 @@ This document provides a comprehensive overview of the CineStream system archite
          ┌───────────────▼────────────────┐
          │      MongoDB Database          │
          │  (locations, showtimes, stats) │
+         │      P-cores (0-5)             │
          └────────────────────────────────┘
                          │
          ┌───────────────▼────────────────┐
@@ -47,6 +51,110 @@ This document provides a comprehensive overview of the CineStream system archite
          │    (On-Demand Scraping)        │
          └────────────────────────────────┘
 ```
+
+## CPU Affinity Configuration
+
+### Overview
+
+The system is optimized for Intel i9-12900HK processors with hybrid architecture (P-cores and E-cores). CPU affinity is configured to maximize performance by assigning workloads to appropriate core types.
+
+### CPU Architecture (Intel i9-12900HK)
+
+- **6 P-cores** (Performance cores): Cores 0-5 (12 threads with hyperthreading)
+- **8 E-cores** (Efficiency cores): Cores 6-13 (8 threads, no hyperthreading)
+- **Total**: 14 physical cores, 20 logical threads
+
+### Affinity Assignment
+
+```
+┌─────────────────────────────────────────────────┐
+│  CPU Core Assignment                             │
+├─────────────────────────────────────────────────┤
+│  P-Cores (0-5):   MongoDB Database               │
+│                   - High-performance I/O         │
+│                   - Database queries             │
+│                   - Data persistence              │
+│                   Nginx Web Server               │
+│                   - Request routing              │
+│                   - SSL/TLS processing           │
+│                   - Reverse proxy                │
+├─────────────────────────────────────────────────┤
+│  E-Cores (6-13):  Python Application Workers     │
+│                   - 10 worker processes          │
+│                   - HTTP request handling        │
+│                   - AI agent spawning            │
+│                   - Parallel processing          │
+└─────────────────────────────────────────────────┘
+```
+
+### Implementation
+
+#### MongoDB (P-cores)
+
+MongoDB is configured to use P-cores for optimal database performance:
+
+```ini
+[Service]
+CPUAffinity=0 1 2 3 4 5
+ExecStartPost=/bin/bash -c 'sleep 2 && /usr/local/bin/cinestream-set-cpu-affinity.sh mongodb || true'
+```
+
+#### Nginx (P-cores)
+
+Nginx is configured to use P-cores for high-performance request handling:
+
+```ini
+[Service]
+CPUAffinity=0 1 2 3 4 5
+ExecStartPost=/bin/bash -c 'sleep 1 && /usr/local/bin/cinestream-set-cpu-affinity.sh nginx || true'
+```
+
+Configured via systemd override: `/etc/systemd/system/nginx.service.d/cpu-affinity.conf`
+
+#### Python Workers (E-cores)
+
+Each Python worker process is configured to use E-cores:
+
+```ini
+[Service]
+CPUAffinity=6 7 8 9 10 11 12 13
+ExecStartPost=/bin/bash -c 'sleep 1 && /usr/local/bin/cinestream-set-cpu-affinity.sh python || true'
+```
+
+### Automatic Affinity Management
+
+The system includes automatic CPU affinity management:
+
+1. **Startup Service** (`cinestream-cpu-affinity.service`):
+   - Runs at system startup
+   - Sets affinity for all processes
+   - Re-runs after 10 seconds to catch late-starting processes
+
+2. **Timer Service** (`cinestream-cpu-affinity.timer`):
+   - Runs every 5 minutes
+   - Ensures affinity is maintained if processes restart
+   - Starts 2 minutes after boot
+
+3. **Management Script** (`/usr/local/bin/cinestream-set-cpu-affinity.sh`):
+   - Can be run manually to set affinity
+   - Supports: `all`, `mongodb`, `python` modes
+
+### Benefits
+
+- **Database Performance**: MongoDB benefits from high-performance P-cores
+- **Web Server Performance**: Nginx handles incoming requests efficiently on P-cores
+- **Parallel Processing**: Python workers efficiently use E-cores for concurrent requests
+- **Resource Isolation**: Database, web server, and application workloads don't compete for the same cores
+- **Optimal Utilization**: All CPU cores are utilized according to their strengths
+- **Automatic Maintenance**: Timer service ensures affinity is maintained across restarts
+
+### Process Count
+
+- **Default**: 10 Python worker processes per application
+- **Rationale**: 8 E-cores can efficiently handle 10 processes (some processes share cores)
+- **Configurable**: Process count can be configured during deployment
+
+For detailed CPU affinity configuration and troubleshooting, see [CPU_AFFINITY.md](CPU_AFFINITY.md).
 
 ## Shared-Nothing Parallel Model
 
@@ -56,10 +164,11 @@ The system uses a **shared-nothing architecture** to maximize CPU utilization an
 
 ### Key Characteristics
 
-- **12 Independent Processes**: Each application runs as 12 separate OS processes
-- **Unique Port Binding**: Each process binds to a unique port (8001-8012)
+- **10 Independent Processes**: Each application runs as 10 separate OS processes (default)
+- **Unique Port Binding**: Each process binds to a unique port (e.g., 8001-8010)
 - **No Shared Memory**: Processes communicate only via MongoDB
 - **Stateless Workers**: Each process is independent and can be restarted individually
+- **CPU Affinity**: All workers run on E-cores (6-13) for efficient parallel processing
 
 ### Process Lifecycle
 
@@ -85,10 +194,11 @@ Process Shutdown:
 
 ### Benefits
 
-- **High Concurrency**: 12 processes can handle 12x more concurrent requests
+- **High Concurrency**: 10 processes can handle 10x more concurrent requests
 - **Fault Isolation**: One crashed process doesn't affect others
 - **Horizontal Scaling**: Easy to add more processes
 - **GIL Bypass**: Each process has its own Python interpreter
+- **CPU Optimization**: Workers use E-cores, leaving P-cores for database operations
 
 ## Multi-Site Multi-Tenancy
 
@@ -345,8 +455,9 @@ If a city is being scraped:
 
 ### Systemd Services
 
-Each process runs as a systemd service:
+Each process runs as a systemd service with CPU affinity configured:
 
+**Python Worker Service:**
 ```ini
 [Unit]
 Description=Movie App Web Worker (Port 8001)
@@ -354,8 +465,40 @@ After=network.target mongodb.service
 
 [Service]
 Type=simple
+# CPU Affinity: E-cores (6-13) for Intel i9-12900HK
+CPUAffinity=6 7 8 9 10 11 12 13
 ExecStart=/var/www/movie_app/venv/bin/python /var/www/movie_app/src/main.py --port 8001
 Restart=always
+ExecStartPost=/bin/bash -c 'sleep 1 && /usr/local/bin/cinestream-set-cpu-affinity.sh python || true'
+```
+
+**MongoDB Service:**
+```ini
+[Unit]
+Description=MongoDB Database Server
+After=network.target
+
+[Service]
+Type=forking
+# CPU Affinity: P-cores (0-5) for Intel i9-12900HK
+CPUAffinity=0 1 2 3 4 5
+ExecStart=/opt/mongodb/bin/mongod --dbpath=/opt/mongodb/data --logpath=/opt/mongodb/logs/mongod.log --logappend --fork
+ExecStartPost=/bin/bash -c 'sleep 2 && /usr/local/bin/cinestream-set-cpu-affinity.sh mongodb || true'
+Restart=on-failure
+```
+
+**CPU Affinity Management:**
+```ini
+[Unit]
+Description=CineStream CPU Affinity Manager
+After=network.target mongodb.service
+PartOf=cinestream.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/cinestream-set-cpu-affinity.sh all
+ExecStartPost=/bin/bash -c 'sleep 10 && /usr/local/bin/cinestream-set-cpu-affinity.sh all || true'
 ```
 
 ### Nginx Configuration
@@ -365,7 +508,7 @@ upstream movie_app_backend {
     ip_hash;  # Sticky sessions
     server 127.0.0.1:8001;
     server 127.0.0.1:8002;
-    # ... up to 8012
+    # ... up to 8010 (10 workers, E-cores 6-13)
 }
 
 server {
@@ -389,8 +532,8 @@ server {
 
 ### Scalability
 
-- **Vertical**: Add more processes per app (edit-site)
-- **Horizontal**: Deploy multiple apps (add-site)
+- **Vertical**: Add more processes per app (configure during deployment)
+- **Horizontal**: Deploy multiple apps (configure during deployment)
 - **Database**: MongoDB sharding (future enhancement)
 
 ### Caching Strategy
@@ -402,8 +545,13 @@ server {
 ### Resource Usage
 
 - **Memory**: ~50-100 MB per worker process
-- **CPU**: Minimal when idle, spikes during AI scraping
+- **CPU**: 
+  - **MongoDB**: Uses P-cores (0-5) for high-performance database operations
+  - **Nginx**: Uses P-cores (0-5) for efficient request routing and SSL processing
+  - **Python Workers**: Use E-cores (6-13) for efficient parallel request handling
+  - Minimal when idle, spikes during AI scraping
 - **Network**: Moderate (API calls to Claude)
+- **CPU Affinity**: Automatically maintained via systemd services and timer
 
 ## Security Considerations
 
@@ -458,13 +606,16 @@ Key metrics to monitor:
 
 The CineStream architecture is designed for:
 
-- **High Concurrency**: 12 processes handle thousands of requests
+- **High Concurrency**: 10 processes handle thousands of requests
+- **CPU Optimization**: P-cores for database, E-cores for application workers
 - **Reliability**: Process isolation prevents cascading failures
 - **Scalability**: Easy to add more apps or processes
 - **Maintainability**: Clear separation of concerns
+- **Automatic Management**: CPU affinity maintained automatically on startup and across restarts
 
 For deployment instructions, see:
 - [SETUP.md](SETUP.md) - Server initialization
 - [SITES.md](SITES.md) - Site management
 - [DOMAINS.md](DOMAINS.md) - Domain configuration
+- [CPU_AFFINITY.md](CPU_AFFINITY.md) - CPU affinity configuration and troubleshooting
 

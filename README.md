@@ -46,38 +46,35 @@ This installs:
 - Python 3, Nginx, Git, Node.js
 - MongoDB (manually installed)
 - Claude CLI tools
+- CPU affinity management
 
-### 2. Configure Domain
+### Cleanup and Redeployment
 
-Before deploying, ensure your DNS A record points to your server:
-
-```
-Type: A
-Name: example.com (or subdomain)
-Value: YOUR_SERVER_IP
-```
-
-See [docs/DOMAINS.md](docs/DOMAINS.md) for detailed DNS configuration.
-
-### 3. Deploy Application
+To remove all CineStream components for redeployment:
 
 ```bash
-sudo ./deploy.sh add-site \
-  https://github.com/username/movie-app.git \
-  movies.example.com \
-  movie_app \
-  8001 \
-  12
+# Remove all components (preserves MongoDB)
+sudo ./deploy.sh uninit-server
+
+# Remove all components including MongoDB
+sudo ./deploy.sh uninit-server yes
 ```
 
-The script will prompt for:
-- MongoDB connection string
-- Anthropic API key
-- Flask secret key
+### 2. Server Management
 
-### 4. Access Your Site
+```bash
+# Check system status
+sudo ./deploy.sh status
 
-Visit `https://movies.example.com` - SSL certificate is automatically provisioned!
+# Start all services
+sudo ./deploy.sh start-all
+
+# Stop all services
+sudo ./deploy.sh stop-all
+
+# Clean up everything (for redeployment)
+sudo ./deploy.sh uninit-server
+```
 
 ## Project Structure
 
@@ -97,7 +94,7 @@ Visit `https://movies.example.com` - SSL certificate is automatically provisione
 │       └── index.html       # Frontend template
 ├── docs/
 │   ├── SETUP.md             # Server setup guide
-│   ├── SITES.md             # Site management guide
+│   ├── SITES.md             # Service management guide
 │   ├── DOMAINS.md           # Domain configuration guide
 │   └── ARCHITECTURE.md      # System architecture documentation
 └── README.md                # This file
@@ -108,7 +105,7 @@ Visit `https://movies.example.com` - SSL certificate is automatically provisione
 Comprehensive documentation is available in the `docs/` directory:
 
 - **[SETUP.md](docs/SETUP.md)**: Complete server initialization guide
-- **[SITES.md](docs/SITES.md)**: How to add, edit, and remove sites
+- **[SITES.md](docs/SITES.md)**: Service management and monitoring
 - **[DOMAINS.md](docs/DOMAINS.md)**: DNS configuration and SSL setup
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)**: System design and data flow
 
@@ -120,20 +117,6 @@ sudo ./deploy.sh init-server
 ```
 
 ### Add Site
-```bash
-sudo ./deploy.sh add-site <repo_url> <domain_name> <app_name> [start_port] [process_count]
-```
-
-### Edit Site
-```bash
-sudo ./deploy.sh edit-site <app_name>
-```
-
-### Remove Site
-```bash
-sudo ./deploy.sh remove-site <app_name>
-```
-
 ### Start All Services
 ```bash
 sudo ./deploy.sh start-all
@@ -152,6 +135,15 @@ sudo ./deploy.sh enable-autostart
 ### Check System Status
 ```bash
 sudo ./deploy.sh status
+```
+
+### Uninitialize Server (Cleanup)
+```bash
+# Remove all CineStream components (preserves MongoDB)
+sudo ./deploy.sh uninit-server
+
+# Remove all components including MongoDB
+sudo ./deploy.sh uninit-server yes
 ```
 
 ## Requirements
@@ -186,7 +178,7 @@ SECRET_KEY=your-secret-key-here
 CLAUDE_MODEL=haiku
 ```
 
-These are configured interactively during `add-site`.
+These should be configured in your application's `.env` file.
 
 ### Model Comparison
 

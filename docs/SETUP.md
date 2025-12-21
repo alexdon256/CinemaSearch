@@ -9,6 +9,36 @@ This guide walks you through the initial setup of your Clear Linux server for Ci
 - **Internet connection** for downloading packages and MongoDB
 - **Public IP address** (for domain name resolution)
 
+## Server Cleanup and Redeployment
+
+### Uninitializing the Server
+
+If you need to completely remove all CineStream components (for redeployment or testing), use:
+
+```bash
+sudo ./deploy.sh uninit-server
+```
+
+This will remove:
+- All deployed sites and applications
+- All systemd services
+- All Nginx configurations
+- CPU affinity configurations
+- CineStream systemd targets and timers
+- Log files
+
+**MongoDB is preserved by default** to prevent accidental data loss. To also remove MongoDB:
+
+```bash
+sudo ./deploy.sh uninit-server yes
+```
+
+This will prompt for additional confirmations before deleting:
+- MongoDB data directory
+- MongoDB installation
+
+After uninitializing, you can run `init-server` again to start fresh.
+
 ## Step 1: Initial Server Preparation
 
 ### 1.1 Update Clear Linux
