@@ -12,7 +12,7 @@ CineStream is a high-performance, localized movie showtime aggregation platform 
 
 - 🎬 **AI-Powered Scraping**: Uses Claude AI to discover and extract cinema showtimes automatically
 - 🌍 **Multi-Language Support**: Full localization for Ukrainian (UA), English (EN), and Russian (RU)
-- ⚡ **High Concurrency**: 12 parallel worker processes per application for maximum throughput
+- ⚡ **High Concurrency**: 10 parallel worker processes per application for maximum throughput
 - 🔒 **Enterprise Security**: SSL/TLS encryption, secure environment variables, MongoDB authentication
 - 🎨 **Modern UI**: Professional, responsive design with donation integration
 - 📊 **Visitor Analytics**: Built-in visitor counter with MongoDB persistence
@@ -22,7 +22,7 @@ CineStream is a high-performance, localized movie showtime aggregation platform 
 
 ### Shared-Nothing Parallel Model
 
-- **12 Independent Processes**: Each application runs as 12 separate OS processes
+- **10 Independent Processes**: Each application runs as 10 separate OS processes
 - **Sticky Sessions**: Nginx uses `ip_hash` to route users to the same backend process
 - **GIL Bypass**: Each process has its own Python interpreter, bypassing the GIL
 - **Fault Isolation**: One crashed process doesn't affect others
@@ -75,6 +75,31 @@ sudo ./deploy.sh stop-all
 # Clean up everything (for redeployment)
 sudo ./deploy.sh uninit-server
 ```
+
+### 3. Domain Configuration
+
+After deploying your application, configure a domain name:
+
+```bash
+# Set domain for an application
+sudo ./deploy.sh set-domain <app_name> <domain>
+
+# Example: Configure movies.example.com for movie_app
+sudo ./deploy.sh set-domain movie_app movies.example.com
+```
+
+This command will:
+- Update the application's `.deploy_config` with the domain
+- Generate Nginx configuration with upstream backend (10 processes)
+- Configure HTTP (port 80) with HTTPS redirect
+- Configure HTTPS (port 443) with SSL placeholders
+- Test and reload Nginx
+
+**Next steps after setting domain:**
+1. Point DNS A record to your server's IP address
+2. Wait for DNS propagation (1-48 hours)
+3. Install SSL certificate: `certbot --nginx -d your-domain.com`
+4. Uncomment SSL lines in `/etc/nginx/conf.d/<app_name>.conf`
 
 ## Project Structure
 
@@ -135,6 +160,19 @@ sudo ./deploy.sh enable-autostart
 ```bash
 sudo ./deploy.sh status
 ```
+
+### Configure Domain
+
+```bash
+sudo ./deploy.sh set-domain <app_name> <domain>
+```
+
+Example:
+```bash
+sudo ./deploy.sh set-domain movie_app movies.example.com
+```
+
+This configures Nginx to route the domain to your application's 10 worker processes.
 
 ### Uninitialize Server (Cleanup)
 ```bash
@@ -219,7 +257,7 @@ Users can switch languages via the header selector. Language preference is store
 
 ## Performance
 
-- **Concurrency**: 12 processes per application
+- **Concurrency**: 10 processes per application
 - **Throughput**: Handles thousands of concurrent requests
 - **Caching**: In-memory caching per worker process
 - **Database**: Optimized indexes and TTL for automatic cleanup

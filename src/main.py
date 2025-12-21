@@ -290,12 +290,18 @@ def api_scrape_status(city_name):
                 except Exception:
                     pass
         
+        # Check if there's an active lock (scraping in progress)
+        from core.lock import get_lock_info
+        lock_info = get_lock_info(db, city_name)
+        is_processing = lock_info is not None if lock_info else (status == 'processing')
+        
         return jsonify({
             'status': status,
             'last_updated': last_updated_iso,
             'lock_source': lock_source,
             'ready': status == 'fresh',
-            'processing_by': lock_source if status == 'processing' else None
+            'processing': is_processing,
+            'processing_by': lock_source if status == 'processing' or is_processing else None
         })
     except Exception as e:
         print(f"Error getting scrape status: {e}")

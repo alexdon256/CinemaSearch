@@ -224,7 +224,7 @@ PartOf=cinestream.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/bash -c 'sleep 5 && for conf in /var/www/*/.deploy_config; do [ -f "\$conf" ] && source "\$conf" && for i in \$(seq 0 \$((PROCESS_COUNT-1))); do systemctl start "\${APP_NAME}@\$((START_PORT+i)).service" 2>/dev/null || true; done; done'
+ExecStart=/bin/bash -c 'sleep 5 && for conf in /var/www/*/.deploy_config; do [ -f "\$conf" ] && source "\$conf" && PROCESS_COUNT=\${PROCESS_COUNT:-10} && for i in \$(seq 0 \$((PROCESS_COUNT-1))); do systemctl start "\${APP_NAME}@\$((START_PORT+i)).service" 2>/dev/null || true; done; done'
 # Set CPU affinity after starting all services
 ExecStartPost=/bin/bash -c 'sleep 3 && /usr/local/bin/cinestream-set-cpu-affinity.sh all || true'
 ExecStop=/bin/true
@@ -334,6 +334,8 @@ stop_all() {
     for app_dir in "$WWW_ROOT"/*; do
         if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
             source "$app_dir/.deploy_config"
+            # Default to 10 processes if not specified
+            PROCESS_COUNT=${PROCESS_COUNT:-10}
             APP_NAME=$(basename "$app_dir")
             
             for ((i=0; i<PROCESS_COUNT; i++)); do
@@ -366,6 +368,8 @@ start_all() {
     for app_dir in "$WWW_ROOT"/*; do
         if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
             source "$app_dir/.deploy_config"
+            # Default to 10 processes if not specified
+            PROCESS_COUNT=${PROCESS_COUNT:-10}
             APP_NAME=$(basename "$app_dir")
             
             for ((i=0; i<PROCESS_COUNT; i++)); do
@@ -413,6 +417,8 @@ uninit_server() {
         for app_dir in "$WWW_ROOT"/*; do
             if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
                 source "$app_dir/.deploy_config"
+                # Default to 10 processes if not specified
+                PROCESS_COUNT=${PROCESS_COUNT:-10}
                 APP_NAME=$(basename "$app_dir")
                 log_info "Removing site: $APP_NAME"
                 
@@ -513,6 +519,163 @@ uninit_server() {
     log_info "To completely reinitialize, run: $0 init-server"
 }
 
+# Set domain for an application
+set_domain() {
+    local APP_NAME="${1:-}"
+    local DOMAIN="${2:-}"
+    
+    if [[ -z "$APP_NAME" ]] || [[ -z "$DOMAIN" ]]; then
+        log_error "Usage: $0 set-domain <app_name> <domain>"
+        log_error "Example: $0 set-domain movie_app movies.example.com"
+        exit 1
+    fi
+    
+    local APP_DIR="$WWW_ROOT/$APP_NAME"
+    
+    if [[ ! -d "$APP_DIR" ]]; then
+        log_error "Application '$APP_NAME' not found in $WWW_ROOT"
+        exit 1
+    fi
+    
+    if [[ ! -f "$APP_DIR/.deploy_config" ]]; then
+        log_error "Application '$APP_NAME' is not properly deployed (missing .deploy_config)"
+        exit 1
+    fi
+    
+    # Load existing config
+    source "$APP_DIR/.deploy_config"
+    PROCESS_COUNT=${PROCESS_COUNT:-10}
+    START_PORT=${START_PORT:-8001}
+    
+    log_info "Setting domain '$DOMAIN' for application '$APP_NAME'..."
+    
+    # Update .deploy_config with domain
+    if grep -q "^DOMAIN_NAME=" "$APP_DIR/.deploy_config" 2>/dev/null; then
+        # Update existing domain
+        sed -i "s|^DOMAIN_NAME=.*|DOMAIN_NAME=\"$DOMAIN\"|" "$APP_DIR/.deploy_config"
+        log_info "Updated domain in .deploy_config"
+    else
+        # Add new domain
+        echo "DOMAIN_NAME=\"$DOMAIN\"" >> "$APP_DIR/.deploy_config"
+        log_info "Added domain to .deploy_config"
+    fi
+    
+    # Generate Nginx configuration
+    log_info "Generating Nginx configuration..."
+    
+    local UPSTREAM_NAME="${APP_NAME}_backend"
+    local NGINX_CONF="$NGINX_CONF_DIR/${APP_NAME}.conf"
+    
+    cat > "$NGINX_CONF" <<EOF
+# Upstream backend for ${APP_NAME} - ${PROCESS_COUNT} worker processes
+upstream ${UPSTREAM_NAME} {
+    ip_hash;  # Sticky sessions - same IP routes to same backend
+EOF
+    
+    # Add all backend servers
+    for ((i=0; i<PROCESS_COUNT; i++)); do
+        local port=$((START_PORT + i))
+        echo "    server 127.0.0.1:${port};" >> "$NGINX_CONF"
+    done
+    
+    cat >> "$NGINX_CONF" <<EOF
+}
+
+# HTTP server - redirect to HTTPS
+server {
+    listen 80;
+    server_name ${DOMAIN};
+    
+    # Allow Let's Encrypt ACME challenge
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+    
+    # Redirect all other traffic to HTTPS
+    location / {
+        return 301 https://\$server_name\$request_uri;
+    }
+}
+
+# HTTPS server
+server {
+    listen 443 ssl http2;
+    server_name ${DOMAIN};
+    
+    # SSL configuration (update paths after certificate generation)
+    # ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    
+    # SSL settings (uncomment after certificate is installed)
+    # ssl_protocols TLSv1.2 TLSv1.3;
+    # ssl_ciphers HIGH:!aNULL:!MD5;
+    # ssl_prefer_server_ciphers on;
+    # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    
+    # Logging
+    access_log /var/log/nginx/${APP_NAME}_access.log;
+    error_log /var/log/nginx/${APP_NAME}_error.log;
+    
+    # Proxy settings
+    location / {
+        proxy_pass http://${UPSTREAM_NAME};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$server_name;
+        
+        # WebSocket support (if needed in future)
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+    
+    # Static files (if served directly by Nginx)
+    location /static/ {
+        alias ${APP_DIR}/src/static/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+}
+EOF
+    
+    log_success "Nginx configuration generated: $NGINX_CONF"
+    
+    # Test Nginx configuration
+    log_info "Testing Nginx configuration..."
+    if nginx -t 2>/dev/null; then
+        log_success "Nginx configuration is valid"
+        
+        # Reload Nginx
+        log_info "Reloading Nginx..."
+        if systemctl reload nginx.service 2>/dev/null; then
+            log_success "Nginx reloaded successfully"
+            log_info ""
+            log_info "Domain '$DOMAIN' is now configured for '$APP_NAME'"
+            log_info ""
+            log_info "Next steps:"
+            log_info "1. Point DNS A record for '$DOMAIN' to this server's IP address"
+            log_info "2. Wait for DNS propagation (can take up to 48 hours)"
+            log_info "3. Install SSL certificate (e.g., using certbot):"
+            log_info "   certbot --nginx -d ${DOMAIN}"
+            log_info "4. Uncomment SSL lines in $NGINX_CONF after certificate is installed"
+        else
+            log_error "Failed to reload Nginx. Check logs: journalctl -u nginx.service"
+            exit 1
+        fi
+    else
+        log_error "Nginx configuration test failed!"
+        log_error "Please check the configuration file: $NGINX_CONF"
+        exit 1
+    fi
+}
+
 # Main command dispatcher
 main() {
     check_root
@@ -537,6 +700,9 @@ main() {
         status)
             show_status
             ;;
+        set-domain)
+            set_domain "${2:-}" "${3:-}"
+            ;;
         *)
             echo "CineStream Master Deployment Script v21.0"
             echo ""
@@ -550,6 +716,8 @@ main() {
             echo "  stop-all                       Stop all services"
             echo "  enable-autostart               Enable all services to start on boot"
             echo "  status                         Show status of all services"
+            echo "  set-domain <app> <domain>      Configure domain for an application"
+            echo "                                Example: $0 set-domain movie_app movies.example.com"
             exit 1
             ;;
     esac
@@ -572,6 +740,8 @@ enable_autostart() {
     for app_dir in "$WWW_ROOT"/*; do
         if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
             source "$app_dir/.deploy_config"
+            # Default to 10 processes if not specified
+            PROCESS_COUNT=${PROCESS_COUNT:-10}
             APP_NAME=$(basename "$app_dir")
             
             log_info "Enabling $APP_NAME services..."
@@ -621,6 +791,8 @@ show_status() {
     for app_dir in "$WWW_ROOT"/*; do
         if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
             source "$app_dir/.deploy_config"
+            # Default to 10 processes if not specified
+            PROCESS_COUNT=${PROCESS_COUNT:-10}
             APP_NAME=$(basename "$app_dir")
             
             echo "[$APP_NAME] Domain: $DOMAIN_NAME"

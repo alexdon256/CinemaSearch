@@ -762,6 +762,13 @@
                     return;
                 }
                 
+                // If we get showtimes directly, render them immediately
+                if (data.showtimes && Array.isArray(data.showtimes) && data.showtimes.length > 0) {
+                    showtimes = applyFilters(data.showtimes);
+                    renderShowtimes();
+                    return;
+                }
+                
                 // Check if response contains showtimes directly
                 if (data.showtimes && Array.isArray(data.showtimes)) {
                     // Use showtimes from response immediately!
@@ -781,16 +788,28 @@
         }
         
         function startPolling(locationId) {
+            let pollCount = 0;
             // Poll every 2 seconds for status updates
             pollingInterval = setInterval(async () => {
                 try {
+                    pollCount++;
                     const statusResponse = await fetch(`/api/scrape/status/${encodeURIComponent(locationId)}`);
                     const statusData = await statusResponse.json();
+                    
+                    // Update UI with current status
+                    const statusMessage = statusData.processing_by === 'on-demand' 
+                        ? 'Scraping showtimes...' 
+                        : (statusData.processing_by === 'daily-refresh' 
+                            ? 'Daily refresh in progress...' 
+                            : 'Processing...');
+                    const dots = '.'.repeat((pollCount % 3) + 1);
+                    container.innerHTML = `<div class="loading">🎬 ${statusMessage}${dots}</div>`;
                     
                     if (statusData.ready || statusData.status === 'fresh') {
                         // Data is ready! Stop polling and load showtimes
                         clearInterval(pollingInterval);
                         pollingInterval = null;
+                        container.innerHTML = '<div class="loading">✅ Loading showtimes...</div>';
                         await loadShowtimes(locationId);
                     } else if (statusData.status === 'stale' || statusData.status === 'error') {
                         // Scraping failed, stop polling
@@ -801,6 +820,7 @@
                     // Otherwise keep polling (status is 'processing')
                 } catch (e) {
                     console.error('Polling error:', e);
+                    // Continue polling on error (network issues, etc.)
                 }
             }, 2000); // Poll every 2 seconds
         }
