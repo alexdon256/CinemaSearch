@@ -136,7 +136,7 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
             
             message = self.client.messages.create(
                 model=self.model,
-                max_tokens=4096,
+                max_tokens=8192,
                 messages=[
                     {
                         "role": "user",
