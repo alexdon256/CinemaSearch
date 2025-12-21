@@ -81,14 +81,15 @@ sudo ./deploy.sh uninit-server
 After deploying your application, configure a domain name:
 
 ```bash
-# Set domain for an application
-sudo ./deploy.sh set-domain <app_name> <domain>
+# Set domain (app name is auto-detected)
+sudo ./deploy.sh set-domain <domain>
 
-# Example: Configure movies.example.com for movie_app
-sudo ./deploy.sh set-domain movie_app movies.example.com
+# Example: Configure movies.example.com
+sudo ./deploy.sh set-domain movies.example.com
 ```
 
 This command will:
+- Auto-detect your application
 - Update the application's `.deploy_config` with the domain
 - Generate Nginx configuration with upstream backend (10 processes)
 - Configure HTTP (port 80) with HTTPS redirect
@@ -98,8 +99,7 @@ This command will:
 **Next steps after setting domain:**
 1. Point DNS A record to your server's IP address
 2. Wait for DNS propagation (1-48 hours)
-3. Install SSL certificate: `certbot --nginx -d your-domain.com`
-4. Uncomment SSL lines in `/etc/nginx/conf.d/<app_name>.conf`
+3. Install SSL certificate: `sudo ./deploy.sh install-ssl <domain>`
 
 ## Project Structure
 
@@ -164,15 +164,41 @@ sudo ./deploy.sh status
 ### Configure Domain
 
 ```bash
-sudo ./deploy.sh set-domain <app_name> <domain>
+sudo ./deploy.sh set-domain <domain>
 ```
 
 Example:
 ```bash
-sudo ./deploy.sh set-domain movie_app movies.example.com
+sudo ./deploy.sh set-domain movies.example.com
 ```
 
-This configures Nginx to route the domain to your application's 10 worker processes.
+This configures Nginx to route the domain to your application's 10 worker processes (app name is auto-detected).
+
+### Install SSL Certificate
+
+After setting a domain and ensuring DNS is configured, install an SSL certificate:
+
+```bash
+sudo ./deploy.sh install-ssl <domain>
+```
+
+Example:
+```bash
+sudo ./deploy.sh install-ssl movies.example.com
+```
+
+This command will:
+- Install certbot if needed
+- Verify DNS is pointing to your server
+- Request SSL certificate from Let's Encrypt
+- Automatically update Nginx configuration with SSL paths
+- Enable HTTPS with security headers
+- Set up automatic certificate renewal
+
+**Requirements:**
+- DNS A record must point to your server's IP
+- Port 80 must be accessible from the internet
+- Domain must be publicly resolvable
 
 ### Uninitialize Server (Cleanup)
 ```bash

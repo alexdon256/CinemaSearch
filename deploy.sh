@@ -99,11 +99,21 @@ init_server() {
     systemctl enable nginx.service
     systemctl start nginx.service
     
+    # Deploy application automatically
+    log_info "Deploying CineStream application..."
+    deploy_application
+    
     log_success "Server initialization complete!"
     log_info "MongoDB is running on 127.0.0.1:27017"
     log_info "Nginx is configured and running"
+    log_info "Application deployed and configured"
     log_info "All services configured to auto-start on boot"
     log_info "CPU affinity: MongoDB & Nginx -> P-cores (0-5), Python apps -> E-cores (6-13)"
+    log_info ""
+    log_info "Next steps:"
+    log_info "1. Configure .env file: nano /var/www/cinestream/.env"
+    log_info "2. Set domain: sudo ./deploy.sh set-domain <domain>"
+    log_info "3. Configure DNS and install SSL: sudo ./deploy.sh install-ssl <domain>"
 }
 
 # Install CPU affinity management scripts
@@ -519,23 +529,351 @@ uninit_server() {
     log_info "To completely reinitialize, run: $0 init-server"
 }
 
-# Set domain for an application
-set_domain() {
-    local APP_NAME="${1:-}"
-    local DOMAIN="${2:-}"
+# Deploy application automatically
+deploy_application() {
+    local APP_NAME="cinestream"
+    local APP_DIR="$WWW_ROOT/$APP_NAME"
+    local SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     
-    if [[ -z "$APP_NAME" ]] || [[ -z "$DOMAIN" ]]; then
-        log_error "Usage: $0 set-domain <app_name> <domain>"
-        log_error "Example: $0 set-domain movie_app movies.example.com"
+    log_info "Deploying application to $APP_DIR..."
+    
+    # Create application directory
+    mkdir -p "$APP_DIR"
+    mkdir -p "$APP_DIR/src/static/movie_images"
+    
+    # Copy application files
+    log_info "Copying application files..."
+    if [[ -d "$SCRIPT_DIR/src" ]]; then
+        cp -r "$SCRIPT_DIR/src" "$APP_DIR/"
+        cp "$SCRIPT_DIR/requirements.txt" "$APP_DIR/" 2>/dev/null || true
+    else
+        log_error "Source directory not found: $SCRIPT_DIR/src"
+        log_error "Please run deploy.sh from the project root directory"
+        return 1
+    fi
+    
+    # Create Python virtual environment
+    log_info "Creating Python virtual environment..."
+    if [[ ! -d "$APP_DIR/venv" ]]; then
+        python3 -m venv "$APP_DIR/venv"
+    fi
+    
+    # Install Python dependencies
+    log_info "Installing Python dependencies..."
+    "$APP_DIR/venv/bin/pip" install --upgrade pip --quiet
+    "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt" --quiet
+    
+    # Create .env file template if it doesn't exist
+    if [[ ! -f "$APP_DIR/.env" ]]; then
+        log_info "Creating .env file template..."
+        cat > "$APP_DIR/.env" <<EOF
+# MongoDB connection (default: no authentication)
+MONGO_URI=mongodb://127.0.0.1:27017/movie_db
+
+# If MongoDB has authentication enabled:
+# MONGO_URI=mongodb://username:password@127.0.0.1:27017/movie_db?authSource=admin
+
+# Anthropic API key (REQUIRED - get from https://console.anthropic.com/)
+ANTHROPIC_API_KEY=your-api-key-here
+
+# Flask secret key (auto-generated)
+SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || echo "change-me-in-production")
+
+# Optional: Claude model selection (haiku = fastest/cheapest, sonnet = more capable)
+CLAUDE_MODEL=haiku
+EOF
+        chmod 600 "$APP_DIR/.env"
+        log_warning ".env file created with default values. Please update ANTHROPIC_API_KEY!"
+    else
+        log_info ".env file already exists, skipping creation"
+    fi
+    
+    # Create deployment configuration
+    log_info "Creating deployment configuration..."
+    cat > "$APP_DIR/.deploy_config" <<EOF
+APP_NAME=$APP_NAME
+START_PORT=8001
+PROCESS_COUNT=10
+DOMAIN_NAME=""
+EOF
+    
+    # Initialize database (if .env is configured)
+    log_info "Initializing database..."
+    if grep -q "your-api-key-here" "$APP_DIR/.env" 2>/dev/null; then
+        log_warning "Skipping database initialization - please update ANTHROPIC_API_KEY in .env first"
+    else
+        if "$APP_DIR/venv/bin/python" "$APP_DIR/src/scripts/init_db.py" 2>/dev/null; then
+            log_success "Database initialized"
+        else
+            log_warning "Database initialization failed (may need .env configuration)"
+        fi
+    fi
+    
+    # Create systemd service template
+    log_info "Creating systemd services..."
+    local SERVICE_USER
+    # Use SUDO_USER if available (when running with sudo), otherwise use current user
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        SERVICE_USER="$SUDO_USER"
+    else
+        SERVICE_USER=$(whoami)
+    fi
+    
+    cat > "$SYSTEMD_DIR/${APP_NAME}@.service" <<EOF
+[Unit]
+Description=CineStream Web Worker (Port %i)
+After=network.target mongodb.service
+PartOf=cinestream.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+Group=$SERVICE_USER
+WorkingDirectory=$APP_DIR
+Environment="PATH=$APP_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=$APP_DIR/venv/bin/python $APP_DIR/src/main.py --port %i
+Restart=always
+RestartSec=10
+CPUAffinity=6 7 8 9 10 11 12 13
+ExecStartPost=/bin/bash -c 'sleep 1 && /usr/local/bin/cinestream-set-cpu-affinity.sh python || true'
+
+[Install]
+WantedBy=cinestream.target
+EOF
+    
+    # Reload systemd
+    systemctl daemon-reload
+    
+    # Enable and start all 10 processes
+    log_info "Starting application processes..."
+    for port in {8001..8010}; do
+        systemctl enable "${APP_NAME}@${port}.service" 2>/dev/null || true
+        systemctl start "${APP_NAME}@${port}.service" 2>/dev/null || true
+    done
+    
+    # Configure firewall
+    log_info "Configuring firewall..."
+    if command -v firewall-cmd &> /dev/null; then
+        firewall-cmd --permanent --add-service=http 2>/dev/null || true
+        firewall-cmd --permanent --add-service=https 2>/dev/null || true
+        firewall-cmd --reload 2>/dev/null || true
+        log_success "Firewall configured"
+    else
+        log_warning "firewall-cmd not found, skipping firewall configuration"
+    fi
+    
+    # Wait a moment for processes to start
+    sleep 2
+    
+    # Check if processes are running
+    local running=0
+    for port in {8001..8010}; do
+        if systemctl is-active --quiet "${APP_NAME}@${port}.service" 2>/dev/null; then
+            ((running++))
+        fi
+    done
+    
+    if [[ $running -gt 0 ]]; then
+        log_success "Application deployed successfully!"
+        log_info "  - $running/10 processes running"
+        log_info "  - Application directory: $APP_DIR"
+        log_info "  - Services: ${APP_NAME}@8001.service to ${APP_NAME}@8010.service"
+    else
+        log_warning "Application deployed but processes may not be running"
+        log_warning "Check .env file and logs: sudo journalctl -u ${APP_NAME}@8001.service"
+    fi
+}
+
+# Auto-detect application name (finds first app in /var/www with .deploy_config)
+detect_app_name() {
+    local APP_NAME=""
+    for app_dir in "$WWW_ROOT"/*; do
+        if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
+            APP_NAME=$(basename "$app_dir")
+            echo "$APP_NAME"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Install SSL certificate for an application
+install_ssl() {
+    local DOMAIN="${1:-}"
+    
+    if [[ -z "$DOMAIN" ]]; then
+        log_error "Usage: $0 install-ssl <domain>"
+        log_error "Example: $0 install-ssl movies.example.com"
         exit 1
     fi
+    
+    # Auto-detect app name
+    local APP_NAME
+    APP_NAME=$(detect_app_name)
+    if [[ -z "$APP_NAME" ]]; then
+        log_error "No application found in $WWW_ROOT"
+        log_error "Please deploy an application first"
+        exit 1
+    fi
+    
+    log_info "Detected application: $APP_NAME"
     
     local APP_DIR="$WWW_ROOT/$APP_NAME"
+    local NGINX_CONF="$NGINX_CONF_DIR/${APP_NAME}.conf"
     
-    if [[ ! -d "$APP_DIR" ]]; then
-        log_error "Application '$APP_NAME' not found in $WWW_ROOT"
+    if [[ ! -f "$NGINX_CONF" ]]; then
+        log_error "Nginx configuration not found for '$APP_NAME'"
+        log_error "Please run 'set-domain' first: $0 set-domain $DOMAIN"
         exit 1
     fi
+    
+    log_info "Installing SSL certificate for '$DOMAIN'..."
+    
+    # Check if certbot is installed
+    if ! command -v certbot &> /dev/null; then
+        log_info "Certbot not found. Installing certbot..."
+        swupd bundle-add certbot -y || {
+            log_error "Failed to install certbot. Please install manually: swupd bundle-add certbot"
+            exit 1
+        }
+        log_success "Certbot installed"
+    fi
+    
+    # Verify DNS is pointing to this server
+    log_info "Verifying DNS configuration..."
+    local SERVER_IP
+    SERVER_IP=$(curl -s ifconfig.me || curl -s ipinfo.io/ip || echo "")
+    
+    if [[ -z "$SERVER_IP" ]]; then
+        log_warning "Could not determine server IP. Skipping DNS verification."
+    else
+        local DNS_IP
+        DNS_IP=$(dig +short "$DOMAIN" A | head -n1)
+        
+        if [[ -z "$DNS_IP" ]]; then
+            log_warning "DNS lookup failed for $DOMAIN. Make sure DNS is configured."
+        elif [[ "$DNS_IP" != "$SERVER_IP" ]]; then
+            log_warning "DNS mismatch detected!"
+            log_warning "  Domain $DOMAIN points to: $DNS_IP"
+            log_warning "  This server IP is: $SERVER_IP"
+            log_warning "  Certificate installation may fail if DNS is not correct."
+            read -p "Continue anyway? (y/N): " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                log_info "Cancelled. Please fix DNS first."
+                exit 1
+            fi
+        else
+            log_success "DNS verified: $DOMAIN -> $SERVER_IP"
+        fi
+    fi
+    
+    # Ensure ACME challenge directory exists
+    mkdir -p /var/www/html/.well-known/acme-challenge
+    chmod 755 /var/www/html/.well-known/acme-challenge
+    
+    # Install certificate using certbot
+    log_info "Requesting SSL certificate from Let's Encrypt..."
+    log_info "This may take a few moments..."
+    
+    # Use webroot method (doesn't require nginx plugin, works with our existing config)
+    if certbot certonly --webroot -w /var/www/html -d "$DOMAIN" --non-interactive --agree-tos --email "admin@${DOMAIN}" 2>&1 | tee /tmp/certbot_output.log; then
+        log_success "SSL certificate installed successfully!"
+    else
+        log_error "SSL certificate installation failed!"
+        log_error "Check the output above for details."
+        log_error ""
+        log_error "Common issues:"
+        log_error "  1. DNS not pointing to this server"
+        log_error "  2. Port 80 not accessible from internet"
+        log_error "  3. Firewall blocking port 80"
+        log_error "  4. Domain already has a certificate (use --force-renewal to renew)"
+        exit 1
+    fi
+    
+    # Update Nginx configuration with SSL paths
+    log_info "Updating Nginx configuration with SSL certificate paths..."
+    
+    # Backup original config
+    cp "$NGINX_CONF" "${NGINX_CONF}.backup"
+    
+    # Uncomment and update SSL certificate paths
+    sed -i "s|# ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;|ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;|" "$NGINX_CONF"
+    sed -i "s|# ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;|ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;|" "$NGINX_CONF"
+    sed -i "s|# ssl_protocols|ssl_protocols|" "$NGINX_CONF"
+    sed -i "s|# ssl_ciphers|ssl_ciphers|" "$NGINX_CONF"
+    sed -i "s|# ssl_prefer_server_ciphers|ssl_prefer_server_ciphers|" "$NGINX_CONF"
+    sed -i "s|# add_header Strict-Transport-Security|add_header Strict-Transport-Security|" "$NGINX_CONF"
+    
+    log_success "Nginx configuration updated"
+    
+    # Test Nginx configuration
+    log_info "Testing Nginx configuration..."
+    if nginx -t 2>/dev/null; then
+        log_success "Nginx configuration is valid"
+        
+        # Reload Nginx
+        log_info "Reloading Nginx..."
+        if systemctl reload nginx.service 2>/dev/null; then
+            log_success "Nginx reloaded successfully"
+            log_info ""
+            log_success "SSL certificate is now active for $DOMAIN!"
+            log_info ""
+            log_info "Certificate details:"
+            log_info "  - Certificate: /etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
+            log_info "  - Private Key: /etc/letsencrypt/live/${DOMAIN}/privkey.pem"
+            log_info "  - Valid for: 90 days"
+            log_info "  - Auto-renewal: Enabled via certbot.timer"
+            log_info ""
+            log_info "Test your HTTPS site: https://${DOMAIN}"
+        else
+            log_error "Failed to reload Nginx. Check logs: journalctl -u nginx.service"
+            log_info "Restoring backup configuration..."
+            mv "${NGINX_CONF}.backup" "$NGINX_CONF"
+            exit 1
+        fi
+    else
+        log_error "Nginx configuration test failed!"
+        log_error "Restoring backup configuration..."
+        mv "${NGINX_CONF}.backup" "$NGINX_CONF"
+        exit 1
+    fi
+    
+    # Ensure certbot auto-renewal is enabled
+    log_info "Ensuring certbot auto-renewal is enabled..."
+    systemctl enable certbot.timer 2>/dev/null || true
+    systemctl start certbot.timer 2>/dev/null || true
+    
+    if systemctl is-active --quiet certbot.timer; then
+        log_success "Certbot auto-renewal is active"
+    else
+        log_warning "Certbot auto-renewal timer is not active. Enable manually:"
+        log_warning "  systemctl enable --now certbot.timer"
+    fi
+}
+
+# Set domain for an application
+set_domain() {
+    local DOMAIN="${1:-}"
+    
+    if [[ -z "$DOMAIN" ]]; then
+        log_error "Usage: $0 set-domain <domain>"
+        log_error "Example: $0 set-domain movies.example.com"
+        exit 1
+    fi
+    
+    # Auto-detect app name
+    local APP_NAME
+    APP_NAME=$(detect_app_name)
+    if [[ -z "$APP_NAME" ]]; then
+        log_error "No application found in $WWW_ROOT"
+        log_error "Please deploy an application first"
+        exit 1
+    fi
+    
+    log_info "Detected application: $APP_NAME"
+    
+    local APP_DIR="$WWW_ROOT/$APP_NAME"
     
     if [[ ! -f "$APP_DIR/.deploy_config" ]]; then
         log_error "Application '$APP_NAME' is not properly deployed (missing .deploy_config)"
@@ -581,15 +919,16 @@ EOF
     cat >> "$NGINX_CONF" <<EOF
 }
 
-# HTTP server - redirect to HTTPS
-server {
-    listen 80;
-    server_name ${DOMAIN};
-    
-    # Allow Let's Encrypt ACME challenge
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
+    # HTTP server - redirect to HTTPS
+    server {
+        listen 80;
+        server_name ${DOMAIN};
+        
+        # Allow Let's Encrypt ACME challenge
+        location /.well-known/acme-challenge/ {
+            root /var/www/html;
+            try_files \$uri =404;
+        }
     
     # Redirect all other traffic to HTTPS
     location / {
@@ -662,9 +1001,8 @@ EOF
             log_info "Next steps:"
             log_info "1. Point DNS A record for '$DOMAIN' to this server's IP address"
             log_info "2. Wait for DNS propagation (can take up to 48 hours)"
-            log_info "3. Install SSL certificate (e.g., using certbot):"
-            log_info "   certbot --nginx -d ${DOMAIN}"
-            log_info "4. Uncomment SSL lines in $NGINX_CONF after certificate is installed"
+            log_info "3. Install SSL certificate:"
+            log_info "   $0 install-ssl $DOMAIN"
         else
             log_error "Failed to reload Nginx. Check logs: journalctl -u nginx.service"
             exit 1
@@ -701,7 +1039,10 @@ main() {
             show_status
             ;;
         set-domain)
-            set_domain "${2:-}" "${3:-}"
+            set_domain "${2:-}"
+            ;;
+        install-ssl)
+            install_ssl "${2:-}"
             ;;
         *)
             echo "CineStream Master Deployment Script v21.0"
@@ -716,8 +1057,10 @@ main() {
             echo "  stop-all                       Stop all services"
             echo "  enable-autostart               Enable all services to start on boot"
             echo "  status                         Show status of all services"
-            echo "  set-domain <app> <domain>      Configure domain for an application"
-            echo "                                Example: $0 set-domain movie_app movies.example.com"
+            echo "  set-domain <domain>            Configure domain for the application"
+            echo "                                Example: $0 set-domain movies.example.com"
+            echo "  install-ssl <domain>          Install SSL certificate for a domain"
+            echo "                                Example: $0 install-ssl movies.example.com"
             exit 1
             ;;
     esac
@@ -726,6 +1069,18 @@ main() {
 # Enable all services to auto-start on boot
 enable_autostart() {
     log_info "Enabling all services for auto-start on boot..."
+    
+    # Ensure CPU affinity management is installed
+    if [[ ! -f /usr/local/bin/cinestream-set-cpu-affinity.sh ]]; then
+        log_info "CPU affinity management not found. Installing..."
+        install_cpu_affinity_scripts
+    fi
+    
+    # Enable CPU affinity services (critical for proper CPU core assignment)
+    log_info "Enabling CPU affinity management services..."
+    systemctl enable cinestream-cpu-affinity.service 2>/dev/null || true
+    systemctl enable cinestream-cpu-affinity.timer 2>/dev/null || true
+    systemctl start cinestream-cpu-affinity.timer 2>/dev/null || true
     
     # Enable core services
     systemctl enable mongodb.service 2>/dev/null || true
@@ -763,7 +1118,9 @@ enable_autostart() {
     systemctl daemon-reload
     
     log_success "All services enabled for auto-start on boot!"
+    log_info "CPU affinity management is active and will maintain proper CPU core assignment"
     log_info "Run 'sudo systemctl status cinestream.target' to verify"
+    log_info "Run 'sudo systemctl status cinestream-cpu-affinity.timer' to check affinity timer"
 }
 
 # Show status of all services
