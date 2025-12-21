@@ -89,9 +89,14 @@ def download_image(image_url: str, movie_title: str = None) -> str:
         if os.path.exists(filepath):
             try:
                 # Quick validation that it's actually an image
-                with Image.open(filepath) as test_img:
+                test_img = Image.open(filepath)
+                try:
                     test_img.verify()
-                return f"/static/movie_images/{filename}"
+                    test_img.close()  # Close after verify
+                    return f"/static/movie_images/{filename}"
+                except Exception:
+                    test_img.close()  # Ensure closed even if verify fails
+                    raise
             except Exception:
                 # File exists but is corrupted, remove it and re-download
                 try:
@@ -130,29 +135,40 @@ def download_image(image_url: str, movie_title: str = None) -> str:
         # Re-open for saving (verify() closes the image)
         img = Image.open(io.BytesIO(image_data))
         
-        # Convert to RGB if necessary (for JPEG compatibility)
-        original_mode = img.mode
-        if original_mode in ('RGBA', 'LA', 'P'):
-            # Create white background
-            rgb_img = Image.new('RGB', img.size, (255, 255, 255))
-            # Convert palette to RGBA if needed
-            if original_mode == 'P':
-                img = img.convert('RGBA')
-            # Paste with alpha channel as mask
-            if original_mode in ('RGBA', 'LA') or (original_mode == 'P' and img.mode == 'RGBA'):
-                rgb_img.paste(img, mask=img.split()[-1])  # Use alpha channel as mask
-            else:
-                rgb_img.paste(img)
-            img = rgb_img
-        
-        # Save as JPEG for consistency and smaller size
-        if not filename.endswith('.jpg'):
-            filename = filename.rsplit('.', 1)[0] + '.jpg'
-            filepath = os.path.join(IMAGE_BASE_DIR, filename)
-        
-        img.save(filepath, 'JPEG', quality=85, optimize=True)
-        
-        return f"/static/movie_images/{filename}"
+        try:
+            # Convert to RGB if necessary (for JPEG compatibility)
+            original_mode = img.mode
+            if original_mode in ('RGBA', 'LA', 'P'):
+                # Create white background
+                rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                # Convert palette to RGBA if needed
+                if original_mode == 'P':
+                    img = img.convert('RGBA')
+                # Paste with alpha channel as mask
+                if original_mode in ('RGBA', 'LA') or (original_mode == 'P' and img.mode == 'RGBA'):
+                    rgb_img.paste(img, mask=img.split()[-1])  # Use alpha channel as mask
+                else:
+                    rgb_img.paste(img)
+                img.close()  # Close original image
+                img = rgb_img
+            
+            # Save as JPEG for consistency and smaller size
+            if not filename.endswith('.jpg'):
+                filename = filename.rsplit('.', 1)[0] + '.jpg'
+                filepath = os.path.join(IMAGE_BASE_DIR, filename)
+            
+            img.save(filepath, 'JPEG', quality=85, optimize=True)
+            img.close()  # Ensure image is closed after saving
+            
+            return f"/static/movie_images/{filename}"
+        except Exception as e:
+            # Ensure image is closed even if save fails
+            if img:
+                try:
+                    img.close()
+                except Exception:
+                    pass
+            raise
         
     except Exception as e:
         print(f"Error downloading image from {image_url}: {e}")
@@ -168,16 +184,25 @@ def cleanup_old_images():
         cutoff_date = datetime.now() - timedelta(days=IMAGE_EXPIRY_DAYS)
         
         removed_count = 0
+        # Only process image files, skip directories and other files
         for filepath in Path(IMAGE_BASE_DIR).glob('*'):
             if filepath.is_file():
-                # Check file modification time
-                mtime = datetime.fromtimestamp(filepath.stat().st_mtime)
-                if mtime < cutoff_date:
-                    try:
-                        filepath.unlink()
-                        removed_count += 1
-                    except Exception as e:
-                        print(f"Error removing old image {filepath}: {e}")
+                # Only process image files
+                if not filepath.suffix.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
+                    continue
+                try:
+                    # Check file modification time
+                    mtime = datetime.fromtimestamp(filepath.stat().st_mtime)
+                    if mtime < cutoff_date:
+                        try:
+                            filepath.unlink()
+                            removed_count += 1
+                        except (OSError, PermissionError) as e:
+                            print(f"Error removing old image {filepath}: {e}")
+                except (OSError, ValueError) as e:
+                    # Skip files that can't be accessed or have invalid timestamps
+                    print(f"Error accessing file {filepath}: {e}")
+                    continue
         
         if removed_count > 0:
             print(f"Cleaned up {removed_count} old movie images")

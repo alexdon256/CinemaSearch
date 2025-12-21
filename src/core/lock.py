@@ -62,8 +62,10 @@ def acquire_lock(db: Database, city_name: str, lock_source: str = LOCK_SOURCE_ON
         )
         
         # If no document exists, create one with processing status
+        # Use upsert directly to avoid race condition
         if result.matched_count == 0:
-            db.locations.update_one(
+            # Try upsert - this is atomic and prevents race conditions
+            upsert_result = db.locations.update_one(
                 {'city_name': city_name},
                 {
                     '$set': {
@@ -74,6 +76,33 @@ def acquire_lock(db: Database, city_name: str, lock_source: str = LOCK_SOURCE_ON
                 },
                 upsert=True
             )
+            # Check if we actually created/updated the document
+            # If another process created it between our check and upsert, 
+            # we need to verify we got the lock
+            if upsert_result.upserted_id or upsert_result.modified_count > 0:
+                return True
+            # If upsert didn't modify anything, another process might have the lock
+            # Check the current status
+            current = db.locations.find_one({'city_name': city_name})
+            if current and current.get('status') == 'processing':
+                # Check if lock is expired or we can override it
+                if priority and current.get('lock_source') == LOCK_SOURCE_DAILY:
+                    # Can override daily refresh
+                    override_result = db.locations.update_one(
+                        {
+                            'city_name': city_name,
+                            'lock_source': LOCK_SOURCE_DAILY
+                        },
+                        {
+                            '$set': {
+                                'status': 'processing',
+                                'lock_source': lock_source,
+                                'last_updated': now
+                            }
+                        }
+                    )
+                    return override_result.modified_count > 0
+                return False
             return True
         
         return result.modified_count > 0
@@ -130,8 +159,18 @@ def is_locked(db: Database, city_name: str) -> bool:
         # Check if lock has timed out
         last_updated = city.get('last_updated')
         if last_updated and isinstance(last_updated, datetime):
-            if datetime.utcnow() - last_updated > timedelta(seconds=LOCK_TIMEOUT):
-                return False  # Lock expired
+            # Handle both timezone-aware and naive datetimes
+            now = datetime.utcnow()
+            if last_updated.tzinfo is None:
+                # Naive datetime - compare directly
+                if now - last_updated > timedelta(seconds=LOCK_TIMEOUT):
+                    return False  # Lock expired
+            else:
+                # Timezone-aware - convert now to same timezone
+                from datetime import timezone
+                now_aware = now.replace(tzinfo=timezone.utc)
+                if now_aware - last_updated > timedelta(seconds=LOCK_TIMEOUT):
+                    return False  # Lock expired
         
         return True
         

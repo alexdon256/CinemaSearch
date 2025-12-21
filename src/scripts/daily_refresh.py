@@ -83,17 +83,37 @@ def refresh_all_cities():
         
         print(f"Refreshing {city_name}...")
         
-        # Check if on-demand scraping is in progress (don't override user requests)
-        lock_info = get_lock_info(db, city_name)
-        if lock_info and lock_info.get('source') == 'on-demand':
-            print(f"  ⚠ Skipping {city_name} (on-demand scraping in progress - will retry later)")
-            continue
-        
         # Build location_id early for error handling (use input values)
+        # Must be defined before any checks that use it
         if state:
             location_id = f"{city}, {state}, {country}"
         else:
             location_id = f"{city}, {country}"
+        
+        # Check if data is already fresh (within last 24 hours) - don't scrape over existing records
+        location_check = db.locations.find_one({'city_name': location_id})
+        if location_check and location_check.get('status') == 'fresh':
+            last_updated = location_check.get('last_updated')
+            if last_updated and isinstance(last_updated, datetime):
+                # Handle both timezone-aware and naive datetimes
+                now = datetime.utcnow()
+                if last_updated.tzinfo is None:
+                    # Naive datetime - compare directly
+                    hours_old = (now - last_updated).total_seconds() / 3600
+                else:
+                    # Timezone-aware - convert now to same timezone
+                    from datetime import timezone
+                    now_aware = now.replace(tzinfo=timezone.utc)
+                    hours_old = (now_aware - last_updated).total_seconds() / 3600
+                if hours_old < 24:
+                    print(f"  ⚠ Skipping {city_name} (data is fresh, preserving existing records)")
+                    continue
+        
+        # Check if on-demand scraping is in progress (don't override user requests)
+        lock_info = get_lock_info(db, location_id)
+        if lock_info and lock_info.get('source') == 'on-demand':
+            print(f"  ⚠ Skipping {city_name} (on-demand scraping in progress - will retry later)")
+            continue
         
         # Try to acquire lock (daily refresh has lower priority)
         if not acquire_lock(db, location_id, lock_source='daily-refresh', priority=False):
@@ -131,16 +151,72 @@ def refresh_all_cities():
                     upsert=True
                 )
                 
-                # Insert new showtimes (delete old ones first)
+                # Insert new showtimes (merge with existing, don't delete first)
                 if result.get('showtimes'):
                     # Ensure city_id is set correctly
                     for st in result['showtimes']:
                         st['city_id'] = location_id
-                    # Delete old showtimes for this location
-                    db.showtimes.delete_many({'city_id': location_id})
-                    # Insert new showtimes
-                    db.showtimes.insert_many(result['showtimes'])
-                    print(f"  ✓ Inserted {len(result['showtimes'])} showtimes")
+                    
+                    # Use upsert strategy to avoid deleting existing records
+                    upserted_count = 0
+                    inserted_count = 0
+                    
+                    try:
+                        for st in result['showtimes']:
+                            # Create a unique query to identify this specific showtime
+                            movie_title = st.get('movie', {})
+                            if not isinstance(movie_title, dict):
+                                movie_title = {}
+                            
+                            # Build query with required fields
+                            query = {
+                                'city_id': location_id,
+                                'cinema_id': st.get('cinema_id', ''),
+                                'start_time': st.get('start_time')
+                            }
+                            
+                            # Add movie title to query if available (helps identify duplicates)
+                            movie_en = movie_title.get('en')
+                            if movie_en:
+                                query['movie.en'] = movie_en
+                            
+                            # Remove None/empty values from query
+                            query = {k: v for k, v in query.items() if v is not None and v != ''}
+                            
+                            # Use replace_one with upsert=True to update existing or insert new
+                            # This preserves existing records and only updates/inserts what's new
+                            result_upsert = db.showtimes.replace_one(
+                                query,
+                                st,
+                                upsert=True
+                            )
+                            
+                            if result_upsert.upserted_id:
+                                inserted_count += 1
+                            elif result_upsert.modified_count > 0:
+                                upserted_count += 1
+                        
+                        if upserted_count > 0 or inserted_count > 0:
+                            print(f"  ✓ Updated {upserted_count} existing, inserted {inserted_count} new showtimes")
+                        
+                        # Only delete expired showtimes (older than 24 hours past their start_time)
+                        from datetime import timedelta
+                        expired_cutoff = datetime.utcnow() - timedelta(hours=24)
+                        delete_result = db.showtimes.delete_many({
+                            'city_id': location_id,
+                            'start_time': {'$lt': expired_cutoff}
+                        })
+                        if delete_result.deleted_count > 0:
+                            print(f"  ✓ Cleaned up {delete_result.deleted_count} expired showtimes")
+                            
+                    except Exception as insert_error:
+                        # If insert fails, existing data is preserved
+                        print(f"  ✗ Error updating showtimes: {insert_error}")
+                        db.locations.update_one(
+                            {'city_name': location_id},
+                            {'$set': {'status': 'stale'}}
+                        )
+                        raise  # Re-raise to be caught by outer exception handler
                 
                 # Use location_id (not city_name) to release lock - they might differ
                 release_lock(db, location_id, 'fresh')

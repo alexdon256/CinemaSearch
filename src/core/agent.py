@@ -43,8 +43,23 @@ class ClaudeAgent:
         Returns:
             Dictionary with 'success', 'showtimes', and optional 'error'
         """
-        if not country:
+        # Input validation and sanitization
+        if not city or not isinstance(city, str) or not city.strip():
+            raise ValueError("City must be a non-empty string")
+        if not country or not isinstance(country, str) or not country.strip():
             raise ValueError("Country is required for accurate location identification")
+        
+        # Sanitize inputs
+        city = city.strip()[:100]
+        country = country.strip()[:100]
+        # Handle state - it can be None, empty string, or a valid string
+        if state:
+            if isinstance(state, str):
+                state = state.strip()[:100] if state.strip() else None
+            else:
+                state = None
+        else:
+            state = None
         
         # Build location string with state if available
         if state:
@@ -66,20 +81,24 @@ Requirements:
 1. Search for all official cinema chain websites operating SPECIFICALLY in {location}
 2. IMPORTANT: If there are multiple cities with the same name, ensure you are searching in {country}{f', {state}' if state else ''}, NOT other countries or states
 3. Look for major and minor cinema chains in that country/region (e.g., Multiplex, Planeta Kino for Ukraine; AMC, Regal, Cinemark for USA; Odeon, Vue, Cineworld for UK, etc.)
-4. Extract showtimes that are in the FUTURE only (not past screenings)
-4. For each showtime, extract:
+4. Extract showtimes from TODAY up to 2 WEEKS IN ADVANCE (or whatever is available on the cinema websites)
+   - Start from today's date
+   - Include all showtimes up to 14 days in the future
+   - If cinemas only show less than 2 weeks ahead, include whatever is available
+   - DO NOT include past showtimes
+5. For each showtime, extract:
    - Movie title (in local language, English, and other available languages)
    - Movie poster/image URL (high-quality poster image URL if available)
    - Cinema name and location/address (FULL address including street, building number, etc.)
    - Start time (ISO 8601 format with timezone)
-   - Format (2D, 3D, IMAX, 4DX, Dolby Atmos, etc.)
+   - Format (OPTIONAL - only include if available: 2D, 3D, IMAX, 4DX, Dolby Atmos, etc.)
    - Price (in local currency if available)
    - Direct purchase link (deep link to ticketing page for that specific showing)
    - Audio language / dubbing / subtitles information
 
-5. Validate that all links point to actual ticketing pages
-6. Only include showtimes that are at least 1 hour in the future
-7. Include the local currency for prices (UAH for Ukraine, USD for USA, EUR for EU, etc.)
+6. Validate that all links point to actual ticketing pages
+7. Only include showtimes that are at least 1 hour in the future (to avoid showing showtimes that are about to start)
+8. Include the local currency for prices (UAH for Ukraine, USD for USA, EUR for EU, etc.)
 
 Return your findings as a JSON structure with this format:
 {{
@@ -96,7 +115,7 @@ Return your findings as a JSON structure with this format:
                     "movie_title": {{"en": "English Title", "local": "Local Language Title"}},
                     "movie_image_url": "https://example.com/poster.jpg",
                     "start_time": "2025-12-20T18:00:00+02:00",
-                    "format": "2D",
+                    "format": "2D",  // Optional: 2D, 3D, IMAX, 4DX, Dolby Atmos, etc. Only include if available
                     "price": "150 UAH",
                     "buy_link": "https://...",
                     "language": "Ukrainian dubbing",
@@ -111,6 +130,10 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
 """
         
         try:
+            # Validate prompt is not empty
+            if not prompt or not prompt.strip():
+                raise ValueError("Prompt is empty")
+            
             message = self.client.messages.create(
                 model=self.model,
                 max_tokens=4096,
@@ -123,7 +146,12 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
             )
             
             # Parse response
+            if not message.content or len(message.content) == 0:
+                raise ValueError("Empty response from API")
+            
             response_text = message.content[0].text
+            if not response_text or not response_text.strip():
+                raise ValueError("Empty response text from API")
             
             # Extract JSON from response (handle markdown code blocks)
             import json
@@ -138,6 +166,8 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
                 json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
                 if json_match:
                     response_text = json_match.group(0)
+                else:
+                    raise ValueError(f"No JSON found in response. Response: {response_text[:200]}")
             
             # Validate and parse JSON
             try:
@@ -182,7 +212,7 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
                 for st in cinema_showtimes:
                     if not isinstance(st, dict):
                         continue
-                    # Validate time is in future
+                    # Validate time is in future and within 2 weeks
                     try:
                         time_str = st.get('start_time', '')
                         if not time_str:
@@ -198,8 +228,15 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
                             start_time = start_time.replace(tzinfo=timezone.utc)
                         
                         now = datetime.now(start_time.tzinfo) if start_time.tzinfo else datetime.utcnow()
+                        
+                        # Skip if showtime is less than 1 hour in the future (too soon)
                         if start_time < now + timedelta(hours=1):
                             continue  # Skip past or too-close showtimes
+                        
+                        # Skip if showtime is more than 2 weeks in the future
+                        two_weeks_from_now = now + timedelta(days=14)
+                        if start_time > two_weeks_from_now:
+                            continue  # Skip showtimes beyond 2 weeks
                     except (ValueError, KeyError, TypeError) as e:
                         print(f"Invalid date format in showtime: {e}")
                         continue  # Skip invalid dates
@@ -233,7 +270,7 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
                         'movie_image_url': movie_image_url,  # Original URL
                         'movie_image_path': movie_image_path,  # Local path if downloaded
                         'start_time': start_time,
-                        'format': st.get('format', '2D'),
+                        'format': st.get('format'),  # Optional - only include if available
                         'price': st.get('price', ''),
                         'buy_link': st.get('buy_link', ''),
                         'language': st.get('language', ''),
