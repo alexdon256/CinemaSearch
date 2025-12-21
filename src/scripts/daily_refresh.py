@@ -16,6 +16,7 @@ from pymongo.errors import ConnectionFailure
 from dotenv import load_dotenv
 from core.agent import ClaudeAgent
 from core.lock import acquire_lock, release_lock, get_lock_info
+from core.image_handler import cleanup_old_images
 
 # Load environment variables
 load_dotenv()
@@ -147,11 +148,21 @@ def refresh_all_cities():
             print(f"  ✗ Exception: {e}")
             error_count += 1
     
+    # Cleanup old images (runs daily)
+    print()
+    print("Cleaning up old movie images...")
+    removed_images = cleanup_old_images()
+    if removed_images > 0:
+        print(f"  ✓ Removed {removed_images} old images")
+    else:
+        print("  ✓ No old images to remove")
+    
     print()
     print("=" * 60)
     print(f"Daily refresh completed:")
     print(f"  Success: {success_count}")
     print(f"  Errors: {error_count}")
+    print(f"  Images cleaned: {removed_images}")
     print("=" * 60)
 
 if __name__ == '__main__':

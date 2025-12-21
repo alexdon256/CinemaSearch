@@ -14,6 +14,7 @@ from pymongo.errors import ConnectionFailure
 from dotenv import load_dotenv
 from core.agent import ClaudeAgent
 from core.lock import acquire_lock, release_lock, get_lock_info
+from core.image_handler import cleanup_old_images, ensure_image_directory
 
 # Load environment variables
 load_dotenv()
@@ -293,6 +294,11 @@ def api_scrape():
                 db.showtimes.delete_many({'city_id': location_id})
                 # Insert new showtimes
                 db.showtimes.insert_many(showtimes_to_insert)
+                
+                # Cleanup old images periodically (every 10th scrape)
+                import random
+                if random.randint(1, 10) == 1:
+                    cleanup_old_images()
             
             release_lock(db, location_id)
             
@@ -342,6 +348,31 @@ def set_lang(lang):
     """Set language endpoint"""
     set_language(lang)
     return redirect(request.referrer or url_for('index'))
+
+@app.route('/static/movie_images/<filename>')
+def serve_movie_image(filename):
+    """Serve movie images from local storage"""
+    from flask import send_from_directory
+    from core.image_handler import IMAGE_BASE_DIR, ensure_image_directory
+    
+    try:
+        # Security: prevent directory traversal
+        if '..' in filename or '/' in filename or '\\' in filename:
+            return '', 404
+        ensure_image_directory()
+        return send_from_directory(IMAGE_BASE_DIR, filename)
+    except Exception as e:
+        print(f"Error serving image {filename}: {e}")
+        return '', 404
+
+@app.route('/api/cleanup-images', methods=['POST'])
+def api_cleanup_images():
+    """Manually trigger image cleanup (also called automatically)"""
+    try:
+        removed_count = cleanup_old_images()
+        return jsonify({'success': True, 'removed_count': removed_count})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 def main():
     """Main entry point"""

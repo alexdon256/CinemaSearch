@@ -69,7 +69,8 @@ Requirements:
 4. Extract showtimes that are in the FUTURE only (not past screenings)
 4. For each showtime, extract:
    - Movie title (in local language, English, and other available languages)
-   - Cinema name and location/address
+   - Movie poster/image URL (high-quality poster image URL if available)
+   - Cinema name and location/address (FULL address including street, building number, etc.)
    - Start time (ISO 8601 format with timezone)
    - Format (2D, 3D, IMAX, 4DX, Dolby Atmos, etc.)
    - Price (in local currency if available)
@@ -93,6 +94,7 @@ Return your findings as a JSON structure with this format:
             "showtimes": [
                 {{
                     "movie_title": {{"en": "English Title", "local": "Local Language Title"}},
+                    "movie_image_url": "https://example.com/poster.jpg",
                     "start_time": "2025-12-20T18:00:00+02:00",
                     "format": "2D",
                     "price": "150 UAH",
@@ -159,6 +161,17 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
                     else:
                         location_id = f"{result_city}, {result_country}"
                     
+                    # Get movie title for image naming
+                    movie_title = st.get('movie_title', {})
+                    movie_title_str = movie_title.get('en') or movie_title.get('local') or movie_title.get('ua') or ''
+                    
+                    # Download movie image if URL is provided
+                    movie_image_path = None
+                    movie_image_url = st.get('movie_image_url')
+                    if movie_image_url:
+                        from core.image_handler import download_image
+                        movie_image_path = download_image(movie_image_url, movie_title_str)
+                    
                     showtime = {
                         'city': result_city,
                         'state': result_state,
@@ -166,8 +179,10 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
                         'city_id': location_id,  # Combined for lookup
                         'cinema_id': cinema_name,
                         'cinema_name': cinema_name,
-                        'cinema_address': cinema_address,
-                        'movie': st.get('movie_title', {}),
+                        'cinema_address': cinema_address,  # Full address including street
+                        'movie': movie_title,
+                        'movie_image_url': movie_image_url,  # Original URL
+                        'movie_image_path': movie_image_path,  # Local path if downloaded
                         'start_time': start_time,
                         'format': st.get('format', '2D'),
                         'price': st.get('price', ''),

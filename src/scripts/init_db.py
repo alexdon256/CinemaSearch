@@ -55,14 +55,15 @@ def create_showtimes_collection():
     db.showtimes.create_index([("start_time", ASCENDING)], name="start_time_idx")
     db.showtimes.create_index([("city_id", ASCENDING)], name="city_id_idx")
     
-    # Create TTL index (expires after 90 days = 7,776,000 seconds)
+    # Create TTL index (expires after 90 days = 7,776,000 seconds = 3 months)
+    # This ensures showtimes and associated movie images are automatically deleted after 3 months
     db.showtimes.create_index(
         [("created_at", ASCENDING)],
-        expireAfterSeconds=7776000,
+        expireAfterSeconds=7776000,  # 90 days = 3 months
         name="created_at_ttl"
     )
     
-    print("  ✓ Created indexes: cinema_id+start_time, start_time, city_id, created_at (TTL: 90 days)")
+    print("  ✓ Created indexes: cinema_id+start_time, start_time, city_id, created_at (TTL: 90 days = 3 months)")
 
 def create_stats_collection():
     """Create stats collection and initialize visitor counter"""
