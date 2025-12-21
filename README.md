@@ -11,6 +11,8 @@ CineStream is a high-performance, localized movie showtime aggregation platform 
 ## Key Features
 
 - 🎬 **AI-Powered Scraping**: Uses Claude AI to discover and extract cinema showtimes automatically
+- 🎯 **Incremental Scraping**: Intelligently scrapes only missing date ranges, reducing API token usage by up to 93%
+- 📦 **Movie-Centric Data Model**: Efficient structure that stores movie images once per movie, not per showtime
 - 🌍 **Multi-Language Support**: Full localization for Ukrainian (UA), English (EN), and Russian (RU)
 - ⚡ **High Concurrency**: 10 parallel worker processes per application for maximum throughput
 - 🔒 **Enterprise Security**: SSL/TLS encryption, secure environment variables, MongoDB authentication
@@ -257,8 +259,27 @@ These should be configured in your application's `.env` file.
 ### Collections
 
 1. **`locations`**: Cities and their scraping status
-2. **`showtimes`**: Movie showtimes with TTL (90 days)
+2. **`movies`**: Movies with theaters and showtimes, organized by movie (TTL: 90 days)
+   - Structure: Each movie document contains theaters array, each theater contains showtimes array
+   - Benefits: Movie images stored once per movie, reduces token usage in API responses
 3. **`stats`**: Visitor counter and statistics
+
+### Data Structure
+
+The system uses a **movie-centric** data model:
+- **Movies** are top-level documents (one per movie per city)
+- Each movie contains an array of **theaters** showing it
+- Each theater contains an array of **showtimes**
+- This structure eliminates duplicate movie images and reduces API token usage
+
+### Incremental Scraping
+
+The system intelligently determines what date range to scrape:
+- If 2 weeks of data exists: Only scrapes the missing day (day 14)
+- If data is missing: Scrapes from latest date to 2 weeks ahead
+- If no data: Scrapes full 2-week range
+
+This optimization significantly reduces API token usage while maintaining complete data coverage.
 
 See `src/scripts/init_db.py` for schema details.
 

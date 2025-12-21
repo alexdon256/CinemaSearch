@@ -933,7 +933,67 @@
                 card.className = 'showtime-card';
                 
                 const movieTitle = st.movie?.en || st.movie?.local || st.movie?.ua || st.movie?.ru || 'Unknown Movie';
-                const startTime = new Date(st.start_time).toLocaleString('{{ lang }}');
+                // Parse ISO string with timezone and display in location's timezone (not user's browser timezone)
+                let startTime;
+                try {
+                    // Extract timezone offset from ISO string (e.g., "+02:00" or "-05:00")
+                    const tzMatch = st.start_time.match(/([+-]\d{2}):(\d{2})$/);
+                    
+                    if (tzMatch) {
+                        // ISO string has timezone info - parse and display in that timezone
+                        const tzOffset = tzMatch[0];
+                        const tzHours = parseInt(tzMatch[1]);
+                        const tzMinutes = parseInt(tzMatch[2]);
+                        const tzOffsetMinutes = (tzHours * 60) + (tzHours >= 0 ? tzMinutes : -tzMinutes);
+                        
+                        // Parse the ISO string (JavaScript Date handles timezone correctly)
+                        const date = new Date(st.start_time);
+                        
+                        // Get UTC time in milliseconds
+                        const utcTime = date.getTime();
+                        
+                        // Calculate location time: UTC time + location offset
+                        // JavaScript Date.getTime() returns UTC, so we add the location offset
+                        const locationTime = utcTime + (tzOffsetMinutes * 60000);
+                        const locationDate = new Date(locationTime);
+                        
+                        // Format in location's timezone
+                        startTime = locationDate.toLocaleString('{{ lang }}', {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            timeZone: 'UTC' // Format as if in UTC, then we'll adjust
+                        });
+                        
+                        // Actually, simpler: just format the date and show timezone
+                        // The ISO string already has the correct time, we just need to display it
+                        // Extract date/time parts from ISO string directly
+                        const isoMatch = st.start_time.match(/(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+                        if (isoMatch) {
+                            const [, dateStr, hour, minute] = isoMatch;
+                            const dateObj = new Date(dateStr);
+                            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                            const day = dateObj.getDate();
+                            const month = monthNames[dateObj.getMonth()];
+                            const year = dateObj.getFullYear();
+                            startTime = `${day} ${month} ${year}, ${hour}:${minute}`;
+                            if (tzOffset !== '+00:00' && tzOffset !== 'Z') {
+                                startTime += ` (UTC${tzOffset})`;
+                            }
+                        } else {
+                            // Fallback to standard formatting
+                            startTime = date.toLocaleString('{{ lang }}');
+                        }
+                    } else {
+                        // No timezone info, use standard parsing
+                        const date = new Date(st.start_time);
+                        startTime = date.toLocaleString('{{ lang }}');
+                    }
+                } catch (e) {
+                    startTime = st.start_time || 'Invalid date';
+                }
                 const cinemaName = st.cinema_name || st.cinema_id || 'Unknown Cinema';
                 const cinemaAddress = st.cinema_address || '';
                 const hallInfo = st.hall ? ` | ${st.hall}` : '';
@@ -961,8 +1021,8 @@
                             ${cinemaAddressHtml}
                         </div>
                         <div style="margin-top: auto; padding-top: 1rem;">
-                            <div style="margin-bottom: 0.5rem; opacity: 0.8;">${[st.format, st.language, hallInfo, st.price].filter(x => x).join(' | ')}</div>
-                            <a href="${st.buy_link || '#'}" target="_blank" class="buy-btn">{{ translations.buy_tickets }}</a>
+                            <div style="margin-bottom: 0.5rem; opacity: 0.8;">${[st.format, st.language, hallInfo].filter(x => x).join(' | ')}</div>
+                            ${st.cinema_website ? `<a href="${st.cinema_website}" target="_blank" class="buy-btn">{{ translations.buy_tickets }}</a>` : ''}
                         </div>
                     </div>
                 `;

@@ -42,7 +42,7 @@ This document provides a comprehensive overview of the CineStream system archite
                          │
          ┌───────────────▼────────────────┐
          │      MongoDB Database          │
-         │  (locations, showtimes, stats) │
+         │  (locations, movies, stats)    │
          │      P-cores (0-5)             │
          └────────────────────────────────┘
                          │
@@ -270,26 +270,38 @@ Request → Worker Process → ClaudeAgent → Claude API → Response
 1. User requests showtimes for "Kyiv"
 2. Worker checks MongoDB for fresh data
 3. If stale/missing:
-   a. Acquire lock (atomic MongoDB operation)
-   b. Spawn ClaudeAgent
-   c. Agent searches web for cinema websites
-   d. Agent extracts showtimes
-   e. Agent validates links
-   f. Store results in MongoDB
-   g. Release lock
-4. Return showtimes to user
+   a. Determine date range to scrape (incremental scraping)
+   b. Acquire lock (atomic MongoDB operation)
+   c. Spawn ClaudeAgent with date range
+   d. Agent searches web for cinema websites
+   e. Agent extracts showtimes organized by movie
+   f. Agent returns movie-centric structure (movies → theaters → showtimes)
+   g. Merge new data with existing movies/theaters
+   h. Store results in MongoDB
+   i. Release lock
+4. Return showtimes to user (flattened for frontend compatibility)
 ```
+
+### Incremental Scraping
+
+The system intelligently determines what date range to scrape:
+- **If 2 weeks of data exists**: Only scrapes the missing day (day 14)
+- **If data is missing**: Scrapes from latest date to 2 weeks ahead
+- **If no data**: Scrapes full 2-week range
+
+This optimization significantly reduces API token usage while maintaining complete data coverage.
 
 ### Agent Prompt Structure
 
-The agent receives a structured prompt:
+The agent receives a structured prompt with date range:
 
 ```
-Task: Scrape showtimes for city "X"
+Task: Scrape showtimes for city "X" from date Y to date Z
 Requirements:
 - Find official cinema websites
-- Extract future showtimes only
-- Validate purchase links
+- Extract showtimes in specified date range only
+- Group by movie (movies → theaters → showtimes)
+- Return cinema website (not per-showtime links)
 - Return structured JSON
 ```
 
@@ -336,14 +348,21 @@ Requirements:
 2. daily_refresh.py script runs
    ↓
 3. For each city in locations collection:
-   a. Acquire lock
-   b. Spawn ClaudeAgent
-   c. Scrape fresh data
-   d. Update MongoDB
-   e. Release lock
+   a. Determine date range to scrape (incremental)
+   b. Acquire lock
+   c. Spawn ClaudeAgent with date range
+   d. Scrape fresh data (only missing dates)
+   e. Merge new movies/theaters with existing data
+   f. Update MongoDB
+   g. Release lock
    ↓
 4. Log results
 ```
+
+**Incremental Scraping Benefits**:
+- If city has 2 weeks of data: Only scrapes day 14 (saves ~93% API tokens)
+- If city missing data: Scrapes from latest date to 2 weeks ahead
+- Prevents duplicate scraping of existing data
 
 ## Concurrency Control
 
@@ -415,31 +434,72 @@ If a city is being scraped:
 - `status` - For filtering by status
 - `city_name` (unique) - For lookups
 
-#### `showtimes` Collection
+#### `movies` Collection
 
 ```javascript
 {
   _id: ObjectId("..."),
-  cinema_id: "Multiplex",
-  cinema_name: "Multiplex",
+  city_id: "Kyiv, Ukraine",
+  city: "Kyiv",
+  state: "",
+  country: "Ukraine",
   movie: {
     en: "Avatar 2",
-    ua: "Аватар 2",
-    ru: "Аватар 2"
+    local: "Аватар 2",
+    ua: "Аватар 2"
   },
-  start_time: ISODate("2025-12-20T18:00:00Z"),
-  format: "3D",
-  price: "150 UAH",
-  buy_link: "https://cinema.com/tickets/12345",
-  language: "Ukrainian",
-  created_at: ISODate("2025-12-19T10:00:00Z")
+  movie_image_url: "https://example.com/poster.jpg",
+  movie_image_path: "/static/movie_images/abc123.jpg",
+  theaters: [
+    {
+      name: "Multiplex",
+      address: "123 Main Street, Kyiv",
+      website: "https://multiplex.ua",
+      showtimes: [
+        {
+          start_time: ISODate("2025-12-20T18:00:00Z"),
+          format: "3D",
+          language: "Ukrainian dubbing",
+          hall: "Hall 5"
+        },
+        {
+          start_time: ISODate("2025-12-20T21:00:00Z"),
+          format: "2D",
+          language: "Original",
+          hall: "Hall 3"
+        }
+      ]
+    },
+    {
+      name: "Planeta Kino",
+      address: "456 Cinema Avenue, Kyiv",
+      website: "https://planetakino.ua",
+      showtimes: [
+        {
+          start_time: ISODate("2025-12-20T19:30:00Z"),
+          format: "IMAX",
+          language: "Ukrainian subtitles"
+        }
+      ]
+    }
+  ],
+  created_at: ISODate("2025-12-19T10:00:00Z"),
+  updated_at: ISODate("2025-12-19T10:00:00Z")
 }
 ```
 
 **Indexes**:
-- `{cinema_id: 1, start_time: 1}` - For cinema queries
-- `start_time` - For time-based queries
+- `city_id` - For city-based queries
+- `movie.en` - For movie title lookups
+- `movie.local` - For local language lookups
+- `{city_id: 1, movie.en: 1}` - Compound index for upserts
 - `created_at` (TTL: 90 days) - Auto-delete old data
+
+**Benefits of Movie-Centric Structure**:
+- Movie images stored once per movie (not per showtime)
+- Reduces API token usage in responses
+- More efficient data structure
+- Easier to merge new data with existing movies
 
 #### `stats` Collection
 
@@ -540,7 +600,8 @@ server {
 
 - **In-Memory**: Each worker caches frequently accessed data
 - **Sticky Sessions**: Same user → same worker (cache hit)
-- **TTL**: Showtimes expire after 90 days
+- **TTL**: Movies expire after 90 days
+- **Incremental Scraping**: Only scrapes missing date ranges, reducing API calls
 
 ### Resource Usage
 

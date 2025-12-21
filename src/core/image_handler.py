@@ -181,7 +181,8 @@ def cleanup_old_images():
     """
     try:
         ensure_image_directory()
-        cutoff_date = datetime.now() - timedelta(days=IMAGE_EXPIRY_DAYS)
+        from datetime import timezone
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=IMAGE_EXPIRY_DAYS)
         
         removed_count = 0
         # Only process image files, skip directories and other files

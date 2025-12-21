@@ -85,8 +85,9 @@ Flask web application that:
 Claude AI agent wrapper that:
 - Communicates with Anthropic API
 - Scrapes cinema websites
-- Extracts showtime data
-- Validates purchase links
+- Extracts showtime data organized by movie
+- Implements incremental scraping (only scrapes missing date ranges)
+- Returns movie-centric structure (movies → theaters → showtimes)
 
 ### app_skeleton/src/core/lock.py
 Concurrency control mechanism that:
@@ -106,8 +107,9 @@ Database initialization script that:
 Daily background job that:
 - Runs at 06:00 AM via systemd timer
 - Refreshes data for all cities
-- Uses AI agents to scrape fresh showtimes
-- Updates MongoDB with new data
+- Uses AI agents to scrape fresh showtimes (incremental scraping)
+- Merges new data with existing movies/theaters
+- Updates MongoDB with new data while preserving existing records
 
 ## Environment Variables
 
@@ -124,11 +126,29 @@ SECRET_KEY=your-secret-key-here
 ### locations
 Stores city information and scraping status.
 
-### showtimes
-Stores movie showtimes with automatic expiration (90 days TTL).
+### movies
+Stores movies with theaters and showtimes in a movie-centric structure:
+- **Structure**: Each movie document contains:
+  - Movie title (multi-language: en, local, etc.)
+  - Movie image URL and local path
+  - Array of theaters showing this movie
+  - Each theater contains: name, address, website, and array of showtimes
+  - Each showtime contains: start_time, format (optional), language, hall (optional)
+- **Benefits**: 
+  - Movie images stored once per movie (not per showtime)
+  - Reduces API token usage in responses
+  - More efficient data structure
+- **TTL**: Automatic expiration after 90 days
 
 ### stats
 Stores visitor counter and other statistics.
+
+### Data Model Evolution
+
+The system uses a **movie-centric** approach instead of showtime-centric:
+- **Old**: Each showtime was a separate document with duplicated movie info
+- **New**: Movies are documents containing all their theaters and showtimes
+- **Result**: Significant reduction in storage and API token usage
 
 ## Process Architecture
 

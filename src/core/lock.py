@@ -25,7 +25,8 @@ def acquire_lock(db: Database, city_name: str, lock_source: str = LOCK_SOURCE_ON
         True if lock acquired, False if already locked
     """
     try:
-        now = datetime.utcnow()
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
         timeout_threshold = now - timedelta(seconds=LOCK_TIMEOUT)
         
         # Build query based on priority
@@ -126,7 +127,7 @@ def release_lock(db: Database, city_name: str, status: str = 'fresh'):
             {
                 '$set': {
                     'status': status,
-                    'last_updated': datetime.utcnow()
+                    'last_updated': datetime.now(timezone.utc)
                 },
                 '$unset': {
                     'lock_source': ''  # Clear lock_source when releasing
@@ -160,17 +161,19 @@ def is_locked(db: Database, city_name: str) -> bool:
         last_updated = city.get('last_updated')
         if last_updated and isinstance(last_updated, datetime):
             # Handle both timezone-aware and naive datetimes
-            now = datetime.utcnow()
+            from datetime import timezone
+            now_utc = datetime.now(timezone.utc)
+            
             if last_updated.tzinfo is None:
-                # Naive datetime - compare directly
-                if now - last_updated > timedelta(seconds=LOCK_TIMEOUT):
-                    return False  # Lock expired
+                # Naive datetime - assume UTC
+                last_updated_utc = last_updated.replace(tzinfo=timezone.utc)
             else:
-                # Timezone-aware - convert now to same timezone
-                from datetime import timezone
-                now_aware = now.replace(tzinfo=timezone.utc)
-                if now_aware - last_updated > timedelta(seconds=LOCK_TIMEOUT):
-                    return False  # Lock expired
+                # Timezone-aware - convert to UTC
+                last_updated_utc = last_updated.astimezone(timezone.utc)
+            
+            # Compare in UTC
+            if now_utc - last_updated_utc > timedelta(seconds=LOCK_TIMEOUT):
+                return False  # Lock expired
         
         return True
         

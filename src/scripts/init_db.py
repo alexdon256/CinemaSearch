@@ -6,7 +6,7 @@ Creates collections, indexes, and initial data structures
 
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pymongo import MongoClient, ASCENDING
 from pymongo.errors import ConnectionFailure
 from dotenv import load_dotenv
@@ -46,24 +46,30 @@ def create_locations_collection():
     
     print("  ✓ Created indexes: geo (2dsphere), status, city_name, country, state, city+state+country")
 
-def create_showtimes_collection():
-    """Create showtimes collection with indexes and TTL"""
-    print("Creating 'showtimes' collection...")
+def create_movies_collection():
+    """Create movies collection with indexes and TTL"""
+    print("Creating 'movies' collection...")
     
     # Create indexes
-    db.showtimes.create_index([("cinema_id", ASCENDING), ("start_time", ASCENDING)], name="cinema_time_idx")
-    db.showtimes.create_index([("start_time", ASCENDING)], name="start_time_idx")
-    db.showtimes.create_index([("city_id", ASCENDING)], name="city_id_idx")
+    # Index for finding movies by city
+    db.movies.create_index([("city_id", ASCENDING)], name="city_id_idx")
+    # Index for finding movies by title
+    db.movies.create_index([("movie.en", ASCENDING)], name="movie_en_idx")
+    db.movies.create_index([("movie.local", ASCENDING)], name="movie_local_idx")
+    # Compound index for city + movie title (for upserts)
+    db.movies.create_index([("city_id", ASCENDING), ("movie.en", ASCENDING)], name="city_movie_idx")
+    # Index for finding showtimes by date range (using nested theaters.showtimes.start_time)
+    # Note: MongoDB doesn't support direct indexing of nested arrays, but we can query them
     
     # Create TTL index (expires after 90 days = 7,776,000 seconds = 3 months)
-    # This ensures showtimes and associated movie images are automatically deleted after 3 months
-    db.showtimes.create_index(
+    # This ensures movies and associated movie images are automatically deleted after 3 months
+    db.movies.create_index(
         [("created_at", ASCENDING)],
         expireAfterSeconds=7776000,  # 90 days = 3 months
         name="created_at_ttl"
     )
     
-    print("  ✓ Created indexes: cinema_id+start_time, start_time, city_id, created_at (TTL: 90 days = 3 months)")
+    print("  ✓ Created indexes: city_id, movie.en, movie.local, city_id+movie.en, created_at (TTL: 90 days = 3 months)")
 
 def create_stats_collection():
     """Create stats collection and initialize visitor counter"""
@@ -74,7 +80,7 @@ def create_stats_collection():
         db.stats.insert_one({
             '_id': 'visitor_counter',
             'count': 0,
-            'created_at': datetime.utcnow()
+            'created_at': datetime.now(timezone.utc)
         })
         print("  ✓ Initialized visitor_counter")
     else:
@@ -89,7 +95,7 @@ def main():
     
     try:
         create_locations_collection()
-        create_showtimes_collection()
+        create_movies_collection()
         create_stats_collection()
         
         print()

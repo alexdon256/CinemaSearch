@@ -194,7 +194,8 @@ def api_showtimes():
             showtimes = []
         
         # Filter out past showtimes (handle both timezone-aware and naive datetimes)
-        now = datetime.utcnow()
+        from datetime import timezone
+        now_utc = datetime.now(timezone.utc)
         filtered_showtimes = []
         for s in showtimes:
             try:
@@ -203,16 +204,17 @@ def api_showtimes():
                     continue
                 # Handle timezone-aware datetimes
                 if isinstance(start_time, datetime):
+                    # Convert to UTC for consistent comparison
                     if start_time.tzinfo is None:
-                        # Naive datetime - compare directly with naive UTC
-                        if start_time > now:
-                            filtered_showtimes.append(s)
+                        # Naive datetime - assume UTC
+                        start_time_utc = start_time.replace(tzinfo=timezone.utc)
                     else:
-                        # Timezone-aware - convert now to same timezone or compare in UTC
-                        from datetime import timezone
-                        now_aware = now.replace(tzinfo=timezone.utc)
-                        if start_time > now_aware:
-                            filtered_showtimes.append(s)
+                        # Timezone-aware - convert to UTC
+                        start_time_utc = start_time.astimezone(timezone.utc)
+                    
+                    # Compare in UTC
+                    if start_time_utc > now_utc:
+                        filtered_showtimes.append(s)
             except Exception as e:
                 # Skip showtimes with invalid dates
                 print(f"Error processing showtime: {e}")
@@ -348,14 +350,17 @@ def api_scrape():
         last_updated = location.get('last_updated')
         if last_updated and isinstance(last_updated, datetime):
             # Handle both timezone-aware and naive datetimes
+            from datetime import timezone
+            now_utc = datetime.now(timezone.utc)
+            
             if last_updated.tzinfo is None:
-                # Naive datetime - compare directly
-                hours_old = (datetime.utcnow() - last_updated).total_seconds() / 3600
+                # Naive datetime - assume UTC and convert
+                last_updated_utc = last_updated.replace(tzinfo=timezone.utc)
             else:
-                # Timezone-aware - convert to UTC for comparison
-                from datetime import timezone
-                now_aware = datetime.utcnow().replace(tzinfo=timezone.utc)
-                hours_old = (now_aware - last_updated).total_seconds() / 3600
+                # Timezone-aware - convert to UTC
+                last_updated_utc = last_updated.astimezone(timezone.utc)
+            
+            hours_old = (now_utc - last_updated_utc).total_seconds() / 3600
             if hours_old < 24:
                 # Return existing showtimes immediately
                 showtimes = get_showtimes_for_city(location_id)
@@ -380,9 +385,12 @@ def api_scrape():
         return jsonify({'status': 'processing', 'message': message}), 202
     
     try:
+        # Determine date range to scrape (incremental scraping)
+        date_start, date_end = get_date_range_to_scrape(location_id)
+        
         # Spawn AI agent to scrape
         agent = ClaudeAgent()
-        result = agent.scrape_city_showtimes(city, country, state)
+        result = agent.scrape_city_showtimes(city, country, state, date_start, date_end)
         
         if result.get('success'):
             # Update location status with city/state/country info
@@ -394,83 +402,144 @@ def api_scrape():
                         'state': state or '',
                         'country': country,
                         'status': 'fresh',
-                        'last_updated': datetime.utcnow()
+                        'last_updated': datetime.now(timezone.utc)
                     }
                 },
                 upsert=True
             )
             
-            # Insert showtimes (merge with existing, don't delete first)
-            if result.get('showtimes'):
-                # Ensure city_id is set correctly and prepare showtimes
-                showtimes_to_insert = []
-                for st in result['showtimes']:
-                    st['city_id'] = location_id
-                    showtimes_to_insert.append(st)
+            # Insert/update movies (merge with existing, don't delete first)
+            if result.get('movies'):
+                upserted_count = 0
+                inserted_count = 0
                 
-                if showtimes_to_insert:
-                    # Use upsert strategy to avoid deleting existing records
-                    # Create unique identifier for each showtime (cinema + movie + start_time)
-                    upserted_count = 0
-                    inserted_count = 0
-                    
-                    try:
-                        for st in showtimes_to_insert:
-                            # Create a unique query to identify this specific showtime
-                            # Use cinema_id, movie title, and start_time as unique identifier
-                            movie_title = st.get('movie', {})
-                            if not isinstance(movie_title, dict):
-                                movie_title = {}
-                            
-                            # Build query with required fields
-                            query = {
-                                'city_id': location_id,
-                                'cinema_id': st.get('cinema_id', ''),
-                                'start_time': st.get('start_time')
-                            }
-                            
-                            # Add movie title to query if available (helps identify duplicates)
-                            movie_en = movie_title.get('en')
-                            if movie_en:
-                                query['movie.en'] = movie_en
-                            
-                            # Remove None/empty values from query
-                            query = {k: v for k, v in query.items() if v is not None and v != ''}
-                            
-                            # Use replace_one with upsert=True to update existing or insert new
-                            # This preserves existing records and only updates/inserts what's new
-                            result_upsert = db.showtimes.replace_one(
-                                query,
-                                st,
-                                upsert=True
-                            )
-                            
-                            if result_upsert.upserted_id:
-                                inserted_count += 1
-                            elif result_upsert.modified_count > 0:
-                                upserted_count += 1
+                try:
+                    for movie in result['movies']:
+                        # Ensure city_id is set
+                        movie['city_id'] = location_id
                         
-                        if upserted_count > 0 or inserted_count > 0:
-                            print(f"Updated {upserted_count} existing showtimes, inserted {inserted_count} new showtimes")
+                        # Create unique query for movie (city + movie title)
+                        movie_title = movie.get('movie', {})
+                        if not isinstance(movie_title, dict):
+                            movie_title = {}
                         
-                        # Only delete expired showtimes (older than 24 hours past their start_time)
-                        from datetime import timedelta
-                        expired_cutoff = datetime.utcnow() - timedelta(hours=24)
-                        delete_result = db.showtimes.delete_many({
+                        movie_en = movie_title.get('en')
+                        if not movie_en:
+                            continue  # Skip movies without English title
+                        
+                        query = {
                             'city_id': location_id,
-                            'start_time': {'$lt': expired_cutoff}
-                        })
-                        if delete_result.deleted_count > 0:
-                            print(f"Cleaned up {delete_result.deleted_count} expired showtimes")
+                            'movie.en': movie_en
+                        }
+                        
+                        # Update existing movie or insert new
+                        # For existing movies, merge theaters and showtimes
+                        existing_movie = db.movies.find_one(query)
+                        
+                        if existing_movie:
+                            # Merge theaters - update existing or add new
+                            existing_theaters = existing_movie.get('theaters', [])
+                            new_theaters = movie.get('theaters', [])
                             
-                    except Exception as insert_error:
-                        # If insert fails, existing data is preserved
-                        print(f"Error updating showtimes: {insert_error}")
-                        db.locations.update_one(
-                            {'city_name': location_id},
-                            {'$set': {'status': 'stale'}}
-                        )
-                        raise  # Re-raise to be caught by outer exception handler
+                            # Create a map of existing theaters by name
+                            theater_map = {t.get('name'): t for t in existing_theaters}
+                            
+                            # Merge new theaters
+                            for new_theater in new_theaters:
+                                theater_name = new_theater.get('name')
+                                if theater_name in theater_map:
+                                    # Theater exists - merge showtimes
+                                    existing_showtimes = theater_map[theater_name].get('showtimes', [])
+                                    new_showtimes = new_theater.get('showtimes', [])
+                                    
+                                    # Create set of existing showtime times to avoid duplicates
+                                    existing_times = {st.get('start_time') for st in existing_showtimes if st.get('start_time')}
+                                    
+                                    # Add new showtimes that don't exist
+                                    for new_st in new_showtimes:
+                                        if new_st.get('start_time') not in existing_times:
+                                            existing_showtimes.append(new_st)
+                                    
+                                    theater_map[theater_name]['showtimes'] = existing_showtimes
+                                    # Update address/website if provided
+                                    if new_theater.get('address'):
+                                        theater_map[theater_name]['address'] = new_theater.get('address')
+                                    if new_theater.get('website'):
+                                        theater_map[theater_name]['website'] = new_theater.get('website')
+                                else:
+                                    # New theater - add it
+                                    theater_map[theater_name] = new_theater
+                            
+                            # Update movie with merged theaters
+                            movie['theaters'] = list(theater_map.values())
+                            movie['updated_at'] = datetime.now(timezone.utc)
+                            
+                            # Preserve existing created_at
+                            if 'created_at' not in movie:
+                                from datetime import timezone
+                                movie['created_at'] = existing_movie.get('created_at', datetime.now(timezone.utc))
+                            
+                            result_upsert = db.movies.replace_one(query, movie)
+                            if result_upsert.modified_count > 0:
+                                upserted_count += 1
+                        else:
+                            # New movie - insert it
+                            result_insert = db.movies.insert_one(movie)
+                            if result_insert.inserted_id:
+                                inserted_count += 1
+                    
+                    if upserted_count > 0 or inserted_count > 0:
+                        print(f"Updated {upserted_count} existing movies, inserted {inserted_count} new movies")
+                    
+                    # Clean up expired showtimes (older than 24 hours past their start_time)
+                    from datetime import timedelta, timezone
+                    expired_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+                    
+                    # Update all movies to remove expired showtimes
+                    movies_to_update = list(db.movies.find({'city_id': location_id}))
+                    for movie in movies_to_update:
+                        theaters = movie.get('theaters', [])
+                        updated = False
+                        for theater in theaters:
+                            showtimes = theater.get('showtimes', [])
+                            original_count = len(showtimes)
+                            # Filter expired showtimes (convert to UTC for comparison)
+                            filtered_showtimes = []
+                            for st in showtimes:
+                                start_time = st.get('start_time')
+                                if isinstance(start_time, datetime):
+                                    # Convert to UTC for comparison, but preserve original timezone
+                                    if start_time.tzinfo is None:
+                                        start_time_utc = start_time.replace(tzinfo=timezone.utc)
+                                    else:
+                                        start_time_utc = start_time.astimezone(timezone.utc)
+                                    if start_time_utc >= expired_cutoff:
+                                        filtered_showtimes.append(st)  # Keep original timezone
+                            showtimes = filtered_showtimes
+                            if len(showtimes) != original_count:
+                                theater['showtimes'] = showtimes
+                                updated = True
+                        
+                        if updated:
+                            # Remove theaters with no showtimes
+                            movie['theaters'] = [t for t in theaters if t.get('showtimes')]
+                            # Update movie if it still has theaters
+                            if movie['theaters']:
+                                db.movies.replace_one({'_id': movie['_id']}, movie)
+                            else:
+                                # Remove movie if no theaters left
+                                db.movies.delete_one({'_id': movie['_id']})
+                            
+                except Exception as insert_error:
+                    # If insert fails, existing data is preserved
+                    print(f"Error updating movies: {insert_error}")
+                    import traceback
+                    traceback.print_exc()
+                    db.locations.update_one(
+                        {'city_name': location_id},
+                        {'$set': {'status': 'stale'}}
+                    )
+                    raise  # Re-raise to be caught by outer exception handler
                 
                 # Cleanup old images periodically (every 10th scrape)
                 import random
@@ -500,59 +569,186 @@ def api_scrape():
         print(f"Scraping error: {traceback.format_exc()}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+def get_date_range_to_scrape(city_id):
+    """
+    Determine what date range needs to be scraped.
+    Returns (start_date, end_date) - if we have 2 weeks of data, only scrape the missing day.
+    """
+    from datetime import timedelta, timezone
+    
+    now = datetime.now(timezone.utc)
+    two_weeks_from_now = now + timedelta(days=14)
+    
+    # Find all movies for this city
+    movies = list(db.movies.find({'city_id': city_id}))
+    
+    if not movies:
+        # No data yet, scrape full range
+        return now, two_weeks_from_now
+    
+    # Find the latest showtime date across all movies
+    # Convert all to UTC for comparison, but this is just for determining date range
+    latest_date_utc = None
+    for movie in movies:
+        theaters = movie.get('theaters', [])
+        for theater in theaters:
+            showtimes = theater.get('showtimes', [])
+            for st in showtimes:
+                start_time = st.get('start_time')
+                if isinstance(start_time, datetime):
+                    # Convert to UTC for comparison
+                    if start_time.tzinfo is None:
+                        start_time_utc = start_time.replace(tzinfo=timezone.utc)
+                    else:
+                        start_time_utc = start_time.astimezone(timezone.utc)
+                    if latest_date_utc is None or start_time_utc > latest_date_utc:
+                        latest_date_utc = start_time_utc
+    
+    latest_date = latest_date_utc
+    
+    if latest_date is None:
+        # No valid showtimes found, scrape full range
+        return now, two_weeks_from_now
+    
+    # Check if we have data up to 2 weeks ahead
+    target_end = now + timedelta(days=14)
+    
+    # If we already have data up to 2 weeks, only scrape the new day (2 weeks from now)
+    if latest_date >= target_end - timedelta(days=1):
+        # We have most data, only scrape the missing day
+        scrape_start = target_end - timedelta(days=1)
+        scrape_end = target_end
+        return scrape_start, scrape_end
+    else:
+        # We're missing data, scrape from latest_date to 2 weeks ahead
+        scrape_start = max(now, latest_date - timedelta(hours=1))  # Start from now or slightly before latest
+        scrape_end = target_end
+        return scrape_start, scrape_end
+
 def get_showtimes_for_city(city_name):
-    """Helper to get formatted showtimes for a city"""
-    query = {'city_id': city_name}
-    showtimes = list(db.showtimes.find(query).sort('start_time', 1))
-    
-    # Filter out past showtimes (handle both timezone-aware and naive datetimes)
-    now = datetime.utcnow()
-    filtered_showtimes = []
-    for s in showtimes:
-        start_time = s.get('start_time')
-        if not start_time:
-            continue
-        # Handle timezone-aware datetimes
-        if isinstance(start_time, datetime):
-            if start_time.tzinfo is None:
-                # Naive datetime - compare directly with naive UTC
-                if start_time > now:
-                    filtered_showtimes.append(s)
+    """Helper to get formatted showtimes for a city (flattened from movies structure)"""
+    try:
+        # Get all movies for this city
+        movies = list(db.movies.find({'city_id': city_name}))
+        
+        # Flatten movies structure to showtimes format for backward compatibility
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        
+        showtimes = []
+        for movie in movies:
+            movie_title = movie.get('movie', {})
+            movie_image_url = movie.get('movie_image_url')
+            movie_image_path = movie.get('movie_image_path')
+            
+            theaters = movie.get('theaters', [])
+            for theater in theaters:
+                theater_name = theater.get('name', 'Unknown')
+                theater_address = theater.get('address', '')
+                theater_website = theater.get('website', '')
+                
+                theater_showtimes = theater.get('showtimes', [])
+                for st in theater_showtimes:
+                    start_time = st.get('start_time')
+                    if isinstance(start_time, datetime):
+                        # Preserve original timezone - don't convert to UTC
+                        # Only convert to UTC for comparison purposes
+                        if start_time.tzinfo is None:
+                            # Naive datetime - assume UTC (shouldn't happen, but handle gracefully)
+                            start_time = start_time.replace(tzinfo=timezone.utc)
+                        
+                        # Convert to UTC only for comparison
+                        start_time_utc = start_time.astimezone(timezone.utc)
+                        
+                        # Only include future showtimes (compare in UTC)
+                        if start_time_utc >= now:
+                            # Store original timezone-aware datetime (preserves local timezone)
+                            showtimes.append({
+                                'city': movie.get('city', ''),
+                                'state': movie.get('state', ''),
+                                'country': movie.get('country', ''),
+                                'city_id': movie.get('city_id', ''),
+                                'cinema_id': theater_name,
+                                'cinema_name': theater_name,
+                                'cinema_address': theater_address,
+                                'cinema_website': theater_website,
+                                'movie': movie_title,
+                                'movie_image_url': movie_image_url,
+                                'movie_image_path': movie_image_path,
+                                'start_time': start_time,  # Original timezone preserved
+                                'format': st.get('format'),
+                                'language': st.get('language', ''),
+                                'hall': st.get('hall', ''),
+                                'created_at': movie.get('created_at')
+                            })
+                    else:
+                        # Try to parse string datetime
+                        try:
+                            if isinstance(start_time, str):
+                                start_time = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                            
+                            # Preserve timezone if present
+                            if start_time.tzinfo is None:
+                                start_time = start_time.replace(tzinfo=timezone.utc)
+                            
+                            # Convert to UTC for comparison
+                            start_time_utc = start_time.astimezone(timezone.utc)
+                            
+                            # Only include future showtimes (compare in UTC)
+                            if start_time_utc >= now:
+                                # Store original timezone-aware datetime
+                                showtimes.append({
+                                    'city': movie.get('city', ''),
+                                    'state': movie.get('state', ''),
+                                    'country': movie.get('country', ''),
+                                    'city_id': movie.get('city_id', ''),
+                                    'cinema_id': theater_name,
+                                    'cinema_name': theater_name,
+                                    'cinema_address': theater_address,
+                                    'cinema_website': theater_website,
+                                    'movie': movie_title,
+                                    'movie_image_url': movie_image_url,
+                                    'movie_image_path': movie_image_path,
+                                    'start_time': start_time,  # Original timezone preserved
+                                    'format': st.get('format'),
+                                    'language': st.get('language', ''),
+                                    'hall': st.get('hall', ''),
+                                    'created_at': movie.get('created_at')
+                                })
+                        except (ValueError, AttributeError):
+                            continue
+        
+        # Sort showtimes by start_time (ascending - earliest first)
+        def get_sort_time(st):
+            """Helper to extract sortable time from showtime"""
+            start_time = st.get('start_time')
+            if isinstance(start_time, datetime):
+                return start_time
+            elif isinstance(start_time, str):
+                try:
+                    return datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                except (ValueError, AttributeError):
+                    return datetime.max
             else:
-                # Timezone-aware - convert now to same timezone or compare in UTC
-                from datetime import timezone
-                now_aware = now.replace(tzinfo=timezone.utc)
-                if start_time > now_aware:
-                    filtered_showtimes.append(s)
-    showtimes = filtered_showtimes
-    
-    # Sort showtimes by start_time (ascending - earliest first)
-    # This ensures showtimes are displayed in chronological order
-    def get_sort_time(st):
-        """Helper to extract sortable time from showtime"""
-        start_time = st.get('start_time')
-        if isinstance(start_time, datetime):
-            return start_time
-        elif isinstance(start_time, str):
-            try:
-                return datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-            except (ValueError, AttributeError):
                 return datetime.max
-        else:
-            return datetime.max
-    
-    showtimes.sort(key=get_sort_time)
-    
-    # Convert datetime objects to ISO strings for JSON
-    for st in showtimes:
-        if isinstance(st.get('start_time'), datetime):
-            st['start_time'] = st['start_time'].isoformat()
-        if isinstance(st.get('created_at'), datetime):
-            st['created_at'] = st['created_at'].isoformat()
-        if '_id' in st:
-            st['_id'] = str(st['_id'])
-    
-    return showtimes
+        
+        showtimes.sort(key=get_sort_time)
+        
+        # Convert datetime objects to ISO strings for JSON
+        for st in showtimes:
+            if isinstance(st.get('start_time'), datetime):
+                st['start_time'] = st['start_time'].isoformat()
+            if isinstance(st.get('created_at'), datetime):
+                st['created_at'] = st['created_at'].isoformat()
+            if '_id' in st:
+                st['_id'] = str(st['_id'])
+        
+        return showtimes
+    except Exception as e:
+        print(f"Error getting showtimes for city: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 @app.route('/set-language/<lang>')
 def set_lang(lang):
