@@ -205,9 +205,10 @@ node --version
 
 After completing server initialization:
 
-1. **Configure Domain Name** - See [DOMAINS.md](DOMAINS.md)
-2. **Deploy Your First Site** - See [SITES.md](SITES.md)
+1. **Deploy Your Application** - Deploy your application manually or through your own deployment process
+2. **Manage Services** - See [SITES.md](SITES.md) for service management
 3. **Review Architecture** - See [ARCHITECTURE.md](ARCHITECTURE.md)
+4. **CPU Affinity** - See [CPU_AFFINITY.md](CPU_AFFINITY.md) for CPU configuration details
 
 ## Security Considerations
 

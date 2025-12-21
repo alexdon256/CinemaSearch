@@ -1,6 +1,8 @@
 # Service Management Guide
 
-This guide explains how to manage services and monitor the CineStream deployment.
+This guide explains how to manage services and monitor the CineStream server infrastructure.
+
+**Note:** This guide covers server infrastructure management only. Application deployment and site management are handled separately.
 
 ## Managing Services
 
@@ -121,7 +123,7 @@ sudo systemctl restart movie_app@*.service
 
 ## Daily Refresh Job
 
-Each site has a daily refresh timer that runs at 06:00 AM.
+Applications may have daily refresh timers that run at 06:00 AM (if configured).
 
 ### Check Timer Status
 
@@ -143,19 +145,19 @@ sudo journalctl -u movie_app-refresh.service
 
 ## Troubleshooting
 
-### Site Won't Start
+### Application Won't Start
 
 1. Check environment variables: `cat /var/www/<app_name>/.env`
 2. Check MongoDB connection: Test MONGO_URI
 3. Check logs: `sudo journalctl -u <app_name>@*.service`
 4. Verify port availability: `sudo netstat -tulpn | grep <port>`
+5. Verify application is properly deployed and configured
 
-### SSL Certificate Issues
+### Nginx Issues
 
-1. Check DNS: `dig <domain_name>`
-2. Verify Nginx config: `sudo nginx -t`
-3. Check certbot logs: `sudo journalctl -u certbot`
-4. Renew manually: `sudo certbot renew`
+1. Verify Nginx config: `sudo nginx -t`
+2. Check Nginx logs: `sudo tail -f /var/log/nginx/error.log`
+3. Reload Nginx: `sudo systemctl reload nginx`
 
 ### Processes Keep Restarting
 

@@ -27,11 +27,11 @@ CineStream is a high-performance, localized movie showtime aggregation platform 
 - **GIL Bypass**: Each process has its own Python interpreter, bypassing the GIL
 - **Fault Isolation**: One crashed process doesn't affect others
 
-### Multi-Site Multi-Tenancy
+### Server Infrastructure
 
-- **Complete Isolation**: Each application has its own directory, virtual environment, and systemd services
-- **Domain-Based Routing**: Nginx routes traffic based on domain name
-- **Scalable**: Deploy multiple independent applications on the same server
+- **Service Management**: Centralized management of MongoDB, Nginx, and application services
+- **CPU Affinity**: Optimized CPU core assignment for performance
+- **Auto-Start**: All services configured to start automatically on boot
 
 ## Quick Start
 
@@ -95,8 +95,8 @@ sudo ./deploy.sh uninit-server
 ├── docs/
 │   ├── SETUP.md             # Server setup guide
 │   ├── SITES.md             # Service management guide
-│   ├── DOMAINS.md           # Domain configuration guide
-│   └── ARCHITECTURE.md      # System architecture documentation
+│   ├── ARCHITECTURE.md      # System architecture documentation
+│   └── CPU_AFFINITY.md      # CPU affinity configuration
 └── README.md                # This file
 ```
 
@@ -106,8 +106,8 @@ Comprehensive documentation is available in the `docs/` directory:
 
 - **[SETUP.md](docs/SETUP.md)**: Complete server initialization guide
 - **[SITES.md](docs/SITES.md)**: Service management and monitoring
-- **[DOMAINS.md](docs/DOMAINS.md)**: DNS configuration and SSL setup
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)**: System design and data flow
+- **[CPU_AFFINITY.md](docs/CPU_AFFINITY.md)**: CPU affinity configuration
 
 ## Deployment Commands
 
@@ -116,7 +116,6 @@ Comprehensive documentation is available in the `docs/` directory:
 sudo ./deploy.sh init-server
 ```
 
-### Add Site
 ### Start All Services
 ```bash
 sudo ./deploy.sh start-all
@@ -166,7 +165,7 @@ All dependencies are automatically installed by `deploy.sh init-server`.
 
 ## Environment Variables
 
-Each application requires a `.env` file with:
+Applications deployed on the server require a `.env` file with:
 
 ```bash
 MONGO_URI=mongodb://user:pass@127.0.0.1:27017/movie_db?authSource=admin
@@ -177,6 +176,8 @@ SECRET_KEY=your-secret-key-here
 # Options: haiku (default, cheapest/fastest), sonnet (more capable)
 CLAUDE_MODEL=haiku
 ```
+
+Note: The `deploy.sh` script does not create or manage application deployments. You must deploy applications manually and configure them to work with the initialized server infrastructure.
 
 These should be configured in your application's `.env` file.
 
@@ -252,9 +253,9 @@ sudo systemctl list-units | grep movie_app
 
 ### Common Issues
 
-1. **SSL Certificate Fails**: Check DNS propagation (see [DOMAINS.md](docs/DOMAINS.md))
-2. **Processes Won't Start**: Check `.env` file and MongoDB connection
-3. **Nginx Errors**: Run `sudo nginx -t` to validate configuration
+1. **Processes Won't Start**: Check `.env` file and MongoDB connection
+2. **Nginx Errors**: Run `sudo nginx -t` to validate configuration
+3. **MongoDB Connection Issues**: Verify MongoDB is running and check connection string
 
 See individual documentation files for detailed troubleshooting guides.
 
