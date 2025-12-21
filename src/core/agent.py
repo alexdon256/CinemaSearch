@@ -133,8 +133,29 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
             json_match = re.search(r'```(?:json)?\s*(\{.*\})\s*```', response_text, re.DOTALL)
             if json_match:
                 response_text = json_match.group(1)
+            else:
+                # Try to find JSON object directly
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if json_match:
+                    response_text = json_match.group(0)
             
-            result = json.loads(response_text)
+            # Validate and parse JSON
+            try:
+                result = json.loads(response_text)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Failed to parse JSON response: {e}. Response: {response_text[:200]}")
+            
+            # Validate result structure
+            if not isinstance(result, dict):
+                raise ValueError(f"Expected JSON object, got {type(result)}")
+            
+            # Check for error response
+            if 'error' in result:
+                return {
+                    'success': False,
+                    'error': result.get('error', 'Unknown error'),
+                    'showtimes': []
+                }
             
             # Transform to database format
             showtimes = []
@@ -142,17 +163,45 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
             result_state = result.get('state', state or '')
             result_country = result.get('country', country)
             
-            for cinema in result.get('cinemas', []):
+            # Validate cinemas is a list
+            cinemas = result.get('cinemas', [])
+            if not isinstance(cinemas, list):
+                cinemas = []
+            
+            for cinema in cinemas:
+                if not isinstance(cinema, dict):
+                    continue
                 cinema_name = cinema.get('name', 'Unknown')
                 cinema_address = cinema.get('address', '')
                 
-                for st in cinema.get('showtimes', []):
+                # Validate showtimes is a list
+                cinema_showtimes = cinema.get('showtimes', [])
+                if not isinstance(cinema_showtimes, list):
+                    cinema_showtimes = []
+                
+                for st in cinema_showtimes:
+                    if not isinstance(st, dict):
+                        continue
                     # Validate time is in future
                     try:
-                        start_time = datetime.fromisoformat(st['start_time'].replace('Z', '+00:00'))
-                        if start_time < datetime.now(start_time.tzinfo) + timedelta(hours=1):
+                        time_str = st.get('start_time', '')
+                        if not time_str:
+                            continue
+                        # Handle timezone-aware and naive datetimes
+                        time_str = time_str.replace('Z', '+00:00')
+                        start_time = datetime.fromisoformat(time_str)
+                        
+                        # Make comparison timezone-aware
+                        if start_time.tzinfo is None:
+                            # Naive datetime - assume UTC
+                            from datetime import timezone
+                            start_time = start_time.replace(tzinfo=timezone.utc)
+                        
+                        now = datetime.now(start_time.tzinfo) if start_time.tzinfo else datetime.utcnow()
+                        if start_time < now + timedelta(hours=1):
                             continue  # Skip past or too-close showtimes
-                    except:
+                    except (ValueError, KeyError, TypeError) as e:
+                        print(f"Invalid date format in showtime: {e}")
                         continue  # Skip invalid dates
                     
                     # Build location identifier with state if available

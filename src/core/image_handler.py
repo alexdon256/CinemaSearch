@@ -50,10 +50,13 @@ def get_image_filename(image_url: str, movie_title: str = None) -> str:
     
     # Create filename with movie title if available
     if movie_title:
-        # Clean movie title for filename
+        # Clean movie title for filename (remove special chars, limit length)
         clean_title = "".join(c for c in movie_title if c.isalnum() or c in (' ', '-', '_')).strip()[:30]
-        clean_title = clean_title.replace(' ', '_')
-        filename = f"{clean_title}_{url_hash}{ext}"
+        clean_title = clean_title.replace(' ', '_').replace('__', '_')  # Remove double underscores
+        if clean_title:  # Only use if not empty after cleaning
+            filename = f"{clean_title}_{url_hash}{ext}"
+        else:
+            filename = f"{url_hash}{ext}"
     else:
         filename = f"{url_hash}{ext}"
     
@@ -82,9 +85,19 @@ def download_image(image_url: str, movie_title: str = None) -> str:
         filename = get_image_filename(image_url, movie_title)
         filepath = os.path.join(IMAGE_BASE_DIR, filename)
         
-        # Skip if already exists
+        # Skip if already exists (but verify it's a valid image file)
         if os.path.exists(filepath):
-            return f"/static/movie_images/{filename}"
+            try:
+                # Quick validation that it's actually an image
+                with Image.open(filepath) as test_img:
+                    test_img.verify()
+                return f"/static/movie_images/{filename}"
+            except Exception:
+                # File exists but is corrupted, remove it and re-download
+                try:
+                    os.remove(filepath)
+                except Exception:
+                    pass
         
         # Download image
         headers = {
@@ -98,9 +111,13 @@ def download_image(image_url: str, movie_title: str = None) -> str:
         if not content_type.startswith('image/'):
             return None
         
-        # Read and validate image
+        # Read and validate image (with size limit to prevent memory issues)
+        MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB limit
         image_data = response.content
         if len(image_data) < 100:  # Too small, probably not a real image
+            return None
+        if len(image_data) > MAX_IMAGE_SIZE:  # Too large, skip
+            print(f"Image too large ({len(image_data)} bytes), skipping")
             return None
         
         # Try to open with PIL to validate
@@ -114,11 +131,18 @@ def download_image(image_url: str, movie_title: str = None) -> str:
         img = Image.open(io.BytesIO(image_data))
         
         # Convert to RGB if necessary (for JPEG compatibility)
-        if img.mode in ('RGBA', 'LA', 'P'):
+        original_mode = img.mode
+        if original_mode in ('RGBA', 'LA', 'P'):
+            # Create white background
             rgb_img = Image.new('RGB', img.size, (255, 255, 255))
-            if img.mode == 'P':
+            # Convert palette to RGBA if needed
+            if original_mode == 'P':
                 img = img.convert('RGBA')
-            rgb_img.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+            # Paste with alpha channel as mask
+            if original_mode in ('RGBA', 'LA') or (original_mode == 'P' and img.mode == 'RGBA'):
+                rgb_img.paste(img, mask=img.split()[-1])  # Use alpha channel as mask
+            else:
+                rgb_img.paste(img)
             img = rgb_img
         
         # Save as JPEG for consistency and smaller size

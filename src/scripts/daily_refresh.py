@@ -89,8 +89,14 @@ def refresh_all_cities():
             print(f"  ⚠ Skipping {city_name} (on-demand scraping in progress - will retry later)")
             continue
         
+        # Build location_id early for error handling (use input values)
+        if state:
+            location_id = f"{city}, {state}, {country}"
+        else:
+            location_id = f"{city}, {country}"
+        
         # Try to acquire lock (daily refresh has lower priority)
-        if not acquire_lock(db, city_name, lock_source='daily-refresh', priority=False):
+        if not acquire_lock(db, location_id, lock_source='daily-refresh', priority=False):
             print(f"  ⚠ Skipping {city_name} (already processing)")
             continue
         
@@ -100,11 +106,11 @@ def refresh_all_cities():
             
             if result.get('success'):
                 # Extract location components from result
-                result_city = result.get('city', city_name)
-                result_state = result.get('state', '')
-                result_country = result.get('country', '')
+                result_city = result.get('city', city)
+                result_state = result.get('state', state or '')
+                result_country = result.get('country', country)
                 
-                # Build location identifier
+                # Build location identifier (use result values, fallback to input)
                 if result_state:
                     location_id = f"{result_city}, {result_state}, {result_country}"
                 else:
@@ -136,16 +142,21 @@ def refresh_all_cities():
                     db.showtimes.insert_many(result['showtimes'])
                     print(f"  ✓ Inserted {len(result['showtimes'])} showtimes")
                 
-                release_lock(db, city_name, 'fresh')
+                # Use location_id (not city_name) to release lock - they might differ
+                release_lock(db, location_id, 'fresh')
                 success_count += 1
             else:
-                release_lock(db, city_name, 'stale')
+                # Use location_id for consistency
+                release_lock(db, location_id, 'stale')
                 print(f"  ✗ Error: {result.get('error', 'Unknown error')}")
                 error_count += 1
                 
         except Exception as e:
-            release_lock(db, city_name, 'stale')
+            # location_id is initialized before try block, so it's always available
+            release_lock(db, location_id, 'stale')
             print(f"  ✗ Exception: {e}")
+            import traceback
+            print(f"  Traceback: {traceback.format_exc()}")
             error_count += 1
     
     # Cleanup old images (runs daily)

@@ -98,6 +98,9 @@ def release_lock(db: Database, city_name: str, status: str = 'fresh'):
                 '$set': {
                     'status': status,
                     'last_updated': datetime.utcnow()
+                },
+                '$unset': {
+                    'lock_source': ''  # Clear lock_source when releasing
                 }
             }
         )

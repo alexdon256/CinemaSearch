@@ -823,11 +823,12 @@
         function applyFilters(data) {
             let filtered = [...data];
             
-            if (genreFilter.value) {
-                filtered = filtered.filter(s => 
-                    (s.movie?.genre || '').toLowerCase().includes(genreFilter.value.toLowerCase())
-                );
-            }
+            // Note: genre filter removed from UI but kept in function for compatibility
+            // if (genreFilter && genreFilter.value) {
+            //     filtered = filtered.filter(s => 
+            //         (s.movie?.genre || '').toLowerCase().includes(genreFilter.value.toLowerCase())
+            //     );
+            // }
             if (formatFilter.value) {
                 filtered = filtered.filter(s => s.format === formatFilter.value);
             }

@@ -170,9 +170,26 @@ def api_showtimes():
     
     showtimes = list(db.showtimes.find(query).sort('start_time', 1))
     
-    # Filter out past showtimes
+    # Filter out past showtimes (handle both timezone-aware and naive datetimes)
     now = datetime.utcnow()
-    showtimes = [s for s in showtimes if s.get('start_time') and s['start_time'] > now]
+    filtered_showtimes = []
+    for s in showtimes:
+        start_time = s.get('start_time')
+        if not start_time:
+            continue
+        # Handle timezone-aware datetimes
+        if isinstance(start_time, datetime):
+            if start_time.tzinfo is None:
+                # Naive datetime - compare directly with naive UTC
+                if start_time > now:
+                    filtered_showtimes.append(s)
+            else:
+                # Timezone-aware - convert now to same timezone or compare in UTC
+                from datetime import timezone
+                now_aware = now.replace(tzinfo=timezone.utc)
+                if start_time > now_aware:
+                    filtered_showtimes.append(s)
+    showtimes = filtered_showtimes
     
     # Apply filters
     if genre:
@@ -237,8 +254,16 @@ def api_scrape():
     location = db.locations.find_one({'city_name': location_id})
     if location and location.get('status') == 'fresh':
         last_updated = location.get('last_updated')
-        if last_updated:
-            hours_old = (datetime.utcnow() - last_updated).total_seconds() / 3600
+        if last_updated and isinstance(last_updated, datetime):
+            # Handle both timezone-aware and naive datetimes
+            if last_updated.tzinfo is None:
+                # Naive datetime - compare directly
+                hours_old = (datetime.utcnow() - last_updated).total_seconds() / 3600
+            else:
+                # Timezone-aware - convert to UTC for comparison
+                from datetime import timezone
+                now_aware = datetime.utcnow().replace(tzinfo=timezone.utc)
+                hours_old = (now_aware - last_updated).total_seconds() / 3600
             if hours_old < 24:
                 # Return existing showtimes immediately
                 showtimes = get_showtimes_for_city(location_id)
@@ -328,9 +353,26 @@ def get_showtimes_for_city(city_name):
     query = {'city_id': city_name}
     showtimes = list(db.showtimes.find(query).sort('start_time', 1))
     
-    # Filter out past showtimes
+    # Filter out past showtimes (handle both timezone-aware and naive datetimes)
     now = datetime.utcnow()
-    showtimes = [s for s in showtimes if s.get('start_time') and s['start_time'] > now]
+    filtered_showtimes = []
+    for s in showtimes:
+        start_time = s.get('start_time')
+        if not start_time:
+            continue
+        # Handle timezone-aware datetimes
+        if isinstance(start_time, datetime):
+            if start_time.tzinfo is None:
+                # Naive datetime - compare directly with naive UTC
+                if start_time > now:
+                    filtered_showtimes.append(s)
+            else:
+                # Timezone-aware - convert now to same timezone or compare in UTC
+                from datetime import timezone
+                now_aware = now.replace(tzinfo=timezone.utc)
+                if start_time > now_aware:
+                    filtered_showtimes.append(s)
+    showtimes = filtered_showtimes
     
     # Convert datetime objects to ISO strings for JSON
     for st in showtimes:
