@@ -91,15 +91,15 @@ def refresh_all_cities():
         else:
             location_id = f"{city}, {country}"
         
-        # Check if data is already fresh (within last 24 hours) - don't scrape over existing records
+        # Check if data needs refresh (catch-up logic for power outages)
         location_check = db.locations.find_one({'city_name': location_id})
+        from datetime import timezone, timedelta
+        now_utc = datetime.now(timezone.utc)
+        
         if location_check and location_check.get('status') == 'fresh':
             last_updated = location_check.get('last_updated')
             if last_updated and isinstance(last_updated, datetime):
                 # Handle both timezone-aware and naive datetimes
-                from datetime import timezone
-                now_utc = datetime.now(timezone.utc)
-                
                 if last_updated.tzinfo is None:
                     # Naive datetime - assume UTC
                     last_updated_utc = last_updated.replace(tzinfo=timezone.utc)
@@ -108,9 +108,16 @@ def refresh_all_cities():
                     last_updated_utc = last_updated.astimezone(timezone.utc)
                 
                 hours_old = (now_utc - last_updated_utc).total_seconds() / 3600
+                days_old = (now_utc - last_updated_utc).days
+                
+                # If data is less than 24 hours old, skip (already fresh)
                 if hours_old < 24:
-                    print(f"  ⚠ Skipping {city_name} (data is fresh, preserving existing records)")
+                    print(f"  ⚠ Skipping {city_name} (data is fresh, updated {hours_old:.1f} hours ago)")
                     continue
+                
+                # If more than 1 day old, log catch-up scenario
+                if days_old > 1:
+                    print(f"  🔄 Catch-up: {city_name} data is {days_old} days old (power outage recovery)")
         
         # Check if on-demand scraping is in progress (don't override user requests)
         lock_info = get_lock_info(db, location_id)
@@ -124,8 +131,7 @@ def refresh_all_cities():
             continue
         
         try:
-            # Determine date range to scrape (incremental scraping)
-            from datetime import timedelta, timezone
+            # Determine date range to scrape (incremental scraping with catch-up)
             now = datetime.now(timezone.utc)
             two_weeks_from_now = now + timedelta(days=14)
             
@@ -151,18 +157,38 @@ def refresh_all_cities():
                                     latest_date_utc = start_time_utc
                 latest_date = latest_date_utc
                 
-                if latest_date and latest_date >= two_weeks_from_now - timedelta(days=1):
-                    # We have most data, only scrape the missing day
-                    date_start = two_weeks_from_now - timedelta(days=1)
-                    date_end = two_weeks_from_now
+                # Determine scrape range with catch-up logic
+                if latest_date:
+                    # Calculate how many days ahead we have data
+                    days_ahead = (latest_date - now).days
+                    
+                    if days_ahead >= 13:
+                        # We have data up to 2 weeks ahead, only scrape the new day
+                        date_start = two_weeks_from_now - timedelta(days=1)
+                        date_end = two_weeks_from_now
+                        print(f"  📅 Scraping new day: {date_start.date()} to {date_end.date()}")
+                    elif days_ahead >= 0:
+                        # We have some data but not enough - fill gap to 2 weeks
+                        date_start = max(now, latest_date - timedelta(hours=1))
+                        date_end = two_weeks_from_now
+                        gap_days = (date_end - date_start).days
+                        print(f"  📅 Filling gap: {gap_days} days from {date_start.date()} to {date_end.date()}")
+                    else:
+                        # Data is in the past (catch-up scenario after power outage)
+                        # Scrape from now to 2 weeks ahead to catch up
+                        date_start = now
+                        date_end = two_weeks_from_now
+                        print(f"  🔄 Catch-up: Scraping full range {date_start.date()} to {date_end.date()} (data was {abs(days_ahead)} days behind)")
                 else:
-                    # We're missing data, scrape from latest_date to 2 weeks ahead
-                    date_start = max(now, latest_date - timedelta(hours=1)) if latest_date else now
+                    # No valid showtimes found, scrape full range
+                    date_start = now
                     date_end = two_weeks_from_now
+                    print(f"  📅 No valid showtimes found, scraping full range")
             else:
                 # No data yet, scrape full range
                 date_start = now
                 date_end = two_weeks_from_now
+                print(f"  📅 No existing data, scraping full range")
             
             # Scrape city with state and country (incremental)
             result = agent.scrape_city_showtimes(city, country, state, date_start, date_end)

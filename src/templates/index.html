@@ -2,7 +2,9 @@
 <html lang="{{ lang }}">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <meta name="theme-color" content="#1a1f3a">
+    <meta name="mobile-web-app-capable" content="yes">
     <title>{{ translations.title }}</title>
     <style>
         * {
@@ -370,18 +372,981 @@
             color: rgba(255, 255, 255, 0.6);
         }
         
-        @media (max-width: 768px) {
+        .empty-state-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+        
+        .empty-state h3 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+            color: var(--accent);
+        }
+        
+        .empty-state p {
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+        }
+        
+        /* Loading Skeleton */
+        .loading-skeleton {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+        
+        .skeleton-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            overflow: hidden;
+            animation: skeleton-pulse 1.5s ease-in-out infinite;
+        }
+        
+        .skeleton-image {
+            width: 100%;
+            height: 300px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .skeleton-content {
+            padding: 1.5rem;
+        }
+        
+        .skeleton-line {
+            height: 1rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            margin-bottom: 0.75rem;
+        }
+        
+        .skeleton-line.short {
+            width: 60%;
+        }
+        
+        .skeleton-line.medium {
+            width: 80%;
+        }
+        
+        @keyframes skeleton-pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.6;
+            }
+        }
+        
+        /* Spinner - Enhanced Cool Animation */
+        .spinner {
+            display: inline-block;
+            width: 60px;
+            height: 60px;
+            position: relative;
+            margin: 0 auto 1.5rem;
+        }
+        
+        .spinner::before,
+        .spinner::after {
+            content: '';
+            position: absolute;
+            border-radius: 50%;
+            border: 4px solid transparent;
+            border-top-color: var(--accent);
+            animation: spin 1s linear infinite;
+        }
+        
+        .spinner::before {
+            width: 60px;
+            height: 60px;
+            border-top-color: var(--accent);
+            border-right-color: rgba(52, 152, 219, 0.3);
+        }
+        
+        .spinner::after {
+            width: 40px;
+            height: 40px;
+            top: 10px;
+            left: 10px;
+            border-top-color: #9b59b6;
+            border-right-color: rgba(155, 89, 182, 0.3);
+            animation: spin 0.8s linear infinite reverse;
+        }
+        
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+        
+        /* Enhanced Cool Spinner with Glow Effect */
+        .spinner-glow {
+            display: inline-block;
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(52, 152, 219, 0.4) 0%, rgba(155, 89, 182, 0.2) 50%, transparent 70%);
+            animation: pulse 2s ease-in-out infinite;
+            margin: 0 auto 2rem;
+            position: relative;
+            box-shadow: 0 0 30px rgba(52, 152, 219, 0.5), 0 0 60px rgba(155, 89, 182, 0.3);
+        }
+        
+        .spinner-glow::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 70px;
+            height: 70px;
+            border: 5px solid transparent;
+            border-top-color: var(--accent);
+            border-right-color: rgba(52, 152, 219, 0.4);
+            border-bottom-color: rgba(52, 152, 219, 0.2);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            box-shadow: 0 0 20px rgba(52, 152, 219, 0.6);
+        }
+        
+        .spinner-glow::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 45px;
+            height: 45px;
+            border: 4px solid transparent;
+            border-top-color: #9b59b6;
+            border-right-color: rgba(155, 89, 182, 0.5);
+            border-bottom-color: rgba(155, 89, 182, 0.2);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite reverse;
+            box-shadow: 0 0 15px rgba(155, 89, 182, 0.6);
+        }
+        
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 0.7;
+                transform: scale(1);
+                box-shadow: 0 0 30px rgba(52, 152, 219, 0.5), 0 0 60px rgba(155, 89, 182, 0.3);
+            }
+            50% {
+                opacity: 1;
+                transform: scale(1.15);
+                box-shadow: 0 0 40px rgba(52, 152, 219, 0.7), 0 0 80px rgba(155, 89, 182, 0.5);
+            }
+        }
+        
+        /* Movie icon animation in spinner center */
+        @keyframes iconFloat {
+            0%, 100% {
+                transform: translateY(0) rotate(0deg);
+            }
+            50% {
+                transform: translateY(-5px) rotate(5deg);
+            }
+        }
+        
+        .spinner-glow::before {
+            z-index: 1;
+        }
+        
+        .spinner-glow::after {
+            z-index: 2;
+        }
+        
+        /* Loading text animation */
+        .loading-text {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--accent);
+            margin-top: 1.5rem;
+            animation: fadeInOut 2s ease-in-out infinite;
+            text-shadow: 0 0 10px rgba(52, 152, 219, 0.5);
+            letter-spacing: 0.5px;
+        }
+        
+        @keyframes fadeInOut {
+            0%, 100% {
+                opacity: 0.7;
+                transform: translateY(0);
+            }
+            50% {
+                opacity: 1;
+                transform: translateY(-3px);
+            }
+        }
+        
+        .loading-dots {
+            display: inline-block;
+            width: 1ch;
+        }
+        
+        .loading-dots::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+        
+        @keyframes dots {
+            0%, 20% {
+                content: '.';
+            }
+            40% {
+                content: '..';
+            }
+            60%, 100% {
+                content: '...';
+            }
+        }
+        
+        
+        /* Error State */
+        .error-state {
+            text-align: center;
+            padding: 3rem;
+        }
+        
+        .error-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            color: var(--warning);
+        }
+        
+        .error-state h3 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+            color: var(--warning);
+        }
+        
+        .error-state p {
+            font-size: 1.1rem;
+            margin-bottom: 1.5rem;
+            color: rgba(255, 255, 255, 0.8);
+        }
+        
+        .retry-btn {
+            padding: 0.75rem 2rem;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 1rem;
+        }
+        
+        .retry-btn:hover {
+            background: var(--accent-hover);
+            transform: translateY(-2px);
+        }
+        
+        /* Country Search Input */
+        .country-input-group {
+            position: relative;
+        }
+        
+        .country-input-group input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-light);
+            border-radius: 5px;
+            font-size: 1rem;
+        }
+        
+        .country-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--charcoal);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-top: none;
+            border-radius: 0 0 5px 5px;
+            max-height: 300px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+        }
+        
+        .country-dropdown.show {
+            display: block;
+        }
+        
+        .country-option {
+            padding: 0.75rem;
+            cursor: pointer;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            transition: background 0.2s;
+        }
+        
+        .country-option:hover {
+            background: var(--accent);
+        }
+        
+        .country-option:last-child {
+            border-bottom: none;
+        }
+        
+        /* Focus States for Accessibility */
+        *:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
+        
+        .filter-group input:focus,
+        .filter-group select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+        }
+        
+        .buy-btn:focus-visible,
+        .search-btn:focus-visible,
+        .donate-btn:focus-visible,
+        .lang-btn:focus-visible,
+        .retry-btn:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
+        
+        /* Image Error Handling */
+        .movie-image {
+            background: rgba(0, 0, 0, 0.3);
+        }
+        
+        .movie-image[src=""],
+        .movie-image:not([src]) {
+            display: none;
+        }
+        
+        /* Desktop Optimizations (Large Screens) */
+        @media (min-width: 1200px) {
+            .container {
+                max-width: 1400px;
+                padding: 0 40px;
+            }
+            
+            .showtimes-grid {
+                grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+                gap: 2rem;
+            }
+            
+            .filters {
+                padding: 2rem;
+                grid-template-columns: repeat(4, 1fr);
+            }
+            
+            .filter-group[style*="grid-column: span 2"] {
+                grid-column: span 2;
+            }
+            
             .hero h1 {
-                font-size: 2rem;
+                font-size: 3.5rem;
+            }
+            
+            .showtime-card-content {
+                padding: 2rem;
+            }
+        }
+        
+        /* Desktop (Standard) */
+        @media (min-width: 1024px) and (max-width: 1199px) {
+            .showtimes-grid {
+                grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            }
+            
+            .filters {
+                grid-template-columns: repeat(4, 1fr);
+            }
+            
+            .filter-group[style*="grid-column: span 2"] {
+                grid-column: span 2;
+            }
+        }
+        
+        /* Tablet and Medium Screens */
+        @media (min-width: 769px) and (max-width: 1023px) {
+            .showtimes-grid {
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            }
+            
+            .filters {
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            }
+        }
+        
+        /* Mobile and Small Tablets */
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 15px;
+            }
+            
+            header {
+                padding: 0.75rem 0;
+            }
+            
+            .logo {
+                font-size: 1.25rem;
             }
             
             nav {
-                flex-direction: column;
-                gap: 1rem;
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
+            }
+            
+            .nav-links {
+                gap: 0.5rem;
+            }
+            
+            .lang-btn {
+                padding: 0.4rem 0.8rem;
+                font-size: 0.9rem;
+            }
+            
+            .donate-btn {
+                padding: 0.6rem 1.2rem;
+                font-size: 0.9rem;
+            }
+            
+            main {
+                padding: 1.5rem 0;
+            }
+            
+            .hero {
+                padding: 2rem 0;
+            }
+            
+            .hero h1 {
+                font-size: 2rem;
+                margin-bottom: 0.75rem;
+            }
+            
+            .hero p {
+                font-size: 1rem;
             }
             
             .filters {
                 grid-template-columns: 1fr;
+                padding: 1.25rem;
+                gap: 1.25rem;
+            }
+            
+            .filter-group[style*="grid-column: span 2"] {
+                grid-column: span 1 !important;
+            }
+            
+            .filter-group label {
+                font-size: 0.95rem;
+                margin-bottom: 0.4rem;
+            }
+            
+            .filter-group select,
+            .filter-group input {
+                padding: 0.875rem;
+                font-size: 1rem;
+                min-height: 44px; /* Touch-friendly minimum */
+            }
+            
+            .search-btn {
+                padding: 0.875rem 1.5rem;
+                min-height: 44px; /* Touch-friendly */
+                font-size: 1rem;
+            }
+            
+            .showtimes-grid {
+                grid-template-columns: 1fr;
+                gap: 1.25rem;
+                margin-top: 1.5rem;
+            }
+            
+            .showtime-card {
+                border-radius: 12px;
+            }
+            
+            .showtime-card:hover {
+                transform: none; /* Disable hover transform on mobile */
+            }
+            
+            .movie-image-container {
+                height: 250px;
+            }
+            
+            .showtime-card-content {
+                padding: 1.25rem;
+            }
+            
+            .showtime-card h3 {
+                font-size: 1.15rem;
+            }
+            
+            .showtime-card .time {
+                font-size: 1.1rem;
+            }
+            
+            .buy-btn {
+                padding: 0.875rem;
+                min-height: 44px; /* Touch-friendly */
+                font-size: 1rem;
+            }
+            
+            .loading-skeleton {
+                grid-template-columns: 1fr;
+                gap: 1.25rem;
+            }
+            
+            .skeleton-image {
+                height: 250px;
+            }
+            
+            .empty-state,
+            .error-state {
+                padding: 2rem 1.5rem;
+            }
+            
+            .empty-state-icon,
+            .error-icon {
+                font-size: 3rem;
+            }
+            
+            .empty-state h3,
+            .error-state h3 {
+                font-size: 1.25rem;
+            }
+            
+            .empty-state p,
+            .error-state p {
+                font-size: 1rem;
+            }
+            
+            .retry-btn {
+                padding: 0.875rem 1.75rem;
+                min-height: 44px;
+                font-size: 1rem;
+            }
+            
+            footer {
+                padding: 1.5rem 0;
+            }
+            
+            .visitor-counter {
+                font-size: 1.1rem;
+            }
+        }
+        
+        /* Small Mobile Devices */
+        @media (max-width: 480px) {
+            .container {
+                padding: 0 12px;
+            }
+            
+            header {
+                padding: 0.6rem 0;
+            }
+            
+            .logo {
+                font-size: 1.1rem;
+            }
+            
+            .lang-selector {
+                gap: 0.4rem;
+            }
+            
+            .lang-btn {
+                padding: 0.35rem 0.7rem;
+                font-size: 0.85rem;
+            }
+            
+            .donate-btn {
+                padding: 0.5rem 1rem;
+                font-size: 0.85rem;
+            }
+            
+            main {
+                padding: 1rem 0;
+            }
+            
+            .hero {
+                padding: 1.5rem 0;
+            }
+            
+            .hero h1 {
+                font-size: 1.75rem;
+                margin-bottom: 0.5rem;
+            }
+            
+            .hero p {
+                font-size: 0.95rem;
+            }
+            
+            .filters {
+                padding: 1rem;
+                gap: 1rem;
+                border-radius: 8px;
+            }
+            
+            .filter-group label {
+                font-size: 0.9rem;
+            }
+            
+            .filter-group select,
+            .filter-group input {
+                padding: 0.75rem;
+                font-size: 0.95rem;
+            }
+            
+            .search-btn {
+                padding: 0.75rem 1.25rem;
+                font-size: 0.95rem;
+            }
+            
+            .showtimes-grid {
+                gap: 1rem;
+                margin-top: 1.25rem;
+            }
+            
+            .movie-image-container {
+                height: 220px;
+            }
+            
+            .showtime-card-content {
+                padding: 1rem;
+            }
+            
+            .showtime-card h3 {
+                font-size: 1.1rem;
+            }
+            
+            .showtime-card .time {
+                font-size: 1rem;
+            }
+            
+            .showtime-card .cinema-address {
+                font-size: 0.85rem;
+            }
+            
+            .buy-btn {
+                padding: 0.75rem;
+                font-size: 0.95rem;
+            }
+            
+            .loading-skeleton {
+                gap: 1rem;
+            }
+            
+            .skeleton-image {
+                height: 220px;
+            }
+            
+            .skeleton-content {
+                padding: 1rem;
+            }
+            
+            .empty-state,
+            .error-state {
+                padding: 2rem 1rem;
+            }
+            
+            .empty-state-icon,
+            .error-icon {
+                font-size: 2.5rem;
+            }
+            
+            .empty-state h3,
+            .error-state h3 {
+                font-size: 1.1rem;
+            }
+            
+            .empty-state p,
+            .error-state p {
+                font-size: 0.95rem;
+            }
+            
+            .spinner {
+                width: 35px;
+                height: 35px;
+            }
+            
+            footer {
+                padding: 1.25rem 0;
+            }
+            
+            .visitor-counter {
+                font-size: 1rem;
+            }
+        }
+        
+        /* Very Small Mobile Devices */
+        @media (max-width: 360px) {
+            .hero h1 {
+                font-size: 1.5rem;
+            }
+            
+            .filters {
+                padding: 0.875rem;
+            }
+            
+            .movie-image-container {
+                height: 200px;
+            }
+        }
+        
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(5px);
+        }
+        
+        .modal-content {
+            background: var(--charcoal);
+            margin: 5% auto;
+            padding: 0;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            width: 90%;
+            max-width: 600px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            animation: modalSlideIn 0.3s ease;
+        }
+        
+        @keyframes modalSlideIn {
+            from {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .modal-header h2 {
+            margin: 0;
+            color: var(--accent);
+            font-size: 1.5rem;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-light);
+            font-size: 2rem;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+        }
+        
+        .modal-close:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--warning);
+        }
+        
+        .modal form {
+            padding: 1.5rem;
+        }
+        
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--accent);
+            font-weight: 600;
+        }
+        
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-light);
+            border-radius: 5px;
+            font-size: 1rem;
+            font-family: inherit;
+            resize: vertical;
+        }
+        
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+            border-color: var(--accent);
+        }
+        
+        .form-actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+        }
+        
+        .btn-cancel,
+        .btn-submit {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 1rem;
+        }
+        
+        .btn-cancel {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-light);
+        }
+        
+        .btn-cancel:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .btn-submit {
+            background: var(--accent);
+            color: white;
+        }
+        
+        .btn-submit:hover {
+            background: var(--accent-hover);
+        }
+        
+        .btn-submit:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        #feedback-message-display {
+            padding: 1rem;
+            border-radius: 5px;
+            text-align: center;
+        }
+        
+        #feedback-message-display.success {
+            background: rgba(39, 174, 96, 0.2);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+        
+        #feedback-message-display.error {
+            background: rgba(243, 156, 18, 0.2);
+            color: var(--warning);
+            border: 1px solid var(--warning);
+        }
+        
+        @media (max-width: 768px) {
+            .modal-content {
+                width: 95%;
+                margin: 10% auto;
+            }
+            
+            .modal-header {
+                padding: 1rem;
+            }
+            
+            .modal form {
+                padding: 1rem;
+            }
+            
+            .form-actions {
+                flex-direction: column;
+            }
+            
+            .btn-cancel,
+            .btn-submit {
+                width: 100%;
+            }
+        }
+        
+        /* Touch Device Optimizations */
+        @media (hover: none) and (pointer: coarse) {
+            /* Disable hover effects on touch devices */
+            .showtime-card:hover {
+                transform: none;
+                box-shadow: none;
+            }
+            
+            .showtime-card:hover .movie-image {
+                transform: none;
+            }
+            
+            /* Increase touch targets */
+            .lang-btn,
+            .donate-btn,
+            .search-btn,
+            .buy-btn,
+            .retry-btn {
+                min-height: 44px;
+            }
+            
+            .suggestion-item,
+            .country-option {
+                min-height: 44px;
+                padding: 1rem 0.75rem;
+            }
+        }
+        
+        /* Desktop Hover Enhancements */
+        @media (hover: hover) and (pointer: fine) {
+            .showtime-card {
+                cursor: pointer;
+            }
+            
+            .suggestion-item:hover,
+            .country-option:hover {
+                background: var(--accent);
+                transform: translateX(4px);
+            }
+        }
+        
+        /* Landscape Mobile */
+        @media (max-width: 768px) and (orientation: landscape) {
+            .hero {
+                padding: 1.5rem 0;
+            }
+            
+            .hero h1 {
+                font-size: 1.75rem;
+            }
+            
+            .filters {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .filter-group[style*="grid-column: span 2"] {
+                grid-column: span 2 !important;
             }
         }
     </style>
@@ -409,28 +1374,32 @@
         
         <div class="filters">
             <div class="filter-group" style="grid-column: span 2;">
-                <label>{{ translations.select_city }}</label>
+                <label for="city-input">{{ translations.select_city }}</label>
                 <div class="location-input-group">
-                    <input type="text" id="city-input" placeholder="Enter city name..." autocomplete="off">
-                    <div id="city-suggestions" class="suggestions-dropdown"></div>
+                    <input type="text" id="city-input" placeholder="Enter city name..." autocomplete="off" aria-label="City name input">
+                    <div id="city-suggestions" class="suggestions-dropdown" role="listbox" aria-label="City suggestions"></div>
                 </div>
             </div>
             
             <div class="filter-group">
-                <label>Country</label>
-                <select id="country-select">
+                <label for="country-input">{{ translations.country or 'Country' }}</label>
+                <div class="country-input-group">
+                    <input type="text" id="country-input" placeholder="Search or select country..." autocomplete="off" aria-label="Country selector">
+                    <div id="country-dropdown" class="country-dropdown"></div>
+                </div>
+                <select id="country-select" style="display: none;" aria-label="Country selector">
                     <option value="">All Countries</option>
                 </select>
             </div>
             
             <div class="filter-group">
                 <label>&nbsp;</label>
-                <button id="search-btn" class="search-btn">🔍 Search Showtimes</button>
+                <button id="search-btn" class="search-btn" aria-label="Search for movie showtimes">🔍 Search Showtimes</button>
             </div>
             
             <div class="filter-group">
-                <label>{{ translations.filter_by_format }}</label>
-                <select id="format-filter">
+                <label for="format-filter">{{ translations.filter_by_format }}</label>
+                <select id="format-filter" aria-label="Filter by movie format">
                     <option value="">All Formats</option>
                     <option value="2D">2D</option>
                     <option value="3D">3D</option>
@@ -441,8 +1410,8 @@
             </div>
             
             <div class="filter-group">
-                <label>{{ translations.filter_by_language }}</label>
-                <select id="language-filter">
+                <label for="language-filter">{{ translations.filter_by_language }}</label>
+                <select id="language-filter" aria-label="Filter by language">
                     <option value="">All Languages</option>
                     <option value="Ukrainian">Ukrainian</option>
                     <option value="English">English</option>
@@ -454,7 +1423,9 @@
         
         <div id="showtimes-container">
             <div class="empty-state">
-                <p>{{ translations.select_city }}</p>
+                <div class="empty-state-icon">🎬</div>
+                <h3>{{ translations.select_city or 'Select a City' }}</h3>
+                <p>Enter a city name and country above to find movie showtimes</p>
             </div>
         </div>
     </main>
@@ -462,13 +1433,48 @@
     <footer>
         <div class="container">
             <p class="visitor-counter">{{ translations.visitor_count }}: {{ visitor_count }}</p>
+            <div style="margin-top: 1rem; display: flex; justify-content: center; gap: 1.5rem; flex-wrap: wrap;">
+                <a href="/terms" style="color: var(--accent); text-decoration: none;">{{ translations.terms }}</a>
+                <button id="feedback-btn" style="background: none; border: none; color: var(--accent); cursor: pointer; text-decoration: underline; font-size: inherit; font-family: inherit;">{{ translations.feedback }}</button>
+            </div>
             <p style="margin-top: 1rem; opacity: 0.7;">© 2025 CineStream. All rights reserved.</p>
         </div>
     </footer>
     
+    <!-- Feedback Modal -->
+    <div id="feedback-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>{{ translations.feedback }}</h2>
+                <button class="modal-close" id="feedback-close">&times;</button>
+            </div>
+            <form id="feedback-form">
+                <div class="form-group">
+                    <label for="feedback-name">Name (optional)</label>
+                    <input type="text" id="feedback-name" name="name" placeholder="Your name">
+                </div>
+                <div class="form-group">
+                    <label for="feedback-email">Email (optional)</label>
+                    <input type="email" id="feedback-email" name="email" placeholder="your.email@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="feedback-message">Message <span style="color: var(--warning);">*</span></label>
+                    <textarea id="feedback-message" name="message" rows="6" placeholder="Your feedback, suggestions, or questions..." required></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn-cancel" id="feedback-cancel">Cancel</button>
+                    <button type="submit" class="btn-submit">{{ translations.send_feedback }}</button>
+                </div>
+                <div id="feedback-message-display" style="margin-top: 1rem; display: none;"></div>
+            </form>
+        </div>
+    </div>
+    
     <script>
         const cityInput = document.getElementById('city-input');
         const countrySelect = document.getElementById('country-select');
+        const countryInput = document.getElementById('country-input');
+        const countryDropdown = document.getElementById('country-dropdown');
         const citySuggestions = document.getElementById('city-suggestions');
         const searchBtn = document.getElementById('search-btn');
         const formatFilter = document.getElementById('format-filter');
@@ -512,12 +1518,68 @@
             "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe"
         ];
         
-        // Populate country dropdown
+        // Populate country dropdown (hidden select for form submission)
         countries.forEach(country => {
             const option = document.createElement('option');
             option.value = country;
             option.textContent = country;
             countrySelect.appendChild(option);
+        });
+        
+        // Country search functionality
+        let countrySearchTimeout = null;
+        countryInput.addEventListener('input', (e) => {
+            const query = e.target.value.trim().toLowerCase();
+            
+            if (countrySearchTimeout) {
+                clearTimeout(countrySearchTimeout);
+            }
+            
+            if (query.length === 0) {
+                countryDropdown.classList.remove('show');
+                countrySelect.value = '';
+                return;
+            }
+            
+            countrySearchTimeout = setTimeout(() => {
+                const filtered = countries.filter(c => 
+                    c.toLowerCase().includes(query)
+                ).slice(0, 10); // Limit to 10 results
+                
+                countryDropdown.innerHTML = '';
+                if (filtered.length === 0) {
+                    countryDropdown.classList.remove('show');
+                    return;
+                }
+                
+                filtered.forEach(country => {
+                    const div = document.createElement('div');
+                    div.className = 'country-option';
+                    div.textContent = country;
+                    div.addEventListener('click', () => {
+                        countryInput.value = country;
+                        countrySelect.value = country;
+                        countryDropdown.classList.remove('show');
+                    });
+                    countryDropdown.appendChild(div);
+                });
+                
+                countryDropdown.classList.add('show');
+            }, 200);
+        });
+        
+        // Hide country dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!countryInput.contains(e.target) && !countryDropdown.contains(e.target)) {
+                countryDropdown.classList.remove('show');
+            }
+        });
+        
+        // Allow selecting from hidden select (for keyboard users)
+        countrySelect.addEventListener('change', (e) => {
+            if (e.target.value) {
+                countryInput.value = e.target.value;
+            }
         });
         
         // City autocomplete using OpenStreetMap Nominatim (free API)
@@ -706,19 +1768,19 @@
             }
             
             if (!city) {
-                container.innerHTML = '<div class="empty-state"><p>Please enter a city name</p></div>';
+                showEmptyState('Please enter a city name', '🏙️');
                 return;
             }
             
             if (!country) {
-                container.innerHTML = '<div class="empty-state"><p>Please select a country</p></div>';
+                showEmptyState('Please select a country', '🌍');
                 return;
             }
             
             currentCity = city;
             currentCountry = country;
             
-            container.innerHTML = '<div class="loading">{{ translations.loading }}</div>';
+            showLoadingSkeleton();
             
             // Trigger scraping if needed
             await fetchShowtimes(city, country, state);
@@ -757,7 +1819,7 @@
                 if (scrapeResponse.status === 202) {
                     // Scraping in progress by another request - start polling
                     const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
-                    container.innerHTML = '<div class="loading">🎬 {{ translations.loading }} (scraping in progress...)</div>';
+                    showLoadingState('Scraping showtimes');
                     startPolling(locationId);
                     return;
                 }
@@ -779,11 +1841,11 @@
                     const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
                     await loadShowtimes(locationId);
                 } else if (data.status === 'error') {
-                    container.innerHTML = `<div class="empty-state"><p>Error: ${data.message}</p></div>`;
+                    showErrorState(data.message || 'An error occurred', () => fetchShowtimes(city, country, state));
                 }
             } catch (e) {
                 console.error('Scrape error:', e);
-                container.innerHTML = '<div class="empty-state"><p>Error connecting to server</p></div>';
+                showErrorState('Error connecting to server. Please check your internet connection.', () => fetchShowtimes(city, country, state));
             }
         }
         
@@ -796,26 +1858,25 @@
                     const statusResponse = await fetch(`/api/scrape/status/${encodeURIComponent(locationId)}`);
                     const statusData = await statusResponse.json();
                     
-                    // Update UI with current status
+                    // Update UI with current status (dots will be animated)
                     const statusMessage = statusData.processing_by === 'on-demand' 
-                        ? 'Scraping showtimes...' 
+                        ? 'Scraping showtimes' 
                         : (statusData.processing_by === 'daily-refresh' 
-                            ? 'Daily refresh in progress...' 
-                            : 'Processing...');
-                    const dots = '.'.repeat((pollCount % 3) + 1);
-                    container.innerHTML = `<div class="loading">🎬 ${statusMessage}${dots}</div>`;
+                            ? 'Daily refresh in progress' 
+                            : 'Processing');
+                    showLoadingState(statusMessage);
                     
                     if (statusData.ready || statusData.status === 'fresh') {
                         // Data is ready! Stop polling and load showtimes
                         clearInterval(pollingInterval);
                         pollingInterval = null;
-                        container.innerHTML = '<div class="loading">✅ Loading showtimes...</div>';
+                        showLoadingState('Loading showtimes');
                         await loadShowtimes(locationId);
                     } else if (statusData.status === 'stale' || statusData.status === 'error') {
                         // Scraping failed, stop polling
                         clearInterval(pollingInterval);
                         pollingInterval = null;
-                        container.innerHTML = '<div class="empty-state"><p>{{ translations.no_showtimes }}</p></div>';
+                        showEmptyState('{{ translations.no_showtimes or "No showtimes found" }}', '🎬');
                     }
                     // Otherwise keep polling (status is 'processing')
                 } catch (e) {
@@ -836,7 +1897,7 @@
                 renderShowtimes();
             } catch (e) {
                 console.error('Error loading showtimes:', e);
-                container.innerHTML = '<div class="empty-state"><p>Error loading showtimes</p></div>';
+                showErrorState('Error loading showtimes. Please try again.', () => loadShowtimes(locationId));
             }
         }
         
@@ -884,9 +1945,71 @@
             return filtered;
         }
         
+        // Helper functions for UI states
+        function showLoadingSkeleton() {
+            // Show spinner first, then skeleton after a brief moment
+            showLoadingState('Preparing to load showtimes...');
+            setTimeout(() => {
+                container.innerHTML = `
+                    <div class="loading-skeleton">
+                        ${Array(6).fill(0).map(() => `
+                            <div class="skeleton-card">
+                                <div class="skeleton-image"></div>
+                                <div class="skeleton-content">
+                                    <div class="skeleton-line short"></div>
+                                    <div class="skeleton-line medium"></div>
+                                    <div class="skeleton-line"></div>
+                                    <div class="skeleton-line short"></div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }, 500);
+        }
+        
+        function showLoadingState(message = 'Loading...') {
+            container.innerHTML = `
+                <div class="loading" style="text-align: center; padding: 5rem 2rem; min-height: 400px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                    <div class="spinner-glow" style="display: flex; align-items: center; justify-content: center; font-size: 24px; color: var(--accent); text-shadow: 0 0 10px rgba(52, 152, 219, 0.8);">🎬</div>
+                    <p class="loading-text">${message}<span class="loading-dots"></span></p>
+                    <p style="margin-top: 1rem; opacity: 0.7; font-size: 0.95rem;">Please wait while we fetch the latest showtimes...</p>
+                </div>
+            `;
+        }
+        
+        function showEmptyState(message, icon = '🎬') {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">${icon}</div>
+                    <h3>${message}</h3>
+                    <p>Try searching for a different city or check back later</p>
+                </div>
+            `;
+        }
+        
+        function showErrorState(message, retryCallback = null) {
+            const errorHtml = `
+                <div class="error-state">
+                    <div class="error-icon">⚠️</div>
+                    <h3>Something went wrong</h3>
+                    <p>${message}</p>
+                    ${retryCallback ? '<button class="retry-btn" id="retry-btn">Retry</button>' : ''}
+                </div>
+            `;
+            container.innerHTML = errorHtml;
+            
+            if (retryCallback) {
+                const retryBtn = document.getElementById('retry-btn');
+                if (retryBtn) {
+                    retryBtn.addEventListener('click', retryCallback);
+                }
+            }
+        }
+        
         function renderShowtimes() {
             if (!showtimes || showtimes.length === 0) {
-                container.innerHTML = '<div class="empty-state"><p>{{ translations.no_showtimes }}</p></div>';
+                showEmptyState('{{ translations.no_showtimes or "No showtimes found" }}', '🎬');
                 return;
             }
             
@@ -906,7 +2029,7 @@
             });
             
             if (futureShowtimes.length === 0) {
-                container.innerHTML = '<div class="empty-state"><p>{{ translations.no_showtimes }}</p></div>';
+                showEmptyState('{{ translations.no_showtimes or "No upcoming showtimes found" }}', '🎬');
                 return;
             }
             
@@ -933,63 +2056,33 @@
                 card.className = 'showtime-card';
                 
                 const movieTitle = st.movie?.en || st.movie?.local || st.movie?.ua || st.movie?.ru || 'Unknown Movie';
-                // Parse ISO string with timezone and display in location's timezone (not user's browser timezone)
+                
+                // Simplified date formatting - preserve timezone from ISO string
                 let startTime;
                 try {
-                    // Extract timezone offset from ISO string (e.g., "+02:00" or "-05:00")
-                    const tzMatch = st.start_time.match(/([+-]\d{2}):(\d{2})$/);
-                    
-                    if (tzMatch) {
-                        // ISO string has timezone info - parse and display in that timezone
-                        const tzOffset = tzMatch[0];
-                        const tzHours = parseInt(tzMatch[1]);
-                        const tzMinutes = parseInt(tzMatch[2]);
-                        const tzOffsetMinutes = (tzHours * 60) + (tzHours >= 0 ? tzMinutes : -tzMinutes);
+                    const date = new Date(st.start_time);
+                    if (isNaN(date.getTime())) {
+                        startTime = 'Invalid date';
+                    } else {
+                        // Extract timezone from ISO string if present
+                        const tzMatch = st.start_time.match(/([+-]\d{2}):(\d{2})$/);
+                        const tzOffset = tzMatch ? tzMatch[0] : null;
                         
-                        // Parse the ISO string (JavaScript Date handles timezone correctly)
-                        const date = new Date(st.start_time);
-                        
-                        // Get UTC time in milliseconds
-                        const utcTime = date.getTime();
-                        
-                        // Calculate location time: UTC time + location offset
-                        // JavaScript Date.getTime() returns UTC, so we add the location offset
-                        const locationTime = utcTime + (tzOffsetMinutes * 60000);
-                        const locationDate = new Date(locationTime);
-                        
-                        // Format in location's timezone
-                        startTime = locationDate.toLocaleString('{{ lang }}', {
+                        // Format date in locale-aware way
+                        const options = {
                             year: 'numeric',
                             month: 'short',
                             day: 'numeric',
                             hour: '2-digit',
-                            minute: '2-digit',
-                            timeZone: 'UTC' // Format as if in UTC, then we'll adjust
-                        });
+                            minute: '2-digit'
+                        };
                         
-                        // Actually, simpler: just format the date and show timezone
-                        // The ISO string already has the correct time, we just need to display it
-                        // Extract date/time parts from ISO string directly
-                        const isoMatch = st.start_time.match(/(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})/);
-                        if (isoMatch) {
-                            const [, dateStr, hour, minute] = isoMatch;
-                            const dateObj = new Date(dateStr);
-                            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                            const day = dateObj.getDate();
-                            const month = monthNames[dateObj.getMonth()];
-                            const year = dateObj.getFullYear();
-                            startTime = `${day} ${month} ${year}, ${hour}:${minute}`;
-                            if (tzOffset !== '+00:00' && tzOffset !== 'Z') {
-                                startTime += ` (UTC${tzOffset})`;
-                            }
-                        } else {
-                            // Fallback to standard formatting
-                            startTime = date.toLocaleString('{{ lang }}');
+                        startTime = date.toLocaleString('{{ lang }}', options);
+                        
+                        // Add timezone if not UTC
+                        if (tzOffset && tzOffset !== '+00:00' && tzOffset !== 'Z') {
+                            startTime += ` (UTC${tzOffset})`;
                         }
-                    } else {
-                        // No timezone info, use standard parsing
-                        const date = new Date(st.start_time);
-                        startTime = date.toLocaleString('{{ lang }}');
                     }
                 } catch (e) {
                     startTime = st.start_time || 'Invalid date';
@@ -998,11 +2091,12 @@
                 const cinemaAddress = st.cinema_address || '';
                 const hallInfo = st.hall ? ` | ${st.hall}` : '';
                 
-                // Movie image
+                // Movie image with error handling
                 const imagePath = st.movie_image_path || '';
                 const imageHtml = imagePath 
-                    ? `<img src="${imagePath}" alt="${movieTitle}" class="movie-image" loading="lazy">`
-                    : `<div class="movie-image-placeholder">🎬</div>`;
+                    ? `<img src="${imagePath}" alt="${movieTitle}" class="movie-image" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">`
+                    : '';
+                const placeholderHtml = `<div class="movie-image-placeholder" style="${imagePath ? 'display:none;' : ''}">🎬</div>`;
                 
                 // Cinema address display
                 const cinemaAddressHtml = cinemaAddress
@@ -1012,6 +2106,7 @@
                 card.innerHTML = `
                     <div class="movie-image-container">
                         ${imageHtml}
+                        ${placeholderHtml}
                     </div>
                     <div class="showtime-card-content">
                         <h3>${movieTitle}</h3>
@@ -1022,7 +2117,7 @@
                         </div>
                         <div style="margin-top: auto; padding-top: 1rem;">
                             <div style="margin-bottom: 0.5rem; opacity: 0.8;">${[st.format, st.language, hallInfo].filter(x => x).join(' | ')}</div>
-                            ${st.cinema_website ? `<a href="${st.cinema_website}" target="_blank" class="buy-btn">{{ translations.buy_tickets }}</a>` : ''}
+                            ${st.cinema_website ? `<a href="${st.cinema_website}" target="_blank" class="buy-btn" aria-label="Buy tickets for ${movieTitle}">{{ translations.buy_tickets }}</a>` : ''}
                         </div>
                     </div>
                 `;
@@ -1044,6 +2139,96 @@
         // Cleanup polling on page unload
         window.addEventListener('beforeunload', () => {
             if (pollingInterval) clearInterval(pollingInterval);
+        });
+        
+        // Feedback Modal
+        const feedbackBtn = document.getElementById('feedback-btn');
+        const feedbackModal = document.getElementById('feedback-modal');
+        const feedbackClose = document.getElementById('feedback-close');
+        const feedbackCancel = document.getElementById('feedback-cancel');
+        const feedbackForm = document.getElementById('feedback-form');
+        const feedbackMessageDisplay = document.getElementById('feedback-message-display');
+        
+        function openFeedbackModal() {
+            feedbackModal.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        }
+        
+        function closeFeedbackModal() {
+            feedbackModal.style.display = 'none';
+            document.body.style.overflow = 'auto';
+            feedbackForm.reset();
+            feedbackMessageDisplay.style.display = 'none';
+        }
+        
+        feedbackBtn.addEventListener('click', openFeedbackModal);
+        feedbackClose.addEventListener('click', closeFeedbackModal);
+        feedbackCancel.addEventListener('click', closeFeedbackModal);
+        
+        // Close modal when clicking outside
+        feedbackModal.addEventListener('click', (e) => {
+            if (e.target === feedbackModal) {
+                closeFeedbackModal();
+            }
+        });
+        
+        // Close modal on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && feedbackModal.style.display === 'block') {
+                closeFeedbackModal();
+            }
+        });
+        
+        // Handle feedback form submission
+        feedbackForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const submitBtn = feedbackForm.querySelector('.btn-submit');
+            const originalText = submitBtn.textContent;
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Sending...';
+            
+            const formData = {
+                name: document.getElementById('feedback-name').value.trim(),
+                email: document.getElementById('feedback-email').value.trim(),
+                message: document.getElementById('feedback-message').value.trim()
+            };
+            
+            try {
+                const response = await fetch('/api/feedback', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
+                
+                const data = await response.json();
+                
+                feedbackMessageDisplay.style.display = 'block';
+                
+                if (data.success) {
+                    feedbackMessageDisplay.className = 'success';
+                    feedbackMessageDisplay.textContent = '{{ translations.feedback_sent }}';
+                    feedbackForm.reset();
+                    
+                    // Close modal after 2 seconds
+                    setTimeout(() => {
+                        closeFeedbackModal();
+                    }, 2000);
+                } else {
+                    feedbackMessageDisplay.className = 'error';
+                    feedbackMessageDisplay.textContent = data.error || '{{ translations.feedback_error }}';
+                }
+            } catch (error) {
+                console.error('Feedback error:', error);
+                feedbackMessageDisplay.style.display = 'block';
+                feedbackMessageDisplay.className = 'error';
+                feedbackMessageDisplay.textContent = '{{ translations.feedback_error }}';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+            }
         });
     </script>
 </body>

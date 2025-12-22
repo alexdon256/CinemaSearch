@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ translations.terms }} - CineStream</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            --midnight-blue: #1a1f3a;
+            --charcoal: #2c3e50;
+            --slate: #34495e;
+            --accent: #3498db;
+            --accent-hover: #2980b9;
+            --text-light: #ecf0f1;
+            --text-dark: #2c3e50;
+            --success: #27ae60;
+            --warning: #f39c12;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, var(--midnight-blue) 0%, var(--charcoal) 100%);
+            color: var(--text-light);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem 20px;
+        }
+        
+        header {
+            background: rgba(26, 31, 58, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 1rem 0;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            margin-bottom: 2rem;
+        }
+        
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--accent);
+            text-decoration: none;
+        }
+        
+        .back-btn {
+            padding: 0.5rem 1rem;
+            background: var(--accent);
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .back-btn:hover {
+            background: var(--accent-hover);
+        }
+        
+        .content {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            padding: 2rem;
+            border-radius: 10px;
+            margin-bottom: 2rem;
+        }
+        
+        h1 {
+            color: var(--accent);
+            margin-bottom: 1.5rem;
+            font-size: 2.5rem;
+        }
+        
+        h2 {
+            color: var(--accent);
+            margin-top: 2rem;
+            margin-bottom: 1rem;
+            font-size: 1.5rem;
+        }
+        
+        p {
+            margin-bottom: 1rem;
+            line-height: 1.8;
+        }
+        
+        ul {
+            margin-left: 2rem;
+            margin-bottom: 1rem;
+        }
+        
+        li {
+            margin-bottom: 0.5rem;
+            line-height: 1.8;
+        }
+        
+        .highlight {
+            background: rgba(52, 152, 219, 0.2);
+            padding: 0.2rem 0.5rem;
+            border-radius: 3px;
+            font-weight: 600;
+        }
+        
+        .warning-box {
+            background: rgba(243, 156, 18, 0.2);
+            border-left: 4px solid var(--warning);
+            padding: 1rem;
+            margin: 1.5rem 0;
+            border-radius: 5px;
+        }
+        
+        footer {
+            background: rgba(26, 31, 58, 0.95);
+            padding: 2rem 0;
+            margin-top: 4rem;
+            text-align: center;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem 15px;
+            }
+            
+            .content {
+                padding: 1.5rem;
+            }
+            
+            h1 {
+                font-size: 2rem;
+            }
+            
+            h2 {
+                font-size: 1.25rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">CineStream</a>
+            <a href="/" class="back-btn">← Back to Home</a>
+        </nav>
+    </header>
+    
+    <div class="container">
+        <div class="content">
+            <h1>{{ translations.terms }}</h1>
+            
+            <p><strong>Last Updated:</strong> December 19, 2025</p>
+            
+            <h2>1. Acceptance of Terms</h2>
+            <p>By accessing and using CineStream, you accept and agree to be bound by the terms and provision of this agreement.</p>
+            
+            <h2>2. No Data Collection</h2>
+            <p>CineStream is committed to your privacy. We want to make it clear that:</p>
+            <ul>
+                <li><span class="highlight">We do not collect any personal data</span> from users</li>
+                <li>We do not use cookies for tracking purposes</li>
+                <li>We do not store your search history or preferences</li>
+                <li>We do not share any information with third parties</li>
+                <li>The only data we store is an anonymous visitor counter for statistical purposes</li>
+            </ul>
+            <p>Your use of CineStream is completely anonymous and private.</p>
+            
+            <h2>3. AI-Powered Service</h2>
+            <p>CineStream uses <span class="highlight">Artificial Intelligence (AI)</span> technology, specifically Claude AI, to:</p>
+            <ul>
+                <li>Discover cinema websites in your location</li>
+                <li>Extract and aggregate movie showtime information</li>
+                <li>Provide you with up-to-date cinema schedules</li>
+            </ul>
+            <p>The AI automatically searches for and processes information from publicly available cinema websites to provide you with showtime data.</p>
+            
+            <div class="warning-box">
+                <h2>4. Accuracy Disclaimer</h2>
+                <p><strong>Important:</strong> While we strive to provide accurate and up-to-date information, please be aware that:</p>
+                <ul>
+                    <li>Showtime data may not always be <span class="highlight">100% accurate</span></li>
+                    <li>Cinema schedules can change without notice</li>
+                    <li>Technical issues or website changes may affect data availability</li>
+                    <li>We recommend verifying showtimes directly with the cinema before making plans</li>
+                </ul>
+                <p>CineStream is provided "as is" and we cannot guarantee the accuracy, completeness, or timeliness of the information displayed.</p>
+            </div>
+            
+            <h2>5. Use of Service</h2>
+            <p>You agree to use CineStream only for lawful purposes and in a way that does not infringe the rights of, restrict or inhibit anyone else's use and enjoyment of the service.</p>
+            
+            <h2>6. Limitation of Liability</h2>
+            <p>CineStream, its operators, and contributors shall not be liable for any indirect, incidental, special, consequential, or punitive damages resulting from your use or inability to use the service, including but not limited to:</p>
+            <ul>
+                <li>Inaccurate showtime information</li>
+                <li>Missed movie screenings</li>
+                <li>Any decisions made based on the information provided</li>
+            </ul>
+            
+            <h2>7. External Links</h2>
+            <p>CineStream may contain links to external cinema websites. We are not responsible for the content, privacy policies, or practices of these external sites.</p>
+            
+            <h2>8. Changes to Terms</h2>
+            <p>We reserve the right to modify these terms at any time. Changes will be effective immediately upon posting to this page. Your continued use of the service after changes are posted constitutes acceptance of those changes.</p>
+            
+            <h2>9. Contact</h2>
+            <p>If you have any questions about these Terms of Service, please contact us through the feedback form on our website.</p>
+            
+            <h2>10. Governing Law</h2>
+            <p>These terms shall be governed by and construed in accordance with applicable laws, without regard to conflict of law provisions.</p>
+            
+            <div style="margin-top: 3rem; padding-top: 2rem; border-top: 1px solid rgba(255, 255, 255, 0.2);">
+                <p style="text-align: center; opacity: 0.8;">
+                    By using CineStream, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service.
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    <footer>
+        <div class="container">
+            <p style="opacity: 0.7;">© 2025 CineStream. All rights reserved.</p>
+            <p style="margin-top: 0.5rem;">
+                <a href="/terms" style="color: var(--accent); text-decoration: none; margin: 0 1rem;">{{ translations.terms }}</a>
+                <a href="/" style="color: var(--accent); text-decoration: none; margin: 0 1rem;">Home</a>
+            </p>
+        </div>
+    </footer>
+</body>
+</html>
+

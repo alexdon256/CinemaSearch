@@ -7,7 +7,10 @@ High-concurrency movie showtime aggregator with AI-powered scraping
 import os
 import sys
 import argparse
+import smtplib
 from datetime import datetime
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from flask import Flask, render_template, request, session, jsonify, redirect, url_for
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
@@ -53,6 +56,13 @@ TRANSLATIONS = {
         'no_showtimes': 'No showtimes available',
         'buy_tickets': 'Buy Tickets',
         'loading': 'Loading...',
+        'terms': 'Terms of Service',
+        'privacy': 'Privacy Policy',
+        'feedback': 'Feedback',
+        'send_feedback': 'Send Feedback',
+        'feedback_sent': 'Thank you! Your feedback has been sent.',
+        'feedback_error': 'Error sending feedback. Please try again.',
+        'country': 'Country',
     },
     'ua': {
         'title': 'CineStream - Розклад кіно',
@@ -65,6 +75,13 @@ TRANSLATIONS = {
         'no_showtimes': 'Немає сеансів',
         'buy_tickets': 'Купити квитки',
         'loading': 'Завантаження...',
+        'terms': 'Умови використання',
+        'privacy': 'Політика конфіденційності',
+        'feedback': 'Зворотний зв\'язок',
+        'send_feedback': 'Надіслати відгук',
+        'feedback_sent': 'Дякуємо! Ваш відгук надіслано.',
+        'feedback_error': 'Помилка відправки відгуку. Спробуйте ще раз.',
+        'country': 'Країна',
     },
     'ru': {
         'title': 'CineStream - Расписание кино',
@@ -77,6 +94,13 @@ TRANSLATIONS = {
         'no_showtimes': 'Нет сеансов',
         'buy_tickets': 'Купить билеты',
         'loading': 'Загрузка...',
+        'terms': 'Условия использования',
+        'privacy': 'Политика конфиденциальности',
+        'feedback': 'Обратная связь',
+        'send_feedback': 'Отправить отзыв',
+        'feedback_sent': 'Спасибо! Ваш отзыв отправлен.',
+        'feedback_error': 'Ошибка отправки отзыва. Попробуйте еще раз.',
+        'country': 'Страна',
     }
 }
 
@@ -564,7 +588,9 @@ def api_scrape():
             return jsonify({'status': 'error', 'message': result.get('error', 'Unknown error')}), 500
             
     except Exception as e:
-        release_lock(db, location_id)
+        # Safety check: location_id should always be defined here, but check just in case
+        if 'location_id' in locals():
+            release_lock(db, location_id)
         import traceback
         print(f"Scraping error: {traceback.format_exc()}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -797,6 +823,93 @@ def api_cleanup_images():
         return jsonify({'success': True, 'removed_count': removed_count})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/terms')
+def terms():
+    """Terms of Service page"""
+    lang = get_language()
+    if lang not in TRANSLATIONS:
+        lang = 'en'
+    t = TRANSLATIONS[lang]
+    
+    return render_template('terms.html', translations=t, lang=lang, datetime=datetime)
+
+@app.route('/api/feedback', methods=['POST'])
+def api_feedback():
+    """Handle feedback form submission"""
+    try:
+        data = request.get_json() or {}
+        name = data.get('name', '').strip()
+        email = data.get('email', '').strip()
+        message = data.get('message', '').strip()
+        
+        # Validation
+        if not message:
+            return jsonify({'success': False, 'error': 'Message is required'}), 400
+        
+        if len(message) > 5000:
+            return jsonify({'success': False, 'error': 'Message is too long (max 5000 characters)'}), 400
+        
+        # Email configuration
+        recipient_email = 'oleksandr.don.256@gmail.com'
+        subject = f'CineStream Feedback from {name or "Anonymous"}'
+        
+        # Create email body
+        email_body = f"""
+Feedback from CineStream Website
+
+Name: {name or 'Not provided'}
+Email: {email or 'Not provided'}
+Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
+
+Message:
+{message}
+"""
+        
+        # Try to send email using SMTP (if configured) or just log it
+        try:
+            # Check if SMTP is configured in environment
+            smtp_host = os.getenv('SMTP_HOST')
+            smtp_port = int(os.getenv('SMTP_PORT', '587'))
+            smtp_user = os.getenv('SMTP_USER')
+            smtp_password = os.getenv('SMTP_PASSWORD')
+            
+            if smtp_host and smtp_user and smtp_password:
+                # Send email via SMTP
+                msg = MIMEMultipart()
+                msg['From'] = smtp_user
+                msg['To'] = recipient_email
+                msg['Subject'] = subject
+                msg.attach(MIMEText(email_body, 'plain'))
+                
+                server = smtplib.SMTP(smtp_host, smtp_port)
+                server.starttls()
+                server.login(smtp_user, smtp_password)
+                server.send_message(msg)
+                server.quit()
+            else:
+                # If SMTP not configured, just log it (for development)
+                print(f"\n{'='*60}")
+                print("FEEDBACK RECEIVED (SMTP not configured, logging instead):")
+                print(f"{'='*60}")
+                print(email_body)
+                print(f"{'='*60}\n")
+        except Exception as e:
+            # Log error but don't fail the request
+            print(f"Error sending feedback email: {e}")
+            print(f"\n{'='*60}")
+            print("FEEDBACK RECEIVED (Email sending failed, logging instead):")
+            print(f"{'='*60}")
+            print(email_body)
+            print(f"{'='*60}\n")
+        
+        return jsonify({'success': True, 'message': 'Feedback sent successfully'})
+    
+    except Exception as e:
+        print(f"Error processing feedback: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
 
 def main():
     """Main entry point"""

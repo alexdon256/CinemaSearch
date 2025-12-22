@@ -641,8 +641,54 @@ ExecStartPost=/bin/bash -c 'sleep 1 && /usr/local/bin/cinestream-set-cpu-affinit
 WantedBy=cinestream.target
 EOF
     
+    # Create daily refresh service
+    log_info "Creating daily refresh service and timer..."
+    cat > "$SYSTEMD_DIR/${APP_NAME}-refresh.service" <<EOF
+[Unit]
+Description=CineStream Daily Refresh Job
+After=network.target mongodb.service
+PartOf=cinestream.target
+
+[Service]
+Type=oneshot
+User=$SERVICE_USER
+Group=$SERVICE_USER
+WorkingDirectory=$APP_DIR
+Environment="PATH=$APP_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=$APP_DIR/venv/bin/python $APP_DIR/src/scripts/daily_refresh.py
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=cinestream.target
+EOF
+
+    # Create daily refresh timer (runs at 06:00 AM daily, with catch-up after power outages)
+    cat > "$SYSTEMD_DIR/${APP_NAME}-refresh.timer" <<EOF
+[Unit]
+Description=CineStream Daily Refresh Timer
+Requires=${APP_NAME}-refresh.service
+
+[Timer]
+# Run daily at 06:00 AM
+OnCalendar=06:00
+# Persistent=true ensures missed runs are caught up after system boot/power outage
+Persistent=true
+# Randomize start time within 5 minutes to avoid thundering herd
+RandomizedDelaySec=300
+# Accuracy: allow 1 hour window for execution
+AccuracySec=1h
+
+[Install]
+WantedBy=timers.target
+EOF
+
     # Reload systemd
     systemctl daemon-reload
+    
+    # Enable and start the timer
+    systemctl enable "${APP_NAME}-refresh.timer" 2>/dev/null || true
+    systemctl start "${APP_NAME}-refresh.timer" 2>/dev/null || true
     
     # Enable and start all 10 processes
     log_info "Starting application processes..."

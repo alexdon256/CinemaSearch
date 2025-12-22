@@ -122,6 +122,7 @@ def release_lock(db: Database, city_name: str, status: str = 'fresh'):
         status: Status to set after releasing lock (default: 'fresh')
     """
     try:
+        from datetime import timezone
         db.locations.update_one(
             {'city_name': city_name},
             {
