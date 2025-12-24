@@ -309,7 +309,7 @@ disable_clear_linux_telemetry() {
         systemctl stop clr-telemetry.service 2>/dev/null || true
         systemctl disable clr-telemetry.service 2>/dev/null || true
         systemctl mask clr-telemetry.service 2>/dev/null || true
-        log_success "Disabled clr-telemetry service"
+        log_success "Disabled clr-telemetry service (persistent)"
     else
         log_info "clr-telemetry service not found (may not be installed)"
     fi
@@ -320,8 +320,11 @@ disable_clear_linux_telemetry() {
         systemctl stop clr-telemetry.timer 2>/dev/null || true
         systemctl disable clr-telemetry.timer 2>/dev/null || true
         systemctl mask clr-telemetry.timer 2>/dev/null || true
-        log_success "Disabled clr-telemetry timer"
+        log_success "Disabled clr-telemetry timer (persistent)"
     fi
+    
+    # Reload systemd to ensure service changes are persistent
+    systemctl daemon-reload 2>/dev/null || true
     
     # Create/update telemetry configuration file to disable telemetry
     TELEMETRY_CONF="/etc/telemetry.conf"
@@ -337,7 +340,7 @@ enabled = false
 EOF
     
     chmod 644 "$TELEMETRY_CONF"
-    log_success "Created telemetry configuration: $TELEMETRY_CONF"
+    log_success "Created persistent telemetry configuration: $TELEMETRY_CONF"
     
     # Disable swupd telemetry if clr-telemetry command exists
     if command -v clr-telemetry &> /dev/null; then
@@ -345,11 +348,12 @@ EOF
         clr-telemetry disable 2>/dev/null || {
             # If the command doesn't support disable, try to configure it
             log_info "Attempting to configure telemetry settings..."
-            # Set telemetry to disabled via configuration
+            # Set telemetry to disabled via persistent configuration
             mkdir -p /etc/telemetry 2>/dev/null || true
             echo "disabled" > /etc/telemetry/status 2>/dev/null || true
+            chmod 644 /etc/telemetry/status 2>/dev/null || true
         }
-        log_success "Telemetry disabled via clr-telemetry"
+        log_success "Telemetry disabled via clr-telemetry (persistent)"
     fi
     
     # Configure swupd to not send telemetry
@@ -370,7 +374,7 @@ EOF
     }
     
     if [[ -f "$SWUPD_CONF" ]]; then
-        log_success "Updated swupd configuration to disable telemetry"
+        log_success "Updated persistent swupd configuration to disable telemetry"
     fi
     
     # Also disable Firefox telemetry by creating system-wide preferences
@@ -406,9 +410,9 @@ pref("browser.newtabpage.activity-stream.telemetry", false);
 EOF
     
     chmod 644 "$FIREFOX_PREFS_DIR/telemetry-disable.js" 2>/dev/null || true
-    log_success "Created Firefox telemetry disable preferences"
+    log_success "Created persistent Firefox telemetry disable preferences"
     
-    log_success "Clear Linux telemetry disabled (0 telemetry sent)"
+    log_success "Clear Linux telemetry disabled (0 telemetry sent - all settings persistent)"
 }
 
 # Disable system logging
@@ -444,7 +448,8 @@ EOF
     chmod 644 "$JOURNAL_CONF"
     log_success "Configured systemd journal to use volatile storage only"
     
-    # Restart journald to apply changes
+    # Reload systemd and restart journald to apply changes immediately and persistently
+    systemctl daemon-reload 2>/dev/null || true
     systemctl restart systemd-journald.service 2>/dev/null || {
         log_warning "Could not restart journald, changes will apply on next boot"
     }
@@ -455,7 +460,7 @@ EOF
         systemctl stop rsyslog.service 2>/dev/null || true
         systemctl disable rsyslog.service 2>/dev/null || true
         systemctl mask rsyslog.service 2>/dev/null || true
-        log_success "Disabled rsyslog service"
+        log_success "Disabled rsyslog service (persistent)"
     fi
     
     # Disable syslog if present (alternative logging daemon)
@@ -464,7 +469,7 @@ EOF
         systemctl stop syslog.service 2>/dev/null || true
         systemctl disable syslog.service 2>/dev/null || true
         systemctl mask syslog.service 2>/dev/null || true
-        log_success "Disabled syslog service"
+        log_success "Disabled syslog service (persistent)"
     fi
     
     # Disable auditd if present
@@ -473,8 +478,11 @@ EOF
         systemctl stop auditd.service 2>/dev/null || true
         systemctl disable auditd.service 2>/dev/null || true
         systemctl mask auditd.service 2>/dev/null || true
-        log_success "Disabled auditd service"
+        log_success "Disabled auditd service (persistent)"
     fi
+    
+    # Reload systemd to ensure all service changes are persistent
+    systemctl daemon-reload 2>/dev/null || true
     
     # Configure logrotate to be minimal or disable it
     LOGROTATE_CONF="/etc/logrotate.conf"
@@ -524,13 +532,11 @@ EOF
     
     # Disable kernel logging to dmesg buffer (reduce buffer size)
     log_info "Configuring kernel logging..."
-    # Set dmesg buffer to minimum
-    echo 1 > /proc/sys/kernel/dmesg_restrict 2>/dev/null || true
     
-    # Make dmesg restriction persistent
+    # Create persistent sysctl configuration
     SYSCTL_CONF="/etc/sysctl.d/99-disable-logging.conf"
     cat > "$SYSCTL_CONF" <<'EOF'
-# Disable system logging
+# Disable system logging - Persistent configuration
 # Restrict dmesg access
 kernel.dmesg_restrict = 1
 # Suppress most kernel messages (only critical/emergency messages shown)
@@ -539,7 +545,18 @@ kernel.printk = 3 3 3 3
 EOF
     
     chmod 644 "$SYSCTL_CONF"
-    log_success "Configured kernel logging restrictions"
+    
+    # Apply sysctl settings immediately and ensure they persist
+    sysctl -p "$SYSCTL_CONF" 2>/dev/null || {
+        # Alternative: apply via sysctl --system
+        sysctl --system 2>/dev/null || true
+    }
+    
+    # Also set directly for immediate effect (sysctl.d will persist on reboot)
+    echo 1 > /proc/sys/kernel/dmesg_restrict 2>/dev/null || true
+    echo "3 3 3 3" > /proc/sys/kernel/printk 2>/dev/null || true
+    
+    log_success "Configured kernel logging restrictions (persistent)"
     
     # Disable crash reporting if present
     if systemctl list-unit-files | grep -q "crash"; then
@@ -547,10 +564,13 @@ EOF
         systemctl stop crash.service 2>/dev/null || true
         systemctl disable crash.service 2>/dev/null || true
         systemctl mask crash.service 2>/dev/null || true
-        log_success "Disabled crash reporting"
+        log_success "Disabled crash reporting (persistent)"
     fi
     
-    log_success "System logging disabled (logs only in volatile RAM, cleared on reboot)"
+    # Ensure all systemd changes are persistent
+    systemctl daemon-reload 2>/dev/null || true
+    
+    log_success "System logging disabled (logs only in volatile RAM, cleared on reboot - all settings persistent)"
 }
 
 # Install additional codecs manually if needed

@@ -51,6 +51,245 @@ check_clear_linux() {
     fi
 }
 
+# Disable Clear Linux telemetry
+disable_clear_linux_telemetry() {
+    log_info "Disabling Clear Linux telemetry..."
+    
+    # Disable clr-telemetry systemd service if it exists
+    if systemctl list-unit-files | grep -q "clr-telemetry"; then
+        log_info "Stopping and disabling clr-telemetry service..."
+        systemctl stop clr-telemetry.service 2>/dev/null || true
+        systemctl disable clr-telemetry.service 2>/dev/null || true
+        systemctl mask clr-telemetry.service 2>/dev/null || true
+        log_success "Disabled clr-telemetry service (persistent)"
+    else
+        log_info "clr-telemetry service not found (may not be installed)"
+    fi
+    
+    # Disable telemetry timer if it exists
+    if systemctl list-unit-files | grep -q "clr-telemetry.timer"; then
+        log_info "Stopping and disabling clr-telemetry timer..."
+        systemctl stop clr-telemetry.timer 2>/dev/null || true
+        systemctl disable clr-telemetry.timer 2>/dev/null || true
+        systemctl mask clr-telemetry.timer 2>/dev/null || true
+        log_success "Disabled clr-telemetry timer (persistent)"
+    fi
+    
+    # Reload systemd to ensure service changes are persistent
+    systemctl daemon-reload 2>/dev/null || true
+    
+    # Create/update telemetry configuration file to disable telemetry
+    TELEMETRY_CONF="/etc/telemetry.conf"
+    log_info "Configuring telemetry settings..."
+    
+    # Create telemetry configuration with telemetry disabled
+    cat > "$TELEMETRY_CONF" <<'EOF'
+# Clear Linux Telemetry Configuration
+# Telemetry is disabled - no data will be sent
+
+[telemetry]
+enabled = false
+EOF
+    
+    chmod 644 "$TELEMETRY_CONF"
+    log_success "Created persistent telemetry configuration: $TELEMETRY_CONF"
+    
+    # Disable swupd telemetry if clr-telemetry command exists
+    if command -v clr-telemetry &> /dev/null; then
+        log_info "Disabling telemetry via clr-telemetry command..."
+        clr-telemetry disable 2>/dev/null || {
+            # If the command doesn't support disable, try to configure it
+            log_info "Attempting to configure telemetry settings..."
+            # Set telemetry to disabled via persistent configuration
+            mkdir -p /etc/telemetry 2>/dev/null || true
+            echo "disabled" > /etc/telemetry/status 2>/dev/null || true
+            chmod 644 /etc/telemetry/status 2>/dev/null || true
+        }
+        log_success "Telemetry disabled via clr-telemetry (persistent)"
+    fi
+    
+    # Configure swupd to not send telemetry
+    SWUPD_CONF="/etc/swupd/config"
+    if [[ ! -d "$(dirname "$SWUPD_CONF")" ]]; then
+        mkdir -p "$(dirname "$SWUPD_CONF")" 2>/dev/null || true
+    fi
+    
+    # Add telemetry disable setting to swupd config if file exists or create it
+    if [[ -f "$SWUPD_CONF" ]]; then
+        # Remove any existing telemetry settings
+        sed -i '/^telemetry/d' "$SWUPD_CONF" 2>/dev/null || true
+    fi
+    
+    # Add telemetry disable setting
+    echo "telemetry=false" >> "$SWUPD_CONF" 2>/dev/null || {
+        log_warning "Could not write to swupd config, but telemetry should still be disabled"
+    }
+    
+    if [[ -f "$SWUPD_CONF" ]]; then
+        log_success "Updated persistent swupd configuration to disable telemetry"
+    fi
+    
+    log_success "Clear Linux telemetry disabled (0 telemetry sent - all settings persistent)"
+}
+
+# Disable system logging
+disable_system_logging() {
+    log_info "Disabling system logging..."
+    
+    # Disable systemd journal logging by configuring it to use volatile storage only
+    log_info "Configuring systemd journal to use volatile storage only..."
+    JOURNAL_CONF="/etc/systemd/journald.conf"
+    
+    # Backup original config if it exists
+    if [[ -f "$JOURNAL_CONF" ]]; then
+        cp "$JOURNAL_CONF" "${JOURNAL_CONF}.backup.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+    fi
+    
+    # Create or update journald configuration to disable persistent logging
+    cat > "$JOURNAL_CONF" <<'EOF'
+[Journal]
+# Disable persistent storage - logs only in RAM
+Storage=volatile
+# Limit journal size
+SystemMaxUse=16M
+RuntimeMaxUse=16M
+# Disable forwarding to syslog
+ForwardToSyslog=no
+ForwardToKMsg=no
+ForwardToConsole=no
+ForwardToWall=no
+# Disable audit logging
+Audit=no
+EOF
+    
+    chmod 644 "$JOURNAL_CONF"
+    log_success "Configured systemd journal to use volatile storage only"
+    
+    # Reload systemd and restart journald to apply changes immediately and persistently
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl restart systemd-journald.service 2>/dev/null || {
+        log_warning "Could not restart journald, changes will apply on next boot"
+    }
+    
+    # Disable rsyslog if present
+    if systemctl list-unit-files | grep -q "rsyslog.service"; then
+        log_info "Stopping and disabling rsyslog..."
+        systemctl stop rsyslog.service 2>/dev/null || true
+        systemctl disable rsyslog.service 2>/dev/null || true
+        systemctl mask rsyslog.service 2>/dev/null || true
+        log_success "Disabled rsyslog service (persistent)"
+    fi
+    
+    # Disable syslog if present (alternative logging daemon)
+    if systemctl list-unit-files | grep -q "syslog.service"; then
+        log_info "Stopping and disabling syslog..."
+        systemctl stop syslog.service 2>/dev/null || true
+        systemctl disable syslog.service 2>/dev/null || true
+        systemctl mask syslog.service 2>/dev/null || true
+        log_success "Disabled syslog service (persistent)"
+    fi
+    
+    # Disable auditd if present
+    if systemctl list-unit-files | grep -q "auditd.service"; then
+        log_info "Stopping and disabling auditd..."
+        systemctl stop auditd.service 2>/dev/null || true
+        systemctl disable auditd.service 2>/dev/null || true
+        systemctl mask auditd.service 2>/dev/null || true
+        log_success "Disabled auditd service (persistent)"
+    fi
+    
+    # Reload systemd to ensure all service changes are persistent
+    systemctl daemon-reload 2>/dev/null || true
+    
+    # Configure logrotate to be minimal or disable it
+    LOGROTATE_CONF="/etc/logrotate.conf"
+    if [[ -f "$LOGROTATE_CONF" ]]; then
+        log_info "Configuring logrotate to minimize logging..."
+        # Backup original
+        cp "$LOGROTATE_CONF" "${LOGROTATE_CONF}.backup.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+        
+        # Update logrotate to rotate more aggressively and compress immediately
+        sed -i 's/^#compress/compress/' "$LOGROTATE_CONF" 2>/dev/null || true
+        sed -i 's/^compress$/compress/' "$LOGROTATE_CONF" 2>/dev/null || true
+        sed -i 's/^weekly/daily/' "$LOGROTATE_CONF" 2>/dev/null || true
+        
+        # Add aggressive rotation settings
+        if ! grep -q "^rotate 1" "$LOGROTATE_CONF"; then
+            echo "rotate 1" >> "$LOGROTATE_CONF"
+        fi
+        if ! grep -q "^maxage 1" "$LOGROTATE_CONF"; then
+            echo "maxage 1" >> "$LOGROTATE_CONF"
+        fi
+        
+        log_success "Configured logrotate for minimal logging"
+    fi
+    
+    # Clear existing journal logs
+    log_info "Clearing existing journal logs..."
+    journalctl --vacuum-time=1s 2>/dev/null || {
+        # Alternative: delete journal files directly
+        rm -rf /var/log/journal/* 2>/dev/null || true
+        rm -rf /run/log/journal/* 2>/dev/null || true
+    }
+    log_success "Cleared existing journal logs"
+    
+    # Clear other log directories
+    log_info "Clearing other log files..."
+    # Clear common log locations (but keep directory structure)
+    find /var/log -type f -name "*.log" -exec truncate -s 0 {} \; 2>/dev/null || true
+    find /var/log -type f -name "*.log.*" -delete 2>/dev/null || true
+    
+    # Clear syslog files
+    truncate -s 0 /var/log/syslog 2>/dev/null || true
+    truncate -s 0 /var/log/messages 2>/dev/null || true
+    truncate -s 0 /var/log/daemon.log 2>/dev/null || true
+    truncate -s 0 /var/log/kern.log 2>/dev/null || true
+    
+    log_success "Cleared other log files"
+    
+    # Disable kernel logging to dmesg buffer (reduce buffer size)
+    log_info "Configuring kernel logging..."
+    
+    # Create persistent sysctl configuration
+    SYSCTL_CONF="/etc/sysctl.d/99-disable-logging.conf"
+    cat > "$SYSCTL_CONF" <<'EOF'
+# Disable system logging - Persistent configuration
+# Restrict dmesg access
+kernel.dmesg_restrict = 1
+# Suppress most kernel messages (only critical/emergency messages shown)
+# Format: console_loglevel default_message_loglevel minimum_console_loglevel default_console_loglevel
+kernel.printk = 3 3 3 3
+EOF
+    
+    chmod 644 "$SYSCTL_CONF"
+    
+    # Apply sysctl settings immediately and ensure they persist
+    sysctl -p "$SYSCTL_CONF" 2>/dev/null || {
+        # Alternative: apply via sysctl --system
+        sysctl --system 2>/dev/null || true
+    }
+    
+    # Also set directly for immediate effect (sysctl.d will persist on reboot)
+    echo 1 > /proc/sys/kernel/dmesg_restrict 2>/dev/null || true
+    echo "3 3 3 3" > /proc/sys/kernel/printk 2>/dev/null || true
+    
+    log_success "Configured kernel logging restrictions (persistent)"
+    
+    # Disable crash reporting if present
+    if systemctl list-unit-files | grep -q "crash"; then
+        log_info "Disabling crash reporting services..."
+        systemctl stop crash.service 2>/dev/null || true
+        systemctl disable crash.service 2>/dev/null || true
+        systemctl mask crash.service 2>/dev/null || true
+        log_success "Disabled crash reporting (persistent)"
+    fi
+    
+    # Ensure all systemd changes are persistent
+    systemctl daemon-reload 2>/dev/null || true
+    
+    log_success "System logging disabled (logs only in volatile RAM, cleared on reboot - all settings persistent)"
+}
+
 # Initialize server: OS updates, packages, MongoDB
 init_server() {
     log_info "Initializing Clear Linux server..."
@@ -58,6 +297,16 @@ init_server() {
     # Update Clear Linux
     log_info "Updating Clear Linux OS..."
     swupd update -y || log_warning "swupd update failed, continuing..."
+    
+    # Disable Clear Linux telemetry (persistent configuration)
+    log_info ""
+    disable_clear_linux_telemetry
+    
+    # Disable system logging (persistent configuration)
+    log_info ""
+    disable_system_logging
+    
+    log_info ""
     
     # Install required bundles
     log_info "Installing required bundles..."
@@ -121,6 +370,8 @@ init_server() {
     log_info "All services configured to auto-start on boot"
     log_info "CPU affinity: MongoDB & Nginx -> P-cores (0-5), Python apps -> E-cores (6-13)"
     log_info "System optimized: swappiness=1, noatime, TCP tuning, MongoDB performance config"
+    log_info "Telemetry disabled: 0 telemetry sent (all settings persistent)"
+    log_info "System logging disabled: logs only in volatile RAM (all settings persistent)"
     log_info ""
     log_info "Next steps:"
     log_info "1. Configure .env file: nano /var/www/cinestream/.env"
