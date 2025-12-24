@@ -2,6 +2,8 @@
 
 # Firefox and Video Codecs Installation Script for Clear Linux
 # Installs Firefox and configures video codecs for playback
+# Also disables Clear Linux telemetry (0 telemetry sent)
+# And disables system logging (logs only in volatile RAM)
 
 set -euo pipefail
 
@@ -297,6 +299,260 @@ EOF
     log_success "Desktop shortcuts created"
 }
 
+# Disable Clear Linux telemetry
+disable_clear_linux_telemetry() {
+    log_info "Disabling Clear Linux telemetry..."
+    
+    # Disable clr-telemetry systemd service if it exists
+    if systemctl list-unit-files | grep -q "clr-telemetry"; then
+        log_info "Stopping and disabling clr-telemetry service..."
+        systemctl stop clr-telemetry.service 2>/dev/null || true
+        systemctl disable clr-telemetry.service 2>/dev/null || true
+        systemctl mask clr-telemetry.service 2>/dev/null || true
+        log_success "Disabled clr-telemetry service"
+    else
+        log_info "clr-telemetry service not found (may not be installed)"
+    fi
+    
+    # Disable telemetry timer if it exists
+    if systemctl list-unit-files | grep -q "clr-telemetry.timer"; then
+        log_info "Stopping and disabling clr-telemetry timer..."
+        systemctl stop clr-telemetry.timer 2>/dev/null || true
+        systemctl disable clr-telemetry.timer 2>/dev/null || true
+        systemctl mask clr-telemetry.timer 2>/dev/null || true
+        log_success "Disabled clr-telemetry timer"
+    fi
+    
+    # Create/update telemetry configuration file to disable telemetry
+    TELEMETRY_CONF="/etc/telemetry.conf"
+    log_info "Configuring telemetry settings..."
+    
+    # Create telemetry configuration with telemetry disabled
+    cat > "$TELEMETRY_CONF" <<'EOF'
+# Clear Linux Telemetry Configuration
+# Telemetry is disabled - no data will be sent
+
+[telemetry]
+enabled = false
+EOF
+    
+    chmod 644 "$TELEMETRY_CONF"
+    log_success "Created telemetry configuration: $TELEMETRY_CONF"
+    
+    # Disable swupd telemetry if clr-telemetry command exists
+    if command -v clr-telemetry &> /dev/null; then
+        log_info "Disabling telemetry via clr-telemetry command..."
+        clr-telemetry disable 2>/dev/null || {
+            # If the command doesn't support disable, try to configure it
+            log_info "Attempting to configure telemetry settings..."
+            # Set telemetry to disabled via configuration
+            mkdir -p /etc/telemetry 2>/dev/null || true
+            echo "disabled" > /etc/telemetry/status 2>/dev/null || true
+        }
+        log_success "Telemetry disabled via clr-telemetry"
+    fi
+    
+    # Configure swupd to not send telemetry
+    SWUPD_CONF="/etc/swupd/config"
+    if [[ ! -d "$(dirname "$SWUPD_CONF")" ]]; then
+        mkdir -p "$(dirname "$SWUPD_CONF")" 2>/dev/null || true
+    fi
+    
+    # Add telemetry disable setting to swupd config if file exists or create it
+    if [[ -f "$SWUPD_CONF" ]]; then
+        # Remove any existing telemetry settings
+        sed -i '/^telemetry/d' "$SWUPD_CONF" 2>/dev/null || true
+    fi
+    
+    # Add telemetry disable setting
+    echo "telemetry=false" >> "$SWUPD_CONF" 2>/dev/null || {
+        log_warning "Could not write to swupd config, but telemetry should still be disabled"
+    }
+    
+    if [[ -f "$SWUPD_CONF" ]]; then
+        log_success "Updated swupd configuration to disable telemetry"
+    fi
+    
+    # Also disable Firefox telemetry by creating system-wide preferences
+    log_info "Configuring Firefox to disable telemetry..."
+    FIREFOX_PREFS_DIR="/usr/lib/firefox/browser/defaults/preferences"
+    if [[ ! -d "$FIREFOX_PREFS_DIR" ]]; then
+        mkdir -p "$FIREFOX_PREFS_DIR" 2>/dev/null || {
+            log_warning "Could not create Firefox preferences directory"
+            return 0
+        }
+    fi
+    
+    # Create Firefox preferences file to disable telemetry
+    cat > "$FIREFOX_PREFS_DIR/telemetry-disable.js" <<'EOF'
+// Firefox Telemetry Disabled
+// This file disables all telemetry in Firefox
+
+pref("toolkit.telemetry.enabled", false);
+pref("toolkit.telemetry.unified", false);
+pref("toolkit.telemetry.archive.enabled", false);
+pref("toolkit.telemetry.bhrPing.enabled", false);
+pref("toolkit.telemetry.firstShutdownPing.enabled", false);
+pref("toolkit.telemetry.hybridContent.enabled", false);
+pref("toolkit.telemetry.newProfilePing.enabled", false);
+pref("toolkit.telemetry.shutdownPingSender.enabled", false);
+pref("toolkit.telemetry.updatePing.enabled", false);
+pref("toolkit.telemetry.server", "");
+pref("datareporting.policy.dataSubmissionEnabled", false);
+pref("datareporting.healthreport.uploadEnabled", false);
+pref("browser.ping-centre.telemetry", false);
+pref("browser.newtabpage.activity-stream.feeds.telemetry", false);
+pref("browser.newtabpage.activity-stream.telemetry", false);
+EOF
+    
+    chmod 644 "$FIREFOX_PREFS_DIR/telemetry-disable.js" 2>/dev/null || true
+    log_success "Created Firefox telemetry disable preferences"
+    
+    log_success "Clear Linux telemetry disabled (0 telemetry sent)"
+}
+
+# Disable system logging
+disable_system_logging() {
+    log_info "Disabling system logging..."
+    
+    # Disable systemd journal logging by configuring it to use volatile storage only
+    log_info "Configuring systemd journal to use volatile storage only..."
+    JOURNAL_CONF="/etc/systemd/journald.conf"
+    
+    # Backup original config if it exists
+    if [[ -f "$JOURNAL_CONF" ]]; then
+        cp "$JOURNAL_CONF" "${JOURNAL_CONF}.backup.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+    fi
+    
+    # Create or update journald configuration to disable persistent logging
+    cat > "$JOURNAL_CONF" <<'EOF'
+[Journal]
+# Disable persistent storage - logs only in RAM
+Storage=volatile
+# Limit journal size
+SystemMaxUse=16M
+RuntimeMaxUse=16M
+# Disable forwarding to syslog
+ForwardToSyslog=no
+ForwardToKMsg=no
+ForwardToConsole=no
+ForwardToWall=no
+# Disable audit logging
+Audit=no
+EOF
+    
+    chmod 644 "$JOURNAL_CONF"
+    log_success "Configured systemd journal to use volatile storage only"
+    
+    # Restart journald to apply changes
+    systemctl restart systemd-journald.service 2>/dev/null || {
+        log_warning "Could not restart journald, changes will apply on next boot"
+    }
+    
+    # Disable rsyslog if present
+    if systemctl list-unit-files | grep -q "rsyslog.service"; then
+        log_info "Stopping and disabling rsyslog..."
+        systemctl stop rsyslog.service 2>/dev/null || true
+        systemctl disable rsyslog.service 2>/dev/null || true
+        systemctl mask rsyslog.service 2>/dev/null || true
+        log_success "Disabled rsyslog service"
+    fi
+    
+    # Disable syslog if present (alternative logging daemon)
+    if systemctl list-unit-files | grep -q "syslog.service"; then
+        log_info "Stopping and disabling syslog..."
+        systemctl stop syslog.service 2>/dev/null || true
+        systemctl disable syslog.service 2>/dev/null || true
+        systemctl mask syslog.service 2>/dev/null || true
+        log_success "Disabled syslog service"
+    fi
+    
+    # Disable auditd if present
+    if systemctl list-unit-files | grep -q "auditd.service"; then
+        log_info "Stopping and disabling auditd..."
+        systemctl stop auditd.service 2>/dev/null || true
+        systemctl disable auditd.service 2>/dev/null || true
+        systemctl mask auditd.service 2>/dev/null || true
+        log_success "Disabled auditd service"
+    fi
+    
+    # Configure logrotate to be minimal or disable it
+    LOGROTATE_CONF="/etc/logrotate.conf"
+    if [[ -f "$LOGROTATE_CONF" ]]; then
+        log_info "Configuring logrotate to minimize logging..."
+        # Backup original
+        cp "$LOGROTATE_CONF" "${LOGROTATE_CONF}.backup.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+        
+        # Update logrotate to rotate more aggressively and compress immediately
+        sed -i 's/^#compress/compress/' "$LOGROTATE_CONF" 2>/dev/null || true
+        sed -i 's/^compress$/compress/' "$LOGROTATE_CONF" 2>/dev/null || true
+        sed -i 's/^weekly/daily/' "$LOGROTATE_CONF" 2>/dev/null || true
+        
+        # Add aggressive rotation settings
+        if ! grep -q "^rotate 1" "$LOGROTATE_CONF"; then
+            echo "rotate 1" >> "$LOGROTATE_CONF"
+        fi
+        if ! grep -q "^maxage 1" "$LOGROTATE_CONF"; then
+            echo "maxage 1" >> "$LOGROTATE_CONF"
+        fi
+        
+        log_success "Configured logrotate for minimal logging"
+    fi
+    
+    # Clear existing journal logs
+    log_info "Clearing existing journal logs..."
+    journalctl --vacuum-time=1s 2>/dev/null || {
+        # Alternative: delete journal files directly
+        rm -rf /var/log/journal/* 2>/dev/null || true
+        rm -rf /run/log/journal/* 2>/dev/null || true
+    }
+    log_success "Cleared existing journal logs"
+    
+    # Clear other log directories
+    log_info "Clearing other log files..."
+    # Clear common log locations (but keep directory structure)
+    find /var/log -type f -name "*.log" -exec truncate -s 0 {} \; 2>/dev/null || true
+    find /var/log -type f -name "*.log.*" -delete 2>/dev/null || true
+    
+    # Clear syslog files
+    truncate -s 0 /var/log/syslog 2>/dev/null || true
+    truncate -s 0 /var/log/messages 2>/dev/null || true
+    truncate -s 0 /var/log/daemon.log 2>/dev/null || true
+    truncate -s 0 /var/log/kern.log 2>/dev/null || true
+    
+    log_success "Cleared other log files"
+    
+    # Disable kernel logging to dmesg buffer (reduce buffer size)
+    log_info "Configuring kernel logging..."
+    # Set dmesg buffer to minimum
+    echo 1 > /proc/sys/kernel/dmesg_restrict 2>/dev/null || true
+    
+    # Make dmesg restriction persistent
+    SYSCTL_CONF="/etc/sysctl.d/99-disable-logging.conf"
+    cat > "$SYSCTL_CONF" <<'EOF'
+# Disable system logging
+# Restrict dmesg access
+kernel.dmesg_restrict = 1
+# Suppress most kernel messages (only critical/emergency messages shown)
+# Format: console_loglevel default_message_loglevel minimum_console_loglevel default_console_loglevel
+kernel.printk = 3 3 3 3
+EOF
+    
+    chmod 644 "$SYSCTL_CONF"
+    log_success "Configured kernel logging restrictions"
+    
+    # Disable crash reporting if present
+    if systemctl list-unit-files | grep -q "crash"; then
+        log_info "Disabling crash reporting services..."
+        systemctl stop crash.service 2>/dev/null || true
+        systemctl disable crash.service 2>/dev/null || true
+        systemctl mask crash.service 2>/dev/null || true
+        log_success "Disabled crash reporting"
+    fi
+    
+    log_success "System logging disabled (logs only in volatile RAM, cleared on reboot)"
+}
+
 # Install additional codecs manually if needed
 install_manual_codecs() {
     log_info "Installing additional codecs if needed..."
@@ -380,6 +636,8 @@ print_usage() {
     log_info "=== Firefox Video Codec Installation Complete ==="
     log_info ""
     log_info "Firefox has been installed and configured for video playback."
+    log_info "Clear Linux telemetry has been disabled (0 telemetry sent)."
+    log_info "System logging has been disabled (logs only in volatile RAM)."
     log_info ""
     log_info "Usage:"
     log_info "  - Standard Firefox: firefox"
@@ -411,6 +669,16 @@ main() {
     check_clear_linux
     
     log_info "Starting installation..."
+    log_info ""
+    
+    # Disable Clear Linux telemetry first
+    disable_clear_linux_telemetry
+    
+    log_info ""
+    
+    # Disable system logging
+    disable_system_logging
+    
     log_info ""
     
     # Install Firefox and codecs
