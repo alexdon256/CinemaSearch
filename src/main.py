@@ -855,12 +855,13 @@ def api_feedback():
         subject = f'CineStream Feedback from {name or "Anonymous"}'
         
         # Create email body
+        from datetime import timezone
         email_body = f"""
 Feedback from CineStream Website
 
 Name: {name or 'Not provided'}
 Email: {email or 'Not provided'}
-Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
+Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}
 
 Message:
 {message}

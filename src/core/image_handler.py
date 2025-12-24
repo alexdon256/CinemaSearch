@@ -192,8 +192,8 @@ def cleanup_old_images():
                 if not filepath.suffix.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
                     continue
                 try:
-                    # Check file modification time
-                    mtime = datetime.fromtimestamp(filepath.stat().st_mtime)
+                    # Check file modification time (make timezone-aware for comparison)
+                    mtime = datetime.fromtimestamp(filepath.stat().st_mtime, tz=timezone.utc)
                     if mtime < cutoff_date:
                         try:
                             filepath.unlink()

@@ -234,7 +234,7 @@ PartOf=cinestream.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/bash -c 'sleep 5 && for conf in /var/www/*/.deploy_config; do [ -f "\$conf" ] && source "\$conf" && PROCESS_COUNT=\${PROCESS_COUNT:-10} && for i in \$(seq 0 \$((PROCESS_COUNT-1))); do systemctl start "\${APP_NAME}@\$((START_PORT+i)).service" 2>/dev/null || true; done; done'
+ExecStart=/bin/bash -c 'sleep 5 && for conf in /var/www/*/.deploy_config; do [ -f "\$conf" ] && source "\$conf" && PROCESS_COUNT=\${PROCESS_COUNT:-10} && START_PORT=\${START_PORT:-8001} && APP_NAME=\$(basename \$(dirname "\$conf")) && for i in \$(seq 0 \$((PROCESS_COUNT-1))); do systemctl start "\${APP_NAME}@\$((START_PORT+i)).service" 2>/dev/null || true; done; done'
 # Set CPU affinity after starting all services
 ExecStartPost=/bin/bash -c 'sleep 3 && /usr/local/bin/cinestream-set-cpu-affinity.sh all || true'
 ExecStop=/bin/true
@@ -346,6 +346,7 @@ stop_all() {
             source "$app_dir/.deploy_config"
             # Default to 10 processes if not specified
             PROCESS_COUNT=${PROCESS_COUNT:-10}
+            START_PORT=${START_PORT:-8001}
             APP_NAME=$(basename "$app_dir")
             
             for ((i=0; i<PROCESS_COUNT; i++)); do
@@ -380,6 +381,7 @@ start_all() {
             source "$app_dir/.deploy_config"
             # Default to 10 processes if not specified
             PROCESS_COUNT=${PROCESS_COUNT:-10}
+            START_PORT=${START_PORT:-8001}
             APP_NAME=$(basename "$app_dir")
             
             for ((i=0; i<PROCESS_COUNT; i++)); do
@@ -429,6 +431,7 @@ uninit_server() {
                 source "$app_dir/.deploy_config"
                 # Default to 10 processes if not specified
                 PROCESS_COUNT=${PROCESS_COUNT:-10}
+                START_PORT=${START_PORT:-8001}
                 APP_NAME=$(basename "$app_dir")
                 log_info "Removing site: $APP_NAME"
                 
@@ -965,16 +968,16 @@ EOF
     cat >> "$NGINX_CONF" <<EOF
 }
 
-    # HTTP server - redirect to HTTPS
-    server {
-        listen 80;
-        server_name ${DOMAIN};
-        
-        # Allow Let's Encrypt ACME challenge
-        location /.well-known/acme-challenge/ {
-            root /var/www/html;
-            try_files \$uri =404;
-        }
+# HTTP server - redirect to HTTPS
+server {
+    listen 80;
+    server_name ${DOMAIN};
+    
+    # Allow Let's Encrypt ACME challenge
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+        try_files \$uri =404;
+    }
     
     # Redirect all other traffic to HTTPS
     location / {
@@ -1143,6 +1146,7 @@ enable_autostart() {
             source "$app_dir/.deploy_config"
             # Default to 10 processes if not specified
             PROCESS_COUNT=${PROCESS_COUNT:-10}
+            START_PORT=${START_PORT:-8001}
             APP_NAME=$(basename "$app_dir")
             
             log_info "Enabling $APP_NAME services..."
@@ -1196,6 +1200,7 @@ show_status() {
             source "$app_dir/.deploy_config"
             # Default to 10 processes if not specified
             PROCESS_COUNT=${PROCESS_COUNT:-10}
+            START_PORT=${START_PORT:-8001}
             APP_NAME=$(basename "$app_dir")
             
             echo "[$APP_NAME] Domain: $DOMAIN_NAME"
