@@ -98,10 +98,11 @@ sudo ./deploy.sh status
 **If database wasn't initialized (because API key was missing), initialize it now:**
 ```bash
 cd /var/www/cinestream
-source venv/bin/activate
-python src/scripts/init_db.py
-deactivate
+# Clear Linux requires using venv Python directly (not system Python)
+./venv/bin/python src/scripts/init_db.py
 ```
+
+**Note:** Clear Linux requires all Python code to run in a virtual environment. The deploy script automatically configures all systemd services to use the venv Python (`$APP_DIR/venv/bin/python`). When running commands manually, always use the venv Python directly.
 
 ---
 
@@ -216,6 +217,50 @@ sudo systemctl status cinestream-cpu-affinity.timer
 
 ---
 
+### Step 6.5: System Optimization (Optional but Recommended)
+
+The `init-server` command automatically optimizes the system, but you can re-run optimizations or apply them separately:
+
+```bash
+# Optimize system for web server + MongoDB workload
+sudo ./deploy.sh optimize-system
+```
+
+**What this does:**
+- **Swap Configuration**: Sets `vm.swappiness=1` (minimal swap usage for database)
+- **Filesystem**: Adds `noatime` mount option (disables last access time updates)
+- **Kernel Parameters**: Optimizes TCP settings for high concurrency
+  - Increases connection limits (`somaxconn=4096`)
+  - Optimizes TCP buffers and timeouts
+  - Increases file descriptor limits (65536)
+- **MongoDB Performance**: 
+  - Configures WiredTiger cache (50% of RAM, max 32GB)
+  - Enables compression (Snappy)
+  - Optimizes connection pools
+  - Creates `/opt/mongodb/mongod.conf` with performance settings
+- **Transparent Hugepages**: Disables for MongoDB (MongoDB requirement)
+- **I/O Scheduler**: Optimizes for SSD (uses `none` or `mq-deadline` scheduler)
+- **Readahead**: Sets optimal readahead for MongoDB data device
+
+**Note:** Some optimizations require a reboot to take full effect. The script will warn you about this.
+
+**Verify optimizations:**
+```bash
+# Check swappiness
+cat /proc/sys/vm/swappiness  # Should be 1
+
+# Check kernel parameters
+sysctl net.core.somaxconn  # Should be 4096
+
+# Check MongoDB config
+cat /opt/mongodb/mongod.conf
+
+# Check transparent hugepages (should be never)
+cat /sys/kernel/mm/transparent_hugepage/enabled
+```
+
+---
+
 ### Step 7: Verify Everything Works
 
 Test the complete setup.
@@ -278,6 +323,9 @@ sudo ./deploy.sh install-ssl movies.example.com
 
 # 7. Enable auto-start (if not already enabled)
 sudo ./deploy.sh enable-autostart
+
+# 8. Re-apply system optimizations (optional, already done in init-server)
+sudo ./deploy.sh optimize-system
 ```
 
 ---
@@ -381,6 +429,33 @@ After cleanup, you can run `init-server` again to start fresh.
 
 ---
 
+## System Optimization
+
+The deployment script includes comprehensive system optimization for web server + MongoDB workloads. These optimizations are automatically applied during `init-server`, but can be re-applied or run separately:
+
+### Available Optimizations
+
+**Run optimization:**
+```bash
+sudo ./deploy.sh optimize-system
+```
+
+**Optimizations include:**
+- **Memory Management**: Low swappiness (1), optimized dirty ratios
+- **Filesystem**: `noatime` mount option for better I/O performance
+- **Network**: TCP tuning for high concurrency (4096 connections, optimized buffers)
+- **MongoDB**: WiredTiger cache sizing, compression, connection pools
+- **Kernel**: Transparent hugepages disabled, I/O scheduler optimization
+- **File Descriptors**: Increased limits (65536) for web server workloads
+
+**When to re-run:**
+- After system memory changes
+- After MongoDB version updates
+- If you notice performance degradation
+- After major system updates
+
+**Note:** Some optimizations (like `noatime` in `/etc/fstab`) require a reboot to take full effect.
+
 ## Next Steps
 
 After completing setup:
@@ -389,10 +464,12 @@ After completing setup:
 2. **Check Logs**: Monitor application and system logs
 3. **Update Regularly**: Run `sudo swupd update` for OS updates
 4. **Backup**: Regularly backup `.env` file and MongoDB data
-5. **Review Documentation**: 
+5. **Optimize**: Re-run `optimize-system` after major changes
+6. **Review Documentation**: 
    - [ARCHITECTURE.md](ARCHITECTURE.md) - System design
    - [CPU_AFFINITY.md](CPU_AFFINITY.md) - CPU configuration
    - [SITES.md](SITES.md) - Service management
+   - [PERFORMANCE.md](PERFORMANCE.md) - Performance analysis
 
 ---
 

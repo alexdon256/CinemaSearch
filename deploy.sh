@@ -67,6 +67,10 @@ init_server() {
     log_info "Installing MongoDB..."
     install_mongodb
     
+    # Optimize system for web server + MongoDB workload
+    log_info "Optimizing system configuration..."
+    optimize_system
+    
     # Install Claude CLI globally
     log_info "Installing Claude CLI..."
     npm install -g @anthropic-ai/claude-code || log_warning "Failed to install Claude CLI, continuing..."
@@ -80,10 +84,17 @@ init_server() {
     mkdir -p /etc/nginx/sites-available
     mkdir -p /etc/nginx/sites-enabled
     
-    # Start and enable MongoDB
+    # Start and enable MongoDB (after optimization)
     systemctl daemon-reload
     systemctl enable mongodb.service
-    systemctl start mongodb.service
+    systemctl enable disable-transparent-hugepages.service 2>/dev/null || true
+    systemctl enable configure-io-scheduler.service 2>/dev/null || true
+    # Restart MongoDB to apply new configuration if it was already running
+    if systemctl is-active --quiet mongodb.service 2>/dev/null; then
+        systemctl restart mongodb.service || systemctl start mongodb.service
+    else
+        systemctl start mongodb.service
+    fi
     
     # Create CineStream master target for coordinated startup
     create_master_target
@@ -109,11 +120,15 @@ init_server() {
     log_info "Application deployed and configured"
     log_info "All services configured to auto-start on boot"
     log_info "CPU affinity: MongoDB & Nginx -> P-cores (0-5), Python apps -> E-cores (6-13)"
+    log_info "System optimized: swappiness=1, noatime, TCP tuning, MongoDB performance config"
     log_info ""
     log_info "Next steps:"
     log_info "1. Configure .env file: nano /var/www/cinestream/.env"
     log_info "2. Set domain: sudo ./deploy.sh set-domain <domain>"
     log_info "3. Configure DNS and install SSL: sudo ./deploy.sh install-ssl <domain>"
+    log_info ""
+    log_warning "Note: Some system optimizations may require reboot for full effect"
+    log_info "To re-apply optimizations: sudo ./deploy.sh optimize-system"
 }
 
 # Install CPU affinity management scripts
@@ -315,6 +330,323 @@ EOF
     fi
     
     log_success "MongoDB installed successfully"
+}
+
+# Optimize system for web server + MongoDB workload
+optimize_system() {
+    log_info "Optimizing system for web server + MongoDB workload..."
+    
+    # Calculate system memory for MongoDB cache sizing
+    local total_mem_kb
+    total_mem_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    local total_mem_gb=$((total_mem_kb / 1024 / 1024))
+    
+    log_info "Detected system memory: ${total_mem_gb}GB"
+    
+    # 1. Configure swap and swappiness (low swappiness for database workloads)
+    log_info "Configuring swap and swappiness..."
+    
+    # Set swappiness to 1 (very low - only swap in emergency)
+    # For web server + MongoDB: we want to avoid swapping database pages
+    if ! grep -q "^vm.swappiness" /etc/sysctl.conf 2>/dev/null; then
+        echo "" >> /etc/sysctl.conf
+        echo "# CineStream: Optimize for web server + MongoDB" >> /etc/sysctl.conf
+        echo "vm.swappiness=1" >> /etc/sysctl.conf
+        sysctl -w vm.swappiness=1
+        log_success "Set vm.swappiness=1 (low swap usage for database)"
+    else
+        sed -i 's/^vm.swappiness=.*/vm.swappiness=1/' /etc/sysctl.conf
+        sysctl -w vm.swappiness=1
+        log_success "Updated vm.swappiness=1"
+    fi
+    
+    # Set dirty ratio for better write performance
+    if ! grep -q "^vm.dirty_ratio" /etc/sysctl.conf; then
+        echo "vm.dirty_ratio=15" >> /etc/sysctl.conf
+        sysctl -w vm.dirty_ratio=15
+    fi
+    
+    if ! grep -q "^vm.dirty_background_ratio" /etc/sysctl.conf; then
+        echo "vm.dirty_background_ratio=5" >> /etc/sysctl.conf
+        sysctl -w vm.dirty_background_ratio=5
+    fi
+    
+    # 2. Disable last accessed file metadata (noatime)
+    log_info "Configuring filesystem mount options (noatime)..."
+    
+    # Get MongoDB data directory filesystem
+    local mongo_fs
+    mongo_fs=$(df -T "$MONGO_DATA_DIR" 2>/dev/null | tail -1 | awk '{print $2}' || echo "")
+    
+    # Update /etc/fstab to add noatime for MongoDB data partition
+    if [[ -n "$mongo_fs" ]] && [[ "$mongo_fs" != "tmpfs" ]]; then
+        local mongo_device
+        mongo_device=$(df "$MONGO_DATA_DIR" 2>/dev/null | tail -1 | awk '{print $1}' || echo "")
+        
+        if [[ -n "$mongo_device" ]] && [[ "$mongo_device" != "tmpfs" ]]; then
+            # Backup fstab
+            cp /etc/fstab /etc/fstab.backup.$(date +%Y%m%d_%H%M%S)
+            
+            # Check if already has noatime
+            if ! grep -q "$mongo_device.*noatime" /etc/fstab; then
+                # Add noatime to existing mount options
+                sed -i "s|^\($mongo_device[[:space:]].*\)|\1,noatime|" /etc/fstab 2>/dev/null || {
+                    log_warning "Could not automatically update /etc/fstab for noatime"
+                    log_info "Manually add 'noatime' to the mount options for $mongo_device in /etc/fstab"
+                }
+                log_success "Added noatime to filesystem mount options"
+            else
+                log_info "noatime already configured for MongoDB data partition"
+            fi
+        fi
+    fi
+    
+    # Also set noatime for root filesystem if it's the same
+    local root_device
+    root_device=$(findmnt -n -o SOURCE / | head -1)
+    if [[ -n "$root_device" ]] && ! grep -q "$root_device.*noatime" /etc/fstab; then
+        sed -i "s|^\($root_device[[:space:]].*\)|\1,noatime|" /etc/fstab 2>/dev/null || true
+    fi
+    
+    # 3. Kernel parameters for web server workload
+    log_info "Configuring kernel parameters for web server workload..."
+    
+    # TCP optimizations for high concurrency
+    cat >> /etc/sysctl.conf <<'SYSCTL_EOF'
+
+# TCP optimizations for web server
+net.core.somaxconn=4096
+net.core.netdev_max_backlog=5000
+net.ipv4.tcp_max_syn_backlog=4096
+net.ipv4.tcp_fin_timeout=30
+net.ipv4.tcp_keepalive_time=300
+net.ipv4.tcp_keepalive_probes=5
+net.ipv4.tcp_keepalive_intvl=15
+net.ipv4.tcp_tw_reuse=1
+net.ipv4.tcp_tw_recycle=0
+net.ipv4.ip_local_port_range=10000 65535
+
+# Increase file descriptor limits
+fs.file-max=2097152
+
+# Network buffer sizes
+net.core.rmem_max=16777216
+net.core.wmem_max=16777216
+net.ipv4.tcp_rmem=4096 87380 16777216
+net.ipv4.tcp_wmem=4096 65536 16777216
+
+# Connection tracking
+net.netfilter.nf_conntrack_max=262144
+SYSCTL_EOF
+    
+    # Apply settings immediately
+    sysctl -p /etc/sysctl.conf >/dev/null 2>&1 || true
+    log_success "Applied kernel parameters"
+    
+    # 4. Increase file descriptor limits
+    log_info "Configuring file descriptor limits..."
+    
+    cat >> /etc/security/limits.conf <<'LIMITS_EOF'
+
+# CineStream: Increase file descriptor limits for web server + MongoDB
+* soft nofile 65536
+* hard nofile 65536
+root soft nofile 65536
+root hard nofile 65536
+mongodb soft nofile 64000
+mongodb hard nofile 64000
+LIMITS_EOF
+    
+    log_success "Configured file descriptor limits"
+    
+    # 5. MongoDB performance tuning
+    log_info "Configuring MongoDB performance settings..."
+    
+    # Define MongoDB directory (should match install_mongodb)
+    local MONGO_DIR="/opt/mongodb"
+    local wt_cache_gb=""
+    
+    # Check if MongoDB is installed
+    if [[ ! -d "$MONGO_DIR/bin" ]]; then
+        log_warning "MongoDB not found at $MONGO_DIR, skipping MongoDB optimizations"
+        log_info "Run 'sudo ./deploy.sh init-server' to install MongoDB first"
+    else
+        # Create MongoDB configuration file with performance optimizations
+        local mongo_conf="$MONGO_DIR/mongod.conf"
+        
+        # Calculate WiredTiger cache size (50% of RAM, but max 32GB for MongoDB 7.0)
+        if [[ $total_mem_gb -lt 8 ]]; then
+            wt_cache_gb=2
+        elif [[ $total_mem_gb -lt 16 ]]; then
+            wt_cache_gb=$((total_mem_gb / 2))
+        elif [[ $total_mem_gb -lt 64 ]]; then
+            wt_cache_gb=$((total_mem_gb / 2))
+        else
+            wt_cache_gb=32  # MongoDB 7.0 max recommended
+        fi
+        
+        log_info "Configuring WiredTiger cache: ${wt_cache_gb}GB"
+        
+        cat > "$mongo_conf" <<EOF
+# MongoDB Configuration for CineStream
+# Optimized for web server + database workload
+
+storage:
+  dbPath: $MONGO_DATA_DIR
+  journal:
+    enabled: true
+    commitIntervalMs: 100
+  wiredTiger:
+    engineConfig:
+      cacheSizeGB: $wt_cache_gb
+      journalCompressor: snappy
+      directoryForIndexes: false
+    collectionConfig:
+      blockCompressor: snappy
+    indexConfig:
+      prefixCompression: true
+
+systemLog:
+  destination: file
+  logAppend: true
+  path: $MONGO_LOG_DIR/mongod.log
+  logRotate: reopen
+
+net:
+  port: 27017
+  bindIp: 127.0.0.1
+  maxIncomingConnections: 1000
+
+processManagement:
+  fork: true
+  pidFilePath: $MONGO_DATA_DIR/mongod.lock
+
+operationProfiling:
+  mode: slowOp
+  slowOpThresholdMs: 100
+
+setParameter:
+  # Connection pool settings
+  connPoolMaxShardedConnsPerHost: 200
+  connPoolMaxConnsPerHost: 200
+  
+  # Query execution
+  internalQueryExecMaxBlockingSortBytes: 33554432
+  
+  # Write concern
+  writePeriodicNoops: true
+  periodicNoopIntervalSecs: 10
+EOF
+    
+        chown mongodb:mongodb "$mongo_conf" 2>/dev/null || true
+        log_success "Created MongoDB configuration: $mongo_conf"
+        
+        # Update MongoDB systemd service to use config file
+        if [[ -f "$SYSTEMD_DIR/mongodb.service" ]]; then
+            # Backup service file
+            cp "$SYSTEMD_DIR/mongodb.service" "$SYSTEMD_DIR/mongodb.service.backup.$(date +%Y%m%d_%H%M%S)"
+            
+            # Update ExecStart to use config file
+            sed -i "s|ExecStart=.*mongod.*|ExecStart=$MONGO_DIR/bin/mongod --config $mongo_conf|" "$SYSTEMD_DIR/mongodb.service"
+            log_success "Updated MongoDB service to use configuration file"
+        fi
+    fi
+    
+    # 6. Disable transparent hugepages for MongoDB (recommended by MongoDB)
+    log_info "Configuring transparent hugepages (disabled for MongoDB)..."
+    
+    cat > /etc/systemd/system/disable-transparent-hugepages.service <<'THP_EOF'
+[Unit]
+Description=Disable Transparent Hugepages for MongoDB
+DefaultDependencies=no
+After=sysinit.target local-fs.target
+Before=mongodb.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo never | tee /sys/kernel/mm/transparent_hugepage/enabled > /dev/null'
+ExecStart=/bin/sh -c 'echo never | tee /sys/kernel/mm/transparent_hugepage/defrag > /dev/null'
+
+[Install]
+WantedBy=basic.target
+THP_EOF
+    
+    systemctl daemon-reload
+    systemctl enable disable-transparent-hugepages.service
+    systemctl start disable-transparent-hugepages.service
+    
+    # Also set it immediately
+    echo never > /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null || true
+    echo never > /sys/kernel/mm/transparent_hugepage/defrag 2>/dev/null || true
+    
+    log_success "Disabled transparent hugepages for MongoDB"
+    
+    # 7. I/O scheduler optimization (use deadline or none for SSDs)
+    log_info "Configuring I/O scheduler..."
+    
+    # Detect if we're on SSD
+    local is_ssd=false
+    for disk in /sys/block/sd* /sys/block/nvme*; do
+        if [[ -f "$disk/queue/rotational" ]]; then
+            if [[ $(cat "$disk/queue/rotational" 2>/dev/null) == "0" ]]; then
+                is_ssd=true
+                break
+            fi
+        fi
+    done
+    
+    if [[ "$is_ssd" == "true" ]]; then
+        # Use none or mq-deadline for SSDs
+        cat > /etc/systemd/system/configure-io-scheduler.service <<'IO_EOF'
+[Unit]
+Description=Configure I/O Scheduler for SSDs
+After=sysinit.target
+Before=mongodb.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'for disk in /sys/block/sd* /sys/block/nvme*; do [ -f "$disk/queue/scheduler" ] && echo none > "$disk/queue/scheduler" 2>/dev/null || echo mq-deadline > "$disk/queue/scheduler" 2>/dev/null; done'
+
+[Install]
+WantedBy=basic.target
+IO_EOF
+        
+        systemctl daemon-reload
+        systemctl enable configure-io-scheduler.service
+        systemctl start configure-io-scheduler.service
+        log_success "Configured I/O scheduler for SSD (none/mq-deadline)"
+    else
+        log_info "HDD detected, using default I/O scheduler"
+    fi
+    
+    # 8. Set readahead for MongoDB data directory
+    log_info "Configuring readahead for MongoDB..."
+    
+    local mongo_block_device
+    mongo_block_device=$(df "$MONGO_DATA_DIR" 2>/dev/null | tail -1 | awk '{print $1}' | sed 's/[0-9]*$//' || echo "")
+    
+    if [[ -n "$mongo_block_device" ]] && [[ -f "/sys/block/$(basename "$mongo_block_device")/queue/read_ahead_kb" ]]; then
+        echo 256 > "/sys/block/$(basename "$mongo_block_device")/queue/read_ahead_kb" 2>/dev/null || true
+        log_success "Set readahead for MongoDB data device"
+    fi
+    
+    log_success "System optimization complete!"
+    log_info ""
+    log_info "Optimizations applied:"
+    log_info "  - Swappiness: 1 (minimal swap usage)"
+    log_info "  - Filesystem: noatime (disable last access time)"
+    log_info "  - TCP: Optimized for high concurrency"
+    log_info "  - File descriptors: 65536"
+    if [[ -d "$MONGO_DIR/bin" ]] && [[ -n "${wt_cache_gb:-}" ]]; then
+        log_info "  - MongoDB: WiredTiger cache ${wt_cache_gb}GB, performance tuned"
+        log_info "  - Transparent hugepages: Disabled (MongoDB requirement)"
+    else
+        log_info "  - MongoDB: Not installed (skipped MongoDB optimizations)"
+    fi
+    log_info "  - I/O scheduler: Optimized for storage type"
+    log_info ""
+    log_warning "Note: Some changes require reboot to take full effect"
+    log_warning "Run 'sudo sysctl -p' to apply kernel parameters immediately"
 }
 
 # Configure Nginx CPU affinity to P-cores
@@ -536,7 +868,7 @@ uninit_server() {
 deploy_application() {
     local APP_NAME="cinestream"
     local APP_DIR="$WWW_ROOT/$APP_NAME"
-    local SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # Use global SCRIPT_DIR (defined at top of script)
     
     log_info "Deploying application to $APP_DIR..."
     
@@ -555,10 +887,19 @@ deploy_application() {
         return 1
     fi
     
-    # Create Python virtual environment
+    # Create Python virtual environment (Clear Linux requirement: all Python code must run in venv)
     log_info "Creating Python virtual environment..."
     if [[ ! -d "$APP_DIR/venv" ]]; then
         python3 -m venv "$APP_DIR/venv"
+        log_success "Created virtual environment at $APP_DIR/venv"
+    else
+        log_info "Virtual environment already exists"
+    fi
+    
+    # Verify venv was created successfully
+    if [[ ! -f "$APP_DIR/venv/bin/python" ]]; then
+        log_error "Failed to create virtual environment. Python binary not found."
+        return 1
     fi
     
     # Install Python dependencies
@@ -569,6 +910,9 @@ deploy_application() {
     # Create .env file template if it doesn't exist
     if [[ ! -f "$APP_DIR/.env" ]]; then
         log_info "Creating .env file template..."
+        # Generate SECRET_KEY using venv Python (Clear Linux requirement: use venv for all Python code)
+        local secret_key
+        secret_key=$("$APP_DIR/venv/bin/python" -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || echo "change-me-in-production")
         cat > "$APP_DIR/.env" <<EOF
 # MongoDB connection (default: no authentication)
 MONGO_URI=mongodb://127.0.0.1:27017/movie_db
@@ -580,7 +924,7 @@ MONGO_URI=mongodb://127.0.0.1:27017/movie_db
 ANTHROPIC_API_KEY=your-api-key-here
 
 # Flask secret key (auto-generated)
-SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || echo "change-me-in-production")
+SECRET_KEY=$secret_key
 
 # Optional: Claude model selection (haiku = fastest/cheapest, sonnet = more capable)
 CLAUDE_MODEL=haiku
@@ -612,8 +956,15 @@ EOF
         fi
     fi
     
+    # Verify venv exists before creating services
+    if [[ ! -f "$APP_DIR/venv/bin/python" ]]; then
+        log_error "Virtual environment not found. Cannot create services."
+        return 1
+    fi
+    
     # Create systemd service template
     log_info "Creating systemd services..."
+    log_info "All Python processes will use venv: $APP_DIR/venv/bin/python (Clear Linux requirement)"
     local SERVICE_USER
     # Use SUDO_USER if available (when running with sudo), otherwise use current user
     if [[ -n "${SUDO_USER:-}" ]]; then
@@ -1087,6 +1438,9 @@ main() {
         status)
             show_status
             ;;
+        optimize-system)
+            optimize_system
+            ;;
         set-domain)
             set_domain "${2:-}"
             ;;
@@ -1106,6 +1460,8 @@ main() {
             echo "  stop-all                       Stop all services"
             echo "  enable-autostart               Enable all services to start on boot"
             echo "  status                         Show status of all services"
+            echo "  optimize-system                Optimize system for web server + MongoDB"
+            echo "                                (swap, swappiness, noatime, kernel params)"
             echo "  set-domain <domain>            Configure domain for the application"
             echo "                                Example: $0 set-domain movies.example.com"
             echo "  install-ssl <domain>          Install SSL certificate for a domain"
