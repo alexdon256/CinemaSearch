@@ -1643,13 +1643,25 @@ server {
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
+        
+        # Pass through error responses from backend
+        proxy_intercept_errors off;
     }
     
-    # Static files (if served directly by Nginx)
+    # Static files - proxy to Flask so it can handle 404s properly
     location /static/ {
-        alias ${APP_DIR}/src/static/;
-        expires 30d;
+        proxy_pass http://${UPSTREAM_NAME};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        
+        # Cache static files
+        proxy_cache_valid 200 30d;
         add_header Cache-Control "public, immutable";
+        
+        # Pass through error responses from backend (including 404s)
+        proxy_intercept_errors off;
     }
 }
 EOF

@@ -824,6 +824,16 @@ def api_cleanup_images():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.errorhandler(404)
+def page_not_found(e):
+    """Handle 404 errors"""
+    lang = get_language()
+    if lang not in TRANSLATIONS:
+        lang = 'en'
+    t = TRANSLATIONS[lang]
+    
+    return render_template('404.html', translations=t, lang=lang), 404
+
 @app.route('/terms')
 def terms():
     """Terms of Service page"""
