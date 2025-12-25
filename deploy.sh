@@ -563,7 +563,7 @@ Group=mongodb
 Type=forking
 # CPU Affinity: P-cores (0-5) for Intel i9-12900HK
 CPUAffinity=0 1 2 3 4 5
-ExecStart=$MONGO_DIR/bin/mongod --dbpath=$MONGO_DATA_DIR --logpath=$MONGO_LOG_DIR/mongod.log --logappend --fork
+ExecStart=$MONGO_DIR/bin/mongod --dbpath=$MONGO_DATA_DIR --quiet --fork
 ExecStop=$MONGO_DIR/bin/mongod --shutdown --dbpath=$MONGO_DATA_DIR
 PIDFile=$MONGO_DATA_DIR/mongod.lock
 Restart=on-failure
@@ -758,10 +758,9 @@ storage:
       prefixCompression: true
 
 systemLog:
-  destination: file
-  logAppend: true
-  path: $MONGO_LOG_DIR/mongod.log
-  logRotate: reopen
+  destination: null
+  verbosity: 0
+  quiet: true
 
 net:
   port: 27017
@@ -773,8 +772,7 @@ processManagement:
   pidFilePath: $MONGO_DATA_DIR/mongod.lock
 
 operationProfiling:
-  mode: slowOp
-  slowOpThresholdMs: 100
+  mode: off
 
 setParameter:
   # Connection pool settings
@@ -1621,9 +1619,9 @@ server {
     # ssl_prefer_server_ciphers on;
     # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     
-    # Logging
-    access_log /var/log/nginx/${APP_NAME}_access.log;
-    error_log /var/log/nginx/${APP_NAME}_error.log;
+    # Logging disabled
+    access_log off;
+    error_log off;
     
     # Proxy settings
     location / {
