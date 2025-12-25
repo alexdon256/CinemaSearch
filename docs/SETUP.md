@@ -119,7 +119,11 @@ sudo ./deploy.sh set-domain movies.example.com
 - Auto-detects your application (`cinestream`)
 - Updates `.deploy_config` with domain name
 - Generates Nginx configuration with upstream backend (10 processes)
-- Configures HTTP (port 80) with HTTPS redirect
+- Configures HTTP (port 80) with HTTPS redirect:
+  - Domain-specific HTTP server block redirects to HTTPS
+  - Catch-all HTTP server block handles IP address and other hostname requests
+  - Supports both IPv4 and IPv6
+  - Preserves Let's Encrypt ACME challenge path for certificate renewal
 - Configures HTTPS (port 443) with SSL placeholders
 - Tests and reloads Nginx
 
@@ -127,6 +131,22 @@ sudo ./deploy.sh set-domain movies.example.com
 ```bash
 sudo nginx -t
 sudo systemctl status nginx.service
+```
+
+**HTTP to HTTPS Redirect Behavior:**
+- All HTTP requests to your domain automatically redirect to HTTPS (301 permanent redirect)
+- HTTP requests to your server's IP address also redirect to HTTPS using your configured domain
+- Let's Encrypt ACME challenges are allowed on HTTP (required for certificate renewal)
+- Both IPv4 and IPv6 are supported
+- Full URL paths and query parameters are preserved in redirects
+
+**Test the redirect:**
+```bash
+# Should redirect to HTTPS
+curl -I http://movies.example.com
+
+# Should also redirect (if accessing by IP)
+curl -I http://YOUR_SERVER_IP
 ```
 
 ---
@@ -174,8 +194,10 @@ sudo ./deploy.sh install-ssl movies.example.com
 - Verifies DNS is pointing to your server
 - Requests SSL certificate from Let's Encrypt
 - Automatically updates Nginx configuration with SSL paths
-- Enables HTTPS with security headers
+- Enables HTTPS with security headers (HSTS, TLS 1.2/1.3)
 - Sets up automatic certificate renewal
+
+**Note:** The HTTP to HTTPS redirect is already configured before SSL installation. After installing SSL, the redirect will work fully and HTTPS will be accessible.
 
 **Expected output:** You should see success messages and certificate paths.
 
@@ -272,8 +294,8 @@ sudo ./deploy.sh status
 # 2. Test local access
 curl http://localhost:8001
 
-# 3. Test through Nginx (if domain is configured)
-curl http://movies.example.com
+# 3. Test HTTP redirect (if domain is configured)
+curl -I http://movies.example.com  # Should return 301 redirect to HTTPS
 
 # 4. Test HTTPS (after SSL is installed)
 curl https://movies.example.com
@@ -377,6 +399,25 @@ sudo journalctl -u cinestream@8001.service -n 50
 cd /var/www/cinestream
 source venv/bin/activate
 python src/main.py --port 8001
+```
+
+### HTTP to HTTPS Redirect Not Working
+
+```bash
+# Check Nginx configuration
+sudo nginx -t
+
+# Check if HTTP server block exists
+sudo grep -A 10 "listen 80" /etc/nginx/conf.d/cinestream.conf
+
+# Test redirect manually
+curl -I http://movies.example.com  # Should return 301
+
+# Check Nginx logs
+sudo tail -f /var/log/nginx/cinestream_error.log
+
+# Reload Nginx
+sudo systemctl reload nginx.service
 ```
 
 ### SSL Certificate Installation Fails

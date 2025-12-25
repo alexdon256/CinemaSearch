@@ -1573,6 +1573,7 @@ EOF
 # HTTP server - redirect to HTTPS
 server {
     listen 80;
+    listen [::]:80;
     server_name ${DOMAIN};
     
     # Allow Let's Encrypt ACME challenge
@@ -1583,7 +1584,25 @@ server {
     
     # Redirect all other traffic to HTTPS
     location / {
-        return 301 https://\$server_name\$request_uri;
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+# Catch-all HTTP server - redirect any HTTP requests to HTTPS
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    
+    # Allow Let's Encrypt ACME challenge
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+        try_files \$uri =404;
+    }
+    
+    # Redirect all other traffic to HTTPS (using the configured domain)
+    location / {
+        return 301 https://${DOMAIN}\$request_uri;
     }
 }
 
