@@ -500,7 +500,7 @@ PartOf=cinestream.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/bash -c 'sleep 5 && for conf in /var/www/*/.deploy_config; do [ -f "\$conf" ] && source "\$conf" && PROCESS_COUNT=\${PROCESS_COUNT:-10} && START_PORT=\${START_PORT:-8001} && APP_NAME=\$(basename \$(dirname "\$conf")) && for i in \$(seq 0 \$((PROCESS_COUNT-1))); do systemctl start "\${APP_NAME}@\$((START_PORT+i)).service" 2>/dev/null || true; done; done'
+ExecStart=/bin/bash -c 'sleep 5 && for conf in /var/www/*/.deploy_config; do [ -f "\$conf" ] && source "\$conf" && PROCESS_COUNT=\${PROCESS_COUNT:-20} && START_PORT=\${START_PORT:-8001} && APP_NAME=\$(basename \$(dirname "\$conf")) && for i in \$(seq 0 \$((PROCESS_COUNT-1))); do systemctl start "\${APP_NAME}@\$((START_PORT+i)).service" 2>/dev/null || true; done; done'
 # Set CPU affinity after starting all services
 ExecStartPost=/bin/bash -c 'sleep 3 && /usr/local/bin/cinestream-set-cpu-affinity.sh all || true'
 ExecStop=/bin/true
@@ -925,8 +925,8 @@ stop_all() {
     for app_dir in "$WWW_ROOT"/*; do
         if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
             source "$app_dir/.deploy_config"
-            # Default to 10 processes if not specified
-            PROCESS_COUNT=${PROCESS_COUNT:-10}
+            # Default to 20 processes if not specified
+            PROCESS_COUNT=${PROCESS_COUNT:-20}
             START_PORT=${START_PORT:-8001}
             APP_NAME=$(basename "$app_dir")
             
@@ -960,8 +960,8 @@ start_all() {
     for app_dir in "$WWW_ROOT"/*; do
         if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
             source "$app_dir/.deploy_config"
-            # Default to 10 processes if not specified
-            PROCESS_COUNT=${PROCESS_COUNT:-10}
+            # Default to 20 processes if not specified
+            PROCESS_COUNT=${PROCESS_COUNT:-20}
             START_PORT=${START_PORT:-8001}
             APP_NAME=$(basename "$app_dir")
             
@@ -1010,8 +1010,8 @@ uninit_server() {
         for app_dir in "$WWW_ROOT"/*; do
             if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
                 source "$app_dir/.deploy_config"
-                # Default to 10 processes if not specified
-                PROCESS_COUNT=${PROCESS_COUNT:-10}
+                # Default to 20 processes if not specified
+                PROCESS_COUNT=${PROCESS_COUNT:-20}
                 START_PORT=${START_PORT:-8001}
                 APP_NAME=$(basename "$app_dir")
                 log_info "Removing site: $APP_NAME"
@@ -1189,7 +1189,7 @@ EOF
     cat > "$APP_DIR/.deploy_config" <<EOF
 APP_NAME=$APP_NAME
 START_PORT=8001
-PROCESS_COUNT=10
+PROCESS_COUNT=20
 DOMAIN_NAME=""
 EOF
     
@@ -1293,9 +1293,9 @@ EOF
     systemctl enable "${APP_NAME}-refresh.timer" 2>/dev/null || true
     systemctl start "${APP_NAME}-refresh.timer" 2>/dev/null || true
     
-    # Enable and start all 10 processes
+    # Enable and start all 20 processes
     log_info "Starting application processes..."
-    for port in {8001..8010}; do
+    for port in {8001..8020}; do
         systemctl enable "${APP_NAME}@${port}.service" 2>/dev/null || true
         systemctl start "${APP_NAME}@${port}.service" 2>/dev/null || true
     done
@@ -1316,7 +1316,7 @@ EOF
     
     # Check if processes are running
     local running=0
-    for port in {8001..8010}; do
+    for port in {8001..8020}; do
         if systemctl is-active --quiet "${APP_NAME}@${port}.service" 2>/dev/null; then
             ((running++))
         fi
@@ -1324,9 +1324,9 @@ EOF
     
     if [[ $running -gt 0 ]]; then
         log_success "Application deployed successfully!"
-        log_info "  - $running/10 processes running"
+        log_info "  - $running/20 processes running"
         log_info "  - Application directory: $APP_DIR"
-        log_info "  - Services: ${APP_NAME}@8001.service to ${APP_NAME}@8010.service"
+        log_info "  - Services: ${APP_NAME}@8001.service to ${APP_NAME}@8020.service"
     else
         log_warning "Application deployed but processes may not be running"
         log_warning "Check .env file and logs: sudo journalctl -u ${APP_NAME}@8001.service"
@@ -1531,7 +1531,7 @@ set_domain() {
     
     # Load existing config
     source "$APP_DIR/.deploy_config"
-    PROCESS_COUNT=${PROCESS_COUNT:-10}
+    PROCESS_COUNT=${PROCESS_COUNT:-20}
     START_PORT=${START_PORT:-8001}
     
     log_info "Setting domain '$DOMAIN' for application '$APP_NAME'..."
@@ -1780,8 +1780,8 @@ enable_autostart() {
     for app_dir in "$WWW_ROOT"/*; do
         if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
             source "$app_dir/.deploy_config"
-            # Default to 10 processes if not specified
-            PROCESS_COUNT=${PROCESS_COUNT:-10}
+            # Default to 20 processes if not specified
+            PROCESS_COUNT=${PROCESS_COUNT:-20}
             START_PORT=${START_PORT:-8001}
             APP_NAME=$(basename "$app_dir")
             
@@ -1834,8 +1834,8 @@ show_status() {
     for app_dir in "$WWW_ROOT"/*; do
         if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
             source "$app_dir/.deploy_config"
-            # Default to 10 processes if not specified
-            PROCESS_COUNT=${PROCESS_COUNT:-10}
+            # Default to 20 processes if not specified
+            PROCESS_COUNT=${PROCESS_COUNT:-20}
             START_PORT=${START_PORT:-8001}
             APP_NAME=$(basename "$app_dir")
             

@@ -288,10 +288,10 @@ def refresh_all_cities():
                             # Preserve existing created_at
                             if 'created_at' not in movie:
                                 movie['created_at'] = existing_movie.get('created_at', datetime.now(timezone.utc))
-                                
-                                result_upsert = db.movies.replace_one(query, movie)
-                                if result_upsert.modified_count > 0:
-                                    upserted_count += 1
+                            
+                            result_upsert = db.movies.replace_one(query, movie)
+                            if result_upsert.modified_count > 0:
+                                upserted_count += 1
                             else:
                                 # New movie - insert it
                                 result_insert = db.movies.insert_one(movie)

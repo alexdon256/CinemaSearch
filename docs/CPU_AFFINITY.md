@@ -41,7 +41,7 @@ Each Python application worker is configured to use E-cores (6-13):
 
 - Systemd service template: `/etc/systemd/system/{APP_NAME}@.service`
 - CPU Affinity: `CPUAffinity=6 7 8 9 10 11 12 13`
-- Default: 10 worker processes per application
+- Default: 20 worker processes per application
 - Each worker runs on E-cores for efficient parallel processing
 
 ## Automatic Affinity Management

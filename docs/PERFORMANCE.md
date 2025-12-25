@@ -2,7 +2,7 @@
 
 ## Architecture Overview
 
-- **10 Python Worker Processes**: Each running Flask with `threaded=True`
+- **20 Python Worker Processes**: Each running Flask with `threaded=True`
 - **Nginx Reverse Proxy**: Load balancing with `ip_hash` (sticky sessions)
 - **MongoDB Database**: Optimized with indexes on all query fields
 - **CPU Affinity**: E-cores (6-13) for Python workers, P-cores (0-5) for MongoDB/Nginx
@@ -97,18 +97,18 @@ User Request → Nginx (P-cores) → Python Worker (E-cores) → MongoDB (P-core
 - Average response time: ~18ms (weighted: 0.5×10ms + 0.4×28ms + 0.1×4ms)
 - Average throughput: **45-75 requests/second per worker** (improved from logging disabled)
 
-### System-Wide Performance (10 Workers)
+### System-Wide Performance (20 Workers)
 
 **Total System Capacity:**
-- **450-750 requests/second** (mixed workload)
-- **600-1200 requests/second** (index page only)
-- **200-400 requests/second** (showtimes API only)
-- **1500-3000 requests/second** (status checks only)
+- **900-1500 requests/second** (mixed workload)
+- **1200-2400 requests/second** (index page only)
+- **400-800 requests/second** (showtimes API only)
+- **3000-6000 requests/second** (status checks only)
 
 **Realistic Production Estimate:**
-- **400-600 requests/second** sustained throughput (improved from logging disabled)
-- **600-900 requests/second** peak capacity
-- **1200+ requests/second** burst capacity (short duration)
+- **900-1500 requests/second** sustained throughput (improved from 20 processes and logging disabled)
+- **1200-1800 requests/second** peak capacity
+- **2400+ requests/second** burst capacity (short duration)
 
 **Performance Improvements:**
 - **Logging disabled**: ~3-5% improvement (reduced I/O overhead for MongoDB and Nginx)
@@ -155,7 +155,7 @@ User Request → Nginx (P-cores) → Python Worker (E-cores) → MongoDB (P-core
 3. **Connection Pooling**
    - Ensure MongoDB connection pool is properly sized
    - Default pymongo pool size: 100 connections
-   - With 10 workers, should be sufficient
+   - With 20 workers, should be sufficient
 
 4. **Static Asset Optimization**
    - Ensure Nginx serves static files directly
@@ -166,7 +166,7 @@ User Request → Nginx (P-cores) → Python Worker (E-cores) → MongoDB (P-core
 
 ### Vertical Scaling (More Processes)
 
-- Current: 10 processes
+- Current: 20 processes
 - Can increase to: 20-30 processes (limited by E-cores: 8 cores)
 - With hyperthreading: Up to 16 logical cores on E-cores
 - **Estimated capacity with 20 processes: 900-1500 requests/second** (mixed workload)
@@ -175,7 +175,7 @@ User Request → Nginx (P-cores) → Python Worker (E-cores) → MongoDB (P-core
 ### Horizontal Scaling (More Servers)
 
 - Add more servers behind load balancer
-- Each server: 10 processes = 450-750 req/s (mixed workload)
+- Each server: 20 processes = 900-1500 req/s (mixed workload)
 - **2 servers: 900-1500 req/s**
 - **3 servers: 1350-2250 req/s**
 - **5 servers: 2250-3750 req/s**
@@ -240,19 +240,19 @@ User Request → Nginx (P-cores) → Python Worker (E-cores) → MongoDB (P-core
 ### Current System Capacity
 
 **Conservative Estimate:**
-- **400-600 requests/second** sustained (improved from logging optimizations)
-- **600-900 requests/second** peak
-- **1200+ requests/second** burst (short duration)
+- **900-1500 requests/second** sustained (improved from 20 processes and logging optimizations)
+- **1200-1800 requests/second** peak
+- **2400+ requests/second** burst (short duration)
 
 **This capacity should handle:**
 - Small to medium-sized movie showtime aggregation sites
-- Up to 150,000+ page views per day (assuming 8-hour peak period)
-- Up to 12,000+ concurrent users (with proper caching)
-- **Daily capacity**: ~13-20 million requests per day (sustained load)
+- Up to 300,000+ page views per day (assuming 8-hour peak period)
+- Up to 24,000+ concurrent users (with proper caching)
+- **Daily capacity**: ~26-40 million requests per day (sustained load)
 
 ## Conclusion
 
-The current architecture with 10 worker processes provides excellent performance for a movie showtime aggregation platform. With proper indexing, connection pooling, efficient data structures, and logging disabled, the system can handle **400-600 requests/second** sustained throughput, which is sufficient for most use cases.
+The current architecture with 20 worker processes provides excellent performance for a movie showtime aggregation platform. With proper indexing, connection pooling, efficient data structures, and logging disabled, the system can handle **900-1500 requests/second** sustained throughput, which is sufficient for most use cases.
 
 **Recent Optimizations:**
 - ✅ Logging disabled for MongoDB and Nginx (3-5% performance improvement)

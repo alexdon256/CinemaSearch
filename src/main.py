@@ -201,86 +201,21 @@ def api_showtimes():
         format_filter = request.args.get('format')
         language_filter = request.args.get('language')
         
-        query = {}
-        if city_name:
-            # Find cinemas in this city
-            try:
-                city = db.locations.find_one({'city_name': city_name})
-                if city:
-                    query['city_id'] = city_name
-            except Exception as e:
-                print(f"Error finding city: {e}")
+        # Use the proper data structure (db.movies, not db.showtimes)
+        if not city_name:
+            return jsonify([])
         
-        try:
-            showtimes = list(db.showtimes.find(query).sort('start_time', 1))
-        except Exception as e:
-            print(f"Error fetching showtimes: {e}")
-            showtimes = []
+        # Get showtimes from movies collection (proper data structure)
+        showtimes = get_showtimes_for_city(city_name)
         
-        # Filter out past showtimes (handle both timezone-aware and naive datetimes)
-        from datetime import timezone
-        now_utc = datetime.now(timezone.utc)
-        filtered_showtimes = []
-        for s in showtimes:
-            try:
-                start_time = s.get('start_time')
-                if not start_time:
-                    continue
-                # Handle timezone-aware datetimes
-                if isinstance(start_time, datetime):
-                    # Convert to UTC for consistent comparison
-                    if start_time.tzinfo is None:
-                        # Naive datetime - assume UTC
-                        start_time_utc = start_time.replace(tzinfo=timezone.utc)
-                    else:
-                        # Timezone-aware - convert to UTC
-                        start_time_utc = start_time.astimezone(timezone.utc)
-                    
-                    # Compare in UTC
-                    if start_time_utc > now_utc:
-                        filtered_showtimes.append(s)
-            except Exception as e:
-                # Skip showtimes with invalid dates
-                print(f"Error processing showtime: {e}")
-                continue
-        showtimes = filtered_showtimes
-        
-        # Apply filters
+        # Apply filters (format and language)
         if format_filter:
             showtimes = [s for s in showtimes if s.get('format') and s.get('format') == format_filter]
         if language_filter:
             showtimes = [s for s in showtimes if language_filter.lower() in s.get('language', '').lower()]
         
-        # Sort showtimes by start_time (ascending - earliest first)
-        # This ensures showtimes are displayed in chronological order
-        def get_sort_time(st):
-            """Helper to extract sortable time from showtime"""
-            start_time = st.get('start_time')
-            if isinstance(start_time, datetime):
-                return start_time
-            elif isinstance(start_time, str):
-                try:
-                    return datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                except (ValueError, AttributeError):
-                    return datetime.max
-            else:
-                return datetime.max
-        
-        showtimes.sort(key=get_sort_time)
-        
-        # Convert datetime objects to ISO strings for JSON
-        for st in showtimes:
-            try:
-                if isinstance(st.get('start_time'), datetime):
-                    st['start_time'] = st['start_time'].isoformat()
-                if isinstance(st.get('created_at'), datetime):
-                    st['created_at'] = st['created_at'].isoformat()
-                # Remove MongoDB _id for JSON serialization
-                if '_id' in st:
-                    st['_id'] = str(st['_id'])
-            except Exception as e:
-                print(f"Error serializing showtime: {e}")
-                continue
+        # Note: get_showtimes_for_city already filters past showtimes and sorts by start_time
+        # No need to sort again - it's already sorted
         
         return jsonify(showtimes)
     except Exception as e:
@@ -319,7 +254,7 @@ def api_scrape_status(city_name):
         # Check if there's an active lock (scraping in progress)
         from core.lock import get_lock_info
         lock_info = get_lock_info(db, city_name)
-        is_processing = lock_info is not None if lock_info else (status == 'processing')
+        is_processing = lock_info is not None or (status == 'processing')
         
         return jsonify({
             'status': status,
@@ -779,7 +714,9 @@ def get_showtimes_for_city(city_name):
 @app.route('/set-language/<lang>')
 def set_lang(lang):
     """Set language endpoint"""
-    set_language(lang)
+    # Validate language to prevent injection
+    if lang in ['en', 'ua', 'ru']:
+        set_language(lang)
     return redirect(request.referrer or url_for('index'))
 
 @app.route('/static/movie_images/<filename>')
@@ -862,19 +799,22 @@ def api_feedback():
         
         # Email configuration
         recipient_email = 'oleksandr.don.256@gmail.com'
-        subject = f'CineStream Feedback from {name or "Anonymous"}'
+        # Sanitize name to prevent email header injection
+        safe_name = (name or 'Anonymous').replace('\n', ' ').replace('\r', '').strip()[:100]
+        subject = f'CineStream Feedback from {safe_name}'
         
-        # Create email body
+        # Create email body (sanitize inputs to prevent injection)
         from datetime import timezone
-        email_body = f"""
-Feedback from CineStream Website
+        safe_email = (email or 'Not provided').replace('\n', ' ').replace('\r', '').strip()[:200]
+        safe_message = message.replace('\r\n', '\n').replace('\r', '\n')[:5000]  # Normalize line endings
+        email_body = f"""Feedback from CineStream Website
 
-Name: {name or 'Not provided'}
-Email: {email or 'Not provided'}
+Name: {safe_name}
+Email: {safe_email}
 Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}
 
 Message:
-{message}
+{safe_message}
 """
         
         # Try to send email using SMTP (if configured) or just log it

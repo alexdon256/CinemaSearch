@@ -41,7 +41,7 @@ sudo ./deploy.sh init-server
   - Creates `.env` file template (with auto-generated SECRET_KEY)
   - Creates `.deploy_config` file
   - Initializes database (if API key is configured)
-  - Creates systemd services for 10 worker processes
+  - Creates systemd services for 20 worker processes
   - Starts all application processes
   - Configures firewall (ports 80 and 443)
 - Starts MongoDB and Nginx services
@@ -118,7 +118,7 @@ sudo ./deploy.sh set-domain movies.example.com
 **What this does:**
 - Auto-detects your application (`cinestream`)
 - Updates `.deploy_config` with domain name
-- Generates Nginx configuration with upstream backend (10 processes)
+- Generates Nginx configuration with upstream backend (20 processes)
 - Configures HTTP (port 80) with HTTPS redirect:
   - Domain-specific HTTP server block redirects to HTTPS
   - Catch-all HTTP server block handles IP address and other hostname requests
@@ -224,7 +224,7 @@ sudo ./deploy.sh enable-autostart
 **What this does:**
 - Ensures CPU affinity management is installed and enabled
 - Enables MongoDB and Nginx to start on boot
-- Enables all 10 worker processes to start on boot
+- Enables all 20 worker processes to start on boot
 - Enables CPU affinity timer (runs every 5 minutes)
 - Enables master startup target
 
@@ -308,7 +308,7 @@ ps -eo pid,cmd,psr | grep -E '(mongod|nginx|main.py)'
 ```
 
 **Expected results:**
-- All 10 processes running on ports 8001-8010
+- All 20 processes running on ports 8001-8020
 - MongoDB running on P-cores (0-5)
 - Nginx running on P-cores (0-5)
 - Python workers running on E-cores (6-13)

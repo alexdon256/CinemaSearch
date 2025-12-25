@@ -62,10 +62,9 @@ def acquire_lock(db: Database, city_name: str, lock_source: str = LOCK_SOURCE_ON
             }
         )
         
-        # If no document exists, create one with processing status
-        # Use upsert directly to avoid race condition
+        # If no document exists, create one with processing status atomically
         if result.matched_count == 0:
-            # Try upsert - this is atomic and prevents race conditions
+            # Try atomic upsert - this prevents race conditions
             upsert_result = db.locations.update_one(
                 {'city_name': city_name},
                 {
@@ -77,18 +76,34 @@ def acquire_lock(db: Database, city_name: str, lock_source: str = LOCK_SOURCE_ON
                 },
                 upsert=True
             )
-            # Check if we actually created/updated the document
-            # If another process created it between our check and upsert, 
-            # we need to verify we got the lock
-            if upsert_result.upserted_id or upsert_result.modified_count > 0:
+            # If we created a new document, we got the lock
+            if upsert_result.upserted_id:
                 return True
-            # If upsert didn't modify anything, another process might have the lock
-            # Check the current status
+            # If document already existed (race condition), check if we can override
+            if upsert_result.modified_count > 0:
+                return True
+            # Document exists but wasn't modified - check current state
             current = db.locations.find_one({'city_name': city_name})
-            if current and current.get('status') == 'processing':
-                # Check if lock is expired or we can override it
+            if current:
+                current_status = current.get('status')
+                # If not processing, try to acquire lock again
+                if current_status != 'processing':
+                    retry_result = db.locations.update_one(
+                        {
+                            'city_name': city_name,
+                            'status': {'$ne': 'processing'}
+                        },
+                        {
+                            '$set': {
+                                'status': 'processing',
+                                'lock_source': lock_source,
+                                'last_updated': now
+                            }
+                        }
+                    )
+                    return retry_result.modified_count > 0
+                # If processing, check if we can override (priority only)
                 if priority and current.get('lock_source') == LOCK_SOURCE_DAILY:
-                    # Can override daily refresh
                     override_result = db.locations.update_one(
                         {
                             'city_name': city_name,
@@ -103,8 +118,7 @@ def acquire_lock(db: Database, city_name: str, lock_source: str = LOCK_SOURCE_ON
                         }
                     )
                     return override_result.modified_count > 0
-                return False
-            return True
+            return False
         
         return result.modified_count > 0
         

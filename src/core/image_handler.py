@@ -163,11 +163,11 @@ def download_image(image_url: str, movie_title: str = None) -> str:
             return f"/static/movie_images/{filename}"
         except Exception as e:
             # Ensure image is closed even if save fails
-            if img:
-                try:
+            try:
+                if 'img' in locals() and img:
                     img.close()
-                except Exception:
-                    pass
+            except Exception:
+                pass
             raise
         
     except Exception as e:

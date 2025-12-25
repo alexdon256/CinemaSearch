@@ -33,8 +33,8 @@ This document provides a comprehensive overview of the CineStream system archite
          ┌───────────────┴────────────────┐
          │                                 │
     ┌────▼────┐  ┌────▼────┐  ┌────▼────┐
-    │Worker 1 │  │Worker 2 │  │Worker 3 │  ...  │Worker 10│
-    │:8001    │  │:8002    │  │:8003    │       │:8010    │
+    │Worker 1 │  │Worker 2 │  │Worker 3 │  ...  │Worker 20│
+    │:8001    │  │:8002    │  │:8003    │       │:8020    │
     │E-cores  │  │E-cores  │  │E-cores  │       │E-cores  │
     └────┬────┘  └────┬────┘  └────┬────┘       └────┬────┘
          │            │            │                  │
@@ -80,7 +80,7 @@ The system is optimized for Intel i9-12900HK processors with hybrid architecture
 │                   - Reverse proxy                │
 ├─────────────────────────────────────────────────┤
 │  E-Cores (6-13):  Python Application Workers     │
-│                   - 10 worker processes          │
+│                   - 20 worker processes          │
 │                   - HTTP request handling        │
 │                   - AI agent spawning            │
 │                   - Parallel processing          │
@@ -150,8 +150,8 @@ The system includes automatic CPU affinity management:
 
 ### Process Count
 
-- **Default**: 10 Python worker processes per application
-- **Rationale**: 8 E-cores can efficiently handle 10 processes (some processes share cores)
+- **Default**: 20 Python worker processes per application
+- **Rationale**: 8 E-cores can efficiently handle 20 processes (processes share cores, with hyperthreading support)
 - **Configurable**: Process count can be configured during deployment
 
 For detailed CPU affinity configuration and troubleshooting, see [CPU_AFFINITY.md](CPU_AFFINITY.md).
@@ -194,7 +194,7 @@ Process Shutdown:
 
 ### Benefits
 
-- **High Concurrency**: 10 processes can handle 10x more concurrent requests
+- **High Concurrency**: 20 processes can handle 20x more concurrent requests
 - **Fault Isolation**: One crashed process doesn't affect others
 - **Horizontal Scaling**: Easy to add more processes
 - **GIL Bypass**: Each process has its own Python interpreter
@@ -568,7 +568,7 @@ upstream movie_app_backend {
     ip_hash;  # Sticky sessions
     server 127.0.0.1:8001;
     server 127.0.0.1:8002;
-    # ... up to 8010 (10 workers, E-cores 6-13)
+    # ... up to 8020 (20 workers, E-cores 6-13)
 }
 
 server {
@@ -667,7 +667,7 @@ Key metrics to monitor:
 
 The CineStream architecture is designed for:
 
-- **High Concurrency**: 10 processes handle thousands of requests
+- **High Concurrency**: 20 processes handle thousands of requests
 - **CPU Optimization**: P-cores for database, E-cores for application workers
 - **Reliability**: Process isolation prevents cascading failures
 - **Scalability**: Easy to add more apps or processes
