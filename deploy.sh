@@ -253,7 +253,16 @@ init_server() {
     
     # Update system packages
     log_info "Updating system packages..."
-    pacman -Syu --noconfirm || log_warning "pacman update had issues, continuing..."
+    log_info "Note: If you encounter repository errors (HTTP 572), this may be a temporary mirror issue."
+    log_info "You can try: sudo pacman-mirrors -g (if available) or wait and retry."
+    
+    # Try updating with timeout and error handling
+    if ! pacman -Syu --noconfirm 2>/dev/null; then
+        log_warning "Full system update had issues (this may be due to repository mirror problems)"
+        log_warning "Attempting to continue with package installation..."
+        # Try just refreshing database
+        pacman -Sy --noconfirm 2>/dev/null || true
+    fi
     
     # Disable telemetry (if any exists)
     log_info ""
@@ -267,16 +276,46 @@ init_server() {
     
     # Install required packages
     log_info "Installing required packages..."
-    pacman -S --noconfirm \
-        python python-pip \
-        nginx \
-        git \
-        openssh \
-        base-devel \
-        nodejs npm \
-        wget \
-        curl \
-        || log_warning "Some packages may have failed to install, continuing..."
+    
+    # Try to refresh package database first
+    pacman -Sy --noconfirm 2>/dev/null || log_warning "Package database refresh had issues, continuing..."
+    
+    # Install packages with retry logic
+    local packages_installed=false
+    for attempt in 1 2 3; do
+        if pacman -S --noconfirm \
+            python python-pip \
+            nginx \
+            git \
+            openssh \
+            base-devel \
+            nodejs npm \
+            wget \
+            curl \
+            2>/dev/null; then
+            packages_installed=true
+            break
+        else
+            log_warning "Package installation attempt $attempt failed, retrying..."
+            sleep 2
+            # Try refreshing package database again
+            pacman -Sy --noconfirm 2>/dev/null || true
+        fi
+    done
+    
+    if [[ "$packages_installed" == "false" ]]; then
+        log_error "Failed to install required packages after 3 attempts"
+        log_error "This may be due to repository issues. Please check:"
+        log_error "  1. Internet connection"
+        log_error "  2. Repository mirrors: sudo pacman-mirrors -g"
+        log_error "  3. Try: sudo pacman -Syu"
+        log_error ""
+        log_error "You can also try installing packages manually:"
+        log_error "  sudo pacman -S python python-pip nginx git openssh base-devel nodejs npm wget curl"
+        exit 1
+    fi
+    
+    log_success "Required packages installed"
     
     # Install MongoDB manually (from official MongoDB repository)
     log_info "Installing MongoDB..."
@@ -492,10 +531,9 @@ EOF
 
 # Install MongoDB manually
 install_mongodb() {
-    local MONGO_VERSION="7.0.0"
+    local MONGO_VERSION="7.0.15"
     local MONGO_DIR="/opt/mongodb"
     local MONGO_TARBALL="mongodb-linux-x86_64-${MONGO_VERSION}.tgz"
-    local MONGO_URL="https://fastdl.mongodb.org/linux/${MONGO_TARBALL}"
     
     if [[ -d "$MONGO_DIR/bin" ]]; then
         log_info "MongoDB already installed at $MONGO_DIR"
@@ -504,15 +542,113 @@ install_mongodb() {
     
     log_info "Downloading MongoDB ${MONGO_VERSION}..."
     cd /tmp
-    wget "$MONGO_URL" || {
-        log_error "Failed to download MongoDB. Please check your internet connection."
+    
+    # Try multiple download methods and URLs
+    local download_success=false
+    
+    # Method 1: Try official MongoDB download (community edition)
+    # Note: MongoDB may require authentication for some versions, so we try multiple URLs
+    local MONGO_URLS=(
+        "https://fastdl.mongodb.org/linux/${MONGO_TARBALL}"
+        "https://downloads.mongodb.org/linux/${MONGO_TARBALL}"
+    )
+    
+    # Also try latest 7.0.x version if specific version fails
+    local MONGO_LATEST_URLS=(
+        "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-7.0.tgz"
+        "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-latest.tgz"
+    )
+    
+    for MONGO_URL in "${MONGO_URLS[@]}"; do
+        log_info "Trying download from: $MONGO_URL"
+        if wget --timeout=30 --tries=3 "$MONGO_URL" -O "$MONGO_TARBALL" 2>/dev/null; then
+            download_success=true
+            break
+        fi
+    done
+    
+    # Method 2: Try using curl as fallback
+    if [[ "$download_success" == "false" ]]; then
+        log_info "Trying with curl..."
+        for MONGO_URL in "${MONGO_URLS[@]}"; do
+            if curl -L --connect-timeout 30 --max-time 300 "$MONGO_URL" -o "$MONGO_TARBALL" 2>/dev/null; then
+                download_success=true
+                break
+            fi
+        done
+    fi
+    
+    # Method 2.5: Try latest version URLs if specific version failed
+    if [[ "$download_success" == "false" ]]; then
+        log_info "Trying latest MongoDB version..."
+        for MONGO_URL in "${MONGO_LATEST_URLS[@]}"; do
+            log_info "Trying: $MONGO_URL"
+            if wget --timeout=30 --tries=3 "$MONGO_URL" -O "$MONGO_TARBALL" 2>/dev/null || \
+               curl -L --connect-timeout 30 --max-time 300 "$MONGO_URL" -o "$MONGO_TARBALL" 2>/dev/null; then
+                download_success=true
+                # Extract to get actual version
+                tar -xzf "$MONGO_TARBALL" 2>/dev/null || true
+                local actual_dir=$(ls -d mongodb-linux-x86_64-* 2>/dev/null | head -1)
+                if [[ -n "$actual_dir" ]]; then
+                    MONGO_VERSION=$(echo "$actual_dir" | sed 's/mongodb-linux-x86_64-//')
+                    log_info "Downloaded MongoDB version: $MONGO_VERSION"
+                    rm -rf "$actual_dir" 2>/dev/null || true
+                fi
+                break
+            fi
+        done
+    fi
+    
+    # Method 3: Try installing from AUR or alternative method
+    if [[ "$download_success" == "false" ]]; then
+        log_warning "Direct download failed. Trying alternative installation methods..."
+        
+        # Check if mongodb-bin is available in AUR
+        if command -v yay &> /dev/null; then
+            log_info "Trying to install MongoDB from AUR using yay..."
+            if yay -S --noconfirm mongodb-bin 2>/dev/null; then
+                log_success "MongoDB installed from AUR"
+                # Create symlink for compatibility
+                if [[ -d "/opt/mongodb" ]] && [[ ! -d "$MONGO_DIR" ]]; then
+                    ln -s /opt/mongodb "$MONGO_DIR" 2>/dev/null || true
+                fi
+                return
+            fi
+        fi
+        
+        log_error "Failed to download MongoDB using all methods."
+        log_error ""
+        log_error "Please install MongoDB manually using one of these methods:"
+        log_error ""
+        log_error "Option 1: Download manually"
+        log_error "  wget https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-${MONGO_VERSION}.tgz"
+        log_error "  tar -xzf mongodb-linux-x86_64-${MONGO_VERSION}.tgz"
+        log_error "  sudo mv mongodb-linux-x86_64-${MONGO_VERSION} /opt/mongodb"
+        log_error ""
+        log_error "Option 2: Install from AUR (if yay is available)"
+        log_error "  yay -S mongodb-bin"
+        log_error ""
+        log_error "Option 3: Use MongoDB Community Edition repository"
+        log_error "  See: https://www.mongodb.com/docs/manual/administration/install-on-linux/"
+        log_error ""
         exit 1
-    }
+    fi
     
     log_info "Extracting MongoDB..."
-    tar -xzf "$MONGO_TARBALL"
-    mv "mongodb-linux-x86_64-${MONGO_VERSION}" "$MONGO_DIR"
-    rm "$MONGO_TARBALL"
+    if ! tar -xzf "$MONGO_TARBALL" 2>/dev/null; then
+        log_error "Failed to extract MongoDB tarball"
+        exit 1
+    fi
+    
+    # Find the extracted directory (version might vary)
+    local mongo_extracted_dir=$(ls -d mongodb-linux-x86_64-* 2>/dev/null | head -1)
+    if [[ -z "$mongo_extracted_dir" ]]; then
+        log_error "Could not find extracted MongoDB directory"
+        exit 1
+    fi
+    
+    mv "$mongo_extracted_dir" "$MONGO_DIR"
+    rm -f "$MONGO_TARBALL"
     
     # Create data directory (log directory not needed as logging is disabled)
     mkdir -p "$MONGO_DATA_DIR"
