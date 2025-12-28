@@ -1,9 +1,8 @@
 #!/bin/bash
 
-# Firefox and Video Codecs Installation Script for Clear Linux
+# Firefox and Video Codecs Installation Script for CachyOS
 # Installs Firefox and configures video codecs for playback
-# Also disables Clear Linux telemetry (0 telemetry sent)
-# And disables system logging (logs only in volatile RAM)
+# Also disables system logging (logs only in volatile RAM)
 
 set -euo pipefail
 
@@ -40,49 +39,55 @@ check_root() {
     fi
 }
 
-# Check if running on Clear Linux
-check_clear_linux() {
-    if [[ ! -f /usr/lib/os-release ]] || ! grep -q "ID=clear-linux-os" /usr/lib/os-release; then
-        log_error "This script is designed for Clear Linux OS only"
+# Check if running on CachyOS/Arch Linux
+check_cachyos() {
+    if [[ ! -f /etc/os-release ]]; then
+        log_error "Cannot detect OS. This script is designed for CachyOS (Arch-based)."
         exit 1
     fi
+    
+    local os_id
+    os_id=$(grep "^ID=" /etc/os-release | cut -d= -f2 | tr -d '"' || echo "")
+    
+    if [[ "$os_id" != "cachyos" ]] && [[ "$os_id" != "arch" ]]; then
+        log_error "This script is designed for CachyOS (Arch-based). Detected: $os_id"
+        exit 1
+    fi
+    
+    log_info "Detected CachyOS/Arch Linux"
 }
 
-# Install Firefox and multimedia bundles
+# Install Firefox and multimedia codecs
 install_firefox_and_codecs() {
     log_info "Installing Firefox and video codecs..."
     
     # Update system first
-    log_info "Updating Clear Linux OS..."
-    swupd update -y || log_warning "swupd update had issues, continuing..."
+    log_info "Updating system packages..."
+    pacman -Syu --noconfirm || log_warning "pacman update had issues, continuing..."
     
-    # Install Firefox bundle
+    # Install Firefox
     log_info "Installing Firefox..."
-    if swupd bundle-add firefox -y; then
+    if pacman -S --noconfirm firefox; then
         log_success "Firefox installed successfully"
     else
         log_error "Failed to install Firefox"
         exit 1
     fi
     
-    # Install multimedia bundles for codecs
+    # Install multimedia codecs
     log_info "Installing multimedia codecs..."
     
-    # Install essential multimedia bundles
-    MULTIMEDIA_BUNDLES=(
-        "multimedia-audio"      # Audio codecs
-        "multimedia-video"       # Video codecs
-        "multimedia"             # Complete multimedia bundle
-    )
-    
-    for bundle in "${MULTIMEDIA_BUNDLES[@]}"; do
-        log_info "Installing bundle: $bundle..."
-        if swupd bundle-add "$bundle" -y 2>/dev/null; then
-            log_success "Installed $bundle"
-        else
-            log_warning "Bundle $bundle not available or already installed"
-        fi
-    done
+    # Install essential multimedia packages
+    pacman -S --noconfirm \
+        gstreamer \
+        gst-plugins-base \
+        gst-plugins-good \
+        gst-plugins-bad \
+        gst-plugins-ugly \
+        gst-libav \
+        ffmpeg \
+        gst-plugins-rs \
+        || log_warning "Some codec packages may have failed to install"
     
     # Install additional codec packages via flatpak (if available)
     log_info "Checking for Flatpak support..."
@@ -99,39 +104,24 @@ install_firefox_and_codecs() {
         log_info "Installing codecs from Flathub..."
         flatpak install -y flathub org.freedesktop.Platform.ffmpeg-full || log_warning "FFmpeg codecs installation had issues"
     else
-        log_warning "Flatpak not available, installing via swupd only"
+        log_warning "Flatpak not available, installing via pacman only"
     fi
 }
 
-# Install FFmpeg and GStreamer plugins (alternative method)
-install_ffmpeg_gstreamer() {
-    log_info "Installing FFmpeg and GStreamer plugins..."
+# Install additional codecs if needed
+install_additional_codecs() {
+    log_info "Installing additional codecs if needed..."
     
-    # Try to install FFmpeg if available
-    if swupd bundle-add ffmpeg -y 2>/dev/null; then
-        log_success "FFmpeg installed"
-    else
-        log_warning "FFmpeg bundle not available via swupd"
-    fi
+    # Install additional codec packages
+    pacman -S --noconfirm \
+        libvpx \
+        libx264 \
+        libx265 \
+        libvorbis \
+        libtheora \
+        || log_warning "Some additional codec packages may have failed to install"
     
-    # Install GStreamer plugins for video playback
-    GSTREAMER_BUNDLES=(
-        "gstreamer1"
-        "gstreamer1-plugins-base"
-        "gstreamer1-plugins-good"
-        "gstreamer1-plugins-bad"
-        "gstreamer1-plugins-ugly"
-        "gstreamer1-libav"
-    )
-    
-    for bundle in "${GSTREAMER_BUNDLES[@]}"; do
-        log_info "Installing GStreamer bundle: $bundle..."
-        if swupd bundle-add "$bundle" -y 2>/dev/null; then
-            log_success "Installed $bundle"
-        else
-            log_warning "Bundle $bundle not available"
-        fi
-    done
+    log_success "Additional codecs installation complete"
 }
 
 # Configure Firefox for video playback
@@ -299,96 +289,30 @@ EOF
     log_success "Desktop shortcuts created"
 }
 
-# Disable Clear Linux telemetry
-disable_clear_linux_telemetry() {
-    log_info "Disabling Clear Linux telemetry..."
-    
-    # Disable clr-telemetry systemd service if it exists
-    if systemctl list-unit-files | grep -q "clr-telemetry"; then
-        log_info "Stopping and disabling clr-telemetry service..."
-        systemctl stop clr-telemetry.service 2>/dev/null || true
-        systemctl disable clr-telemetry.service 2>/dev/null || true
-        systemctl mask clr-telemetry.service 2>/dev/null || true
-        log_success "Disabled clr-telemetry service (persistent)"
-    else
-        log_info "clr-telemetry service not found (may not be installed)"
-    fi
-    
-    # Disable telemetry timer if it exists
-    if systemctl list-unit-files | grep -q "clr-telemetry.timer"; then
-        log_info "Stopping and disabling clr-telemetry timer..."
-        systemctl stop clr-telemetry.timer 2>/dev/null || true
-        systemctl disable clr-telemetry.timer 2>/dev/null || true
-        systemctl mask clr-telemetry.timer 2>/dev/null || true
-        log_success "Disabled clr-telemetry timer (persistent)"
-    fi
-    
-    # Reload systemd to ensure service changes are persistent
-    systemctl daemon-reload 2>/dev/null || true
-    
-    # Create/update telemetry configuration file to disable telemetry
-    TELEMETRY_CONF="/etc/telemetry.conf"
-    log_info "Configuring telemetry settings..."
-    
-    # Create telemetry configuration with telemetry disabled
-    cat > "$TELEMETRY_CONF" <<'EOF'
-# Clear Linux Telemetry Configuration
-# Telemetry is disabled - no data will be sent
-
-[telemetry]
-enabled = false
-EOF
-    
-    chmod 644 "$TELEMETRY_CONF"
-    log_success "Created persistent telemetry configuration: $TELEMETRY_CONF"
-    
-    # Disable swupd telemetry if clr-telemetry command exists
-    if command -v clr-telemetry &> /dev/null; then
-        log_info "Disabling telemetry via clr-telemetry command..."
-        clr-telemetry disable 2>/dev/null || {
-            # If the command doesn't support disable, try to configure it
-            log_info "Attempting to configure telemetry settings..."
-            # Set telemetry to disabled via persistent configuration
-            mkdir -p /etc/telemetry 2>/dev/null || true
-            echo "disabled" > /etc/telemetry/status 2>/dev/null || true
-            chmod 644 /etc/telemetry/status 2>/dev/null || true
-        }
-        log_success "Telemetry disabled via clr-telemetry (persistent)"
-    fi
-    
-    # Configure swupd to not send telemetry
-    SWUPD_CONF="/etc/swupd/config"
-    if [[ ! -d "$(dirname "$SWUPD_CONF")" ]]; then
-        mkdir -p "$(dirname "$SWUPD_CONF")" 2>/dev/null || true
-    fi
-    
-    # Add telemetry disable setting to swupd config if file exists or create it
-    if [[ -f "$SWUPD_CONF" ]]; then
-        # Remove any existing telemetry settings
-        sed -i '/^telemetry/d' "$SWUPD_CONF" 2>/dev/null || true
-    fi
-    
-    # Add telemetry disable setting
-    echo "telemetry=false" >> "$SWUPD_CONF" 2>/dev/null || {
-        log_warning "Could not write to swupd config, but telemetry should still be disabled"
-    }
-    
-    if [[ -f "$SWUPD_CONF" ]]; then
-        log_success "Updated persistent swupd configuration to disable telemetry"
-    fi
-    
-    # Also disable Firefox telemetry by creating system-wide preferences
+# Disable Firefox telemetry
+disable_firefox_telemetry() {
     log_info "Configuring Firefox to disable telemetry..."
-    FIREFOX_PREFS_DIR="/usr/lib/firefox/browser/defaults/preferences"
-    if [[ ! -d "$FIREFOX_PREFS_DIR" ]]; then
-        mkdir -p "$FIREFOX_PREFS_DIR" 2>/dev/null || {
+    
+    # Find Firefox installation directory
+    local firefox_prefs_dir=""
+    for dir in "/usr/lib/firefox/browser/defaults/preferences" "/usr/lib64/firefox/browser/defaults/preferences"; do
+        if [[ -d "$dir" ]]; then
+            firefox_prefs_dir="$dir"
+            break
+        fi
+    done
+    
+    if [[ -z "$firefox_prefs_dir" ]]; then
+        # Create directory if it doesn't exist
+        firefox_prefs_dir="/usr/lib/firefox/browser/defaults/preferences"
+        mkdir -p "$firefox_prefs_dir" 2>/dev/null || {
             log_warning "Could not create Firefox preferences directory"
             return 0
         }
     fi
     
     # Create Firefox preferences file to disable telemetry
-    cat > "$FIREFOX_PREFS_DIR/telemetry-disable.js" <<'EOF'
+    cat > "$firefox_prefs_dir/telemetry-disable.js" <<'EOF'
 // Firefox Telemetry Disabled
 // This file disables all telemetry in Firefox
 
@@ -409,10 +333,8 @@ pref("browser.newtabpage.activity-stream.feeds.telemetry", false);
 pref("browser.newtabpage.activity-stream.telemetry", false);
 EOF
     
-    chmod 644 "$FIREFOX_PREFS_DIR/telemetry-disable.js" 2>/dev/null || true
+    chmod 644 "$firefox_prefs_dir/telemetry-disable.js" 2>/dev/null || true
     log_success "Created persistent Firefox telemetry disable preferences"
-    
-    log_success "Clear Linux telemetry disabled (0 telemetry sent - all settings persistent)"
 }
 
 # Disable system logging
@@ -656,7 +578,7 @@ print_usage() {
     log_info "=== Firefox Video Codec Installation Complete ==="
     log_info ""
     log_info "Firefox has been installed and configured for video playback."
-    log_info "Clear Linux telemetry has been disabled (0 telemetry sent)."
+    log_info "Firefox telemetry has been disabled."
     log_info "System logging has been disabled (logs only in volatile RAM)."
     log_info ""
     log_info "Usage:"
@@ -670,7 +592,7 @@ print_usage() {
     log_info "  - Ogg Theora/Vorbis"
     log_info ""
     log_info "Note: Some proprietary codecs (like H.264) may require"
-    log_info "additional licensing. Clear Linux bundles should include"
+    log_info "additional licensing. Arch repositories include"
     log_info "necessary open-source codecs."
     log_info ""
     log_info "To test video playback:"
@@ -682,17 +604,17 @@ print_usage() {
 # Main installation function
 main() {
     log_info "=== Firefox and Video Codecs Installation Script ==="
-    log_info "For Clear Linux OS"
+    log_info "For CachyOS (Arch-based)"
     log_info ""
     
     check_root
-    check_clear_linux
+    check_cachyos
     
     log_info "Starting installation..."
     log_info ""
     
-    # Disable Clear Linux telemetry first
-    disable_clear_linux_telemetry
+    # Disable Firefox telemetry
+    disable_firefox_telemetry
     
     log_info ""
     
@@ -706,8 +628,8 @@ main() {
     
     log_info ""
     
-    # Install FFmpeg and GStreamer
-    install_ffmpeg_gstreamer
+    # Install additional codecs
+    install_additional_codecs
     
     log_info ""
     

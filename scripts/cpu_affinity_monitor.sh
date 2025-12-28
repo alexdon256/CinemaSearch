@@ -1,6 +1,7 @@
 #!/bin/bash
 # CPU Affinity Monitor - Ensures CPU affinity is maintained
 # Runs periodically to correct any processes that lost their affinity
+# Compatible with CachyOS/Arch Linux and other Linux distributions
 
 set -euo pipefail
 

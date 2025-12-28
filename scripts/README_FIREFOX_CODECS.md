@@ -1,6 +1,6 @@
 # Firefox and Video Codecs Installation Script
 
-This script installs and configures Firefox with full video codec support on Clear Linux OS.
+This script installs and configures Firefox with full video codec support on CachyOS (Arch-based).
 
 ## Features
 
@@ -19,9 +19,9 @@ sudo ./scripts/install_firefox_codecs.sh
 
 ## What It Does
 
-1. **Updates Clear Linux** - Ensures system is up to date
-2. **Installs Firefox** - Installs Firefox browser via swupd
-3. **Installs Codecs** - Installs multimedia bundles including:
+1. **Updates system** - Ensures system is up to date
+2. **Installs Firefox** - Installs Firefox browser via pacman
+3. **Installs Codecs** - Installs multimedia packages including:
    - Audio codecs
    - Video codecs (H.264, VP8, VP9, etc.)
    - GStreamer plugins
@@ -93,7 +93,7 @@ The `firefox-video` launcher includes:
 
 If specific codecs are missing, you can try:
 ```bash
-sudo swupd bundle-add multimedia-extra
+sudo pacman -S gst-plugins-rs libvpx libx264 libx265
 ```
 
 ### Flatpak Codecs
@@ -105,7 +105,7 @@ flatpak install flathub org.freedesktop.Platform.ffmpeg-full
 
 ## Requirements
 
-- Clear Linux OS
+- CachyOS (Arch-based)
 - Root/sudo access
 - Internet connection for downloads
 - At least 2GB free disk space
@@ -113,7 +113,7 @@ flatpak install flathub org.freedesktop.Platform.ffmpeg-full
 ## Notes
 
 - Some proprietary codecs (like H.264) may require additional licensing
-- Clear Linux bundles include open-source codecs by default
+- Arch repositories include open-source codecs by default
 - Hardware acceleration depends on your GPU and drivers
 - The script creates a desktop file for easy launching from GUI
 

@@ -6,7 +6,7 @@ This document provides a complete overview of the CineStream project structure.
 
 ```
 Cinemasearch/
-├── deploy.sh                    # Master deployment script (Clear Linux)
+├── deploy.sh                    # Master deployment script (CachyOS)
 ├── README.md                    # Main project documentation
 ├── PROJECT_STRUCTURE.md         # This file
 ├── .gitignore                   # Git ignore rules
@@ -32,7 +32,7 @@ Cinemasearch/
     └── ARCHITECTURE.md        # System architecture documentation
 ```
 
-## Deployment Structure (on Clear Linux Server)
+## Deployment Structure (on CachyOS Server)
 
 After running `deploy.sh add-site`, the following structure is created:
 

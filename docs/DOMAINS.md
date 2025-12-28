@@ -131,7 +131,7 @@ SSL certificates can be obtained using certbot:
 
 ```bash
 # Install certbot if needed
-sudo swupd bundle-add certbot
+sudo pacman -S certbot certbot-nginx
 
 # Obtain certificate
 sudo certbot certonly --nginx -d example.com -d www.example.com
@@ -271,4 +271,4 @@ All checks should pass before proceeding.
 
 - [Let's Encrypt Documentation](https://letsencrypt.org/docs/)
 - [DNS Propagation Checker](https://www.whatsmydns.net/)
-- [Clear Linux Network Configuration](https://docs.clearlinux.org/latest/guides/network/network-config.html)
+- [Arch Linux Network Configuration](https://wiki.archlinux.org/title/Network_configuration)

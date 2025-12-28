@@ -193,6 +193,6 @@ This configuration provides:
 
 - CPU affinity is set both via systemd `CPUAffinity` directive and post-start scripts
 - The timer service ensures affinity is maintained even if processes restart
-- Clear Linux OS handles CPU topology detection automatically
+- CachyOS/Arch Linux handles CPU topology detection automatically
 - Hyperthreading is enabled on P-cores but not on E-cores
 

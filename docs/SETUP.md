@@ -6,7 +6,7 @@ This guide provides step-by-step instructions to set up and configure your CineS
 
 Before starting, ensure you have:
 
-- **Clear Linux OS** installed on Intel architecture
+- **CachyOS** (Arch-based) installed on Intel architecture
 - **Root access** (sudo privileges)
 - **Internet connection** for downloading packages and MongoDB
 - **Public IP address** (for domain name resolution)
@@ -28,8 +28,8 @@ sudo ./deploy.sh init-server
 ```
 
 **What this does:**
-- Updates Clear Linux OS
-- Installs Python 3, Nginx, Git, Node.js, and other required bundles
+- Updates system packages
+- Installs Python 3, Nginx, Git, Node.js, and other required packages
 - Downloads and installs MongoDB 7.0.0
 - Installs Claude CLI tools
 - Creates directory structure (`/var/www`)
@@ -98,11 +98,11 @@ sudo ./deploy.sh status
 **If database wasn't initialized (because API key was missing), initialize it now:**
 ```bash
 cd /var/www/cinestream
-# Clear Linux requires using venv Python directly (not system Python)
+# Use venv Python directly
 ./venv/bin/python src/scripts/init_db.py
 ```
 
-**Note:** Clear Linux requires all Python code to run in a virtual environment. The deploy script automatically configures all systemd services to use the venv Python (`$APP_DIR/venv/bin/python`). When running commands manually, always use the venv Python directly.
+**Note:** The deploy script automatically configures all systemd services to use the venv Python (`$APP_DIR/venv/bin/python`). When running commands manually, always use the venv Python directly.
 
 ---
 
@@ -503,7 +503,7 @@ After completing setup:
 
 1. **Monitor Services**: Use `sudo ./deploy.sh status` regularly
 2. **Check Logs**: Monitor application and system logs
-3. **Update Regularly**: Run `sudo swupd update` for OS updates
+3. **Update Regularly**: Run `sudo pacman -Syu` for OS updates
 4. **Backup**: Regularly backup `.env` file and MongoDB data
 5. **Optimize**: Re-run `optimize-system` after major changes
 6. **Review Documentation**: 
@@ -521,7 +521,7 @@ After completing setup:
 - **Keep `.env` file secure** (permissions 600)
 - **Configure firewall** to restrict access
 - **Set up SSH key authentication** instead of passwords
-- **Regular updates**: Run `sudo swupd update` regularly
+- **Regular updates**: Run `sudo pacman -Syu` regularly
 - **Monitor logs**: Check MongoDB and Nginx logs regularly
 
 ---
@@ -533,4 +533,5 @@ For issues:
 - MongoDB logs: `/opt/mongodb/logs/mongod.log`
 - Nginx logs: `/var/log/nginx/error.log`
 - Application logs: `sudo journalctl -u cinestream@*.service`
-- [Clear Linux Documentation](https://docs.clearlinux.org/)
+- [Arch Linux Wiki](https://wiki.archlinux.org/)
+- [CachyOS Documentation](https://cachyos.org/)

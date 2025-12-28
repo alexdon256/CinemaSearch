@@ -1,6 +1,7 @@
 #!/bin/bash
 # CPU Affinity Management Script for CineStream
 # Sets MongoDB and Nginx to P-cores, Python apps to E-cores on Intel i9-12900HK
+# Compatible with CachyOS/Arch Linux and other Linux distributions
 
 set -euo pipefail
 

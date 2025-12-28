@@ -1,7 +1,7 @@
 # CineStream: High-Concurrency AI-Powered Movie Aggregator
 
 **Version:** Final Release (v21.0)  
-**Target OS:** Clear Linux OS (Intel Architecture)  
+**Target OS:** CachyOS (Arch-based, Intel Architecture)  
 **Date:** December 19, 2025
 
 ## Overview
@@ -44,7 +44,7 @@ sudo ./deploy.sh init-server
 ```
 
 This installs:
-- Clear Linux updates
+- System package updates
 - Python 3, Nginx, Git, Node.js
 - MongoDB (manually installed)
 - Claude CLI tools
@@ -215,7 +215,7 @@ sudo ./deploy.sh uninit-server yes
 
 ### Server Requirements
 
-- **OS**: Clear Linux OS (Intel Architecture)
+- **OS**: CachyOS (Arch-based, Intel Architecture)
 - **RAM**: Minimum 2GB (4GB+ recommended)
 - **Storage**: 10GB+ free space
 - **Network**: Public IP address with ports 80 and 443 open
@@ -351,7 +351,7 @@ This is a production-ready deployment system. When contributing:
 1. Test changes on a development server
 2. Update documentation for any new features
 3. Ensure backward compatibility
-4. Follow Clear Linux best practices
+4. Follow Arch Linux best practices
 
 ## License
 
@@ -369,7 +369,7 @@ For deployment issues:
 ## Acknowledgments
 
 - **Claude AI** by Anthropic for intelligent web scraping
-- **Clear Linux** for the lightweight, performant OS
+- **CachyOS** for the optimized, performant Arch-based OS
 - **Let's Encrypt** for free SSL certificates
 - **MongoDB** for flexible document storage
 

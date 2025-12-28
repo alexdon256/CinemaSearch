@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # CineStream Master Deployment Script v21.0
-# Clear Linux OS Edition
+# CachyOS Edition
 # Manages multi-site deployment with Nginx, MongoDB, and Systemd
 
 set -euo pipefail
@@ -44,92 +44,49 @@ check_root() {
     fi
 }
 
-# Check if running on Clear Linux
-check_clear_linux() {
-    if [[ ! -f /usr/lib/os-release ]] || ! grep -q "ID=clear-linux-os" /usr/lib/os-release; then
-        log_warning "This script is designed for Clear Linux OS. Proceeding anyway..."
+# Check if running on CachyOS/Arch Linux
+check_cachyos() {
+    if [[ ! -f /etc/os-release ]]; then
+        log_warning "Cannot detect OS. This script is designed for CachyOS (Arch-based). Proceeding anyway..."
+        return
+    fi
+    
+    local os_id
+    os_id=$(grep "^ID=" /etc/os-release | cut -d= -f2 | tr -d '"' || echo "")
+    
+    if [[ "$os_id" != "cachyos" ]] && [[ "$os_id" != "arch" ]]; then
+        log_warning "This script is designed for CachyOS (Arch-based). Detected: $os_id. Proceeding anyway..."
+    else
+        log_info "Detected CachyOS/Arch Linux"
     fi
 }
 
-# Disable Clear Linux telemetry
-disable_clear_linux_telemetry() {
-    log_info "Disabling Clear Linux telemetry..."
+# CachyOS/Arch doesn't have built-in system telemetry
+# This function checks for any telemetry services that might exist
+disable_telemetry() {
+    log_info "Checking for telemetry services..."
     
-    # Disable clr-telemetry systemd service if it exists
-    if systemctl list-unit-files | grep -q "clr-telemetry"; then
-        log_info "Stopping and disabling clr-telemetry service..."
-        systemctl stop clr-telemetry.service 2>/dev/null || true
-        systemctl disable clr-telemetry.service 2>/dev/null || true
-        systemctl mask clr-telemetry.service 2>/dev/null || true
-        log_success "Disabled clr-telemetry service (persistent)"
-    else
-        log_info "clr-telemetry service not found (may not be installed)"
+    # Arch-based systems typically don't have system-wide telemetry
+    # Check for any telemetry services that might exist
+    local telemetry_found=false
+    
+    # Check for common telemetry services (none expected on Arch)
+    if systemctl list-unit-files | grep -qE "(telemetry|analytics)"; then
+        log_info "Found telemetry services, disabling..."
+        systemctl list-unit-files | grep -E "(telemetry|analytics)" | while read -r service _; do
+            systemctl stop "$service" 2>/dev/null || true
+            systemctl disable "$service" 2>/dev/null || true
+            systemctl mask "$service" 2>/dev/null || true
+        done
+        telemetry_found=true
     fi
     
-    # Disable telemetry timer if it exists
-    if systemctl list-unit-files | grep -q "clr-telemetry.timer"; then
-        log_info "Stopping and disabling clr-telemetry timer..."
-        systemctl stop clr-telemetry.timer 2>/dev/null || true
-        systemctl disable clr-telemetry.timer 2>/dev/null || true
-        systemctl mask clr-telemetry.timer 2>/dev/null || true
-        log_success "Disabled clr-telemetry timer (persistent)"
+    if [[ "$telemetry_found" == "false" ]]; then
+        log_info "No system telemetry services found (typical for Arch-based systems)"
     fi
     
-    # Reload systemd to ensure service changes are persistent
     systemctl daemon-reload 2>/dev/null || true
-    
-    # Create/update telemetry configuration file to disable telemetry
-    TELEMETRY_CONF="/etc/telemetry.conf"
-    log_info "Configuring telemetry settings..."
-    
-    # Create telemetry configuration with telemetry disabled
-    cat > "$TELEMETRY_CONF" <<'EOF'
-# Clear Linux Telemetry Configuration
-# Telemetry is disabled - no data will be sent
-
-[telemetry]
-enabled = false
-EOF
-    
-    chmod 644 "$TELEMETRY_CONF"
-    log_success "Created persistent telemetry configuration: $TELEMETRY_CONF"
-    
-    # Disable swupd telemetry if clr-telemetry command exists
-    if command -v clr-telemetry &> /dev/null; then
-        log_info "Disabling telemetry via clr-telemetry command..."
-        clr-telemetry disable 2>/dev/null || {
-            # If the command doesn't support disable, try to configure it
-            log_info "Attempting to configure telemetry settings..."
-            # Set telemetry to disabled via persistent configuration
-            mkdir -p /etc/telemetry 2>/dev/null || true
-            echo "disabled" > /etc/telemetry/status 2>/dev/null || true
-            chmod 644 /etc/telemetry/status 2>/dev/null || true
-        }
-        log_success "Telemetry disabled via clr-telemetry (persistent)"
-    fi
-    
-    # Configure swupd to not send telemetry
-    SWUPD_CONF="/etc/swupd/config"
-    if [[ ! -d "$(dirname "$SWUPD_CONF")" ]]; then
-        mkdir -p "$(dirname "$SWUPD_CONF")" 2>/dev/null || true
-    fi
-    
-    # Add telemetry disable setting to swupd config if file exists or create it
-    if [[ -f "$SWUPD_CONF" ]]; then
-        # Remove any existing telemetry settings
-        sed -i '/^telemetry/d' "$SWUPD_CONF" 2>/dev/null || true
-    fi
-    
-    # Add telemetry disable setting
-    echo "telemetry=false" >> "$SWUPD_CONF" 2>/dev/null || {
-        log_warning "Could not write to swupd config, but telemetry should still be disabled"
-    }
-    
-    if [[ -f "$SWUPD_CONF" ]]; then
-        log_success "Updated persistent swupd configuration to disable telemetry"
-    fi
-    
-    log_success "Clear Linux telemetry disabled (0 telemetry sent - all settings persistent)"
+    log_success "Telemetry check complete"
 }
 
 # Disable system logging
@@ -292,15 +249,15 @@ EOF
 
 # Initialize server: OS updates, packages, MongoDB
 init_server() {
-    log_info "Initializing Clear Linux server..."
+    log_info "Initializing CachyOS server..."
     
-    # Update Clear Linux
-    log_info "Updating Clear Linux OS..."
-    swupd update -y || log_warning "swupd update failed, continuing..."
+    # Update system packages
+    log_info "Updating system packages..."
+    pacman -Syu --noconfirm || log_warning "pacman update had issues, continuing..."
     
-    # Disable Clear Linux telemetry (persistent configuration)
+    # Disable telemetry (if any exists)
     log_info ""
-    disable_clear_linux_telemetry
+    disable_telemetry
     
     # Disable system logging (persistent configuration)
     log_info ""
@@ -308,11 +265,20 @@ init_server() {
     
     log_info ""
     
-    # Install required bundles
-    log_info "Installing required bundles..."
-    swupd bundle-add python3-basic nginx git openssh-server dev-utils sysadmin-basic nodejs-basic -y
+    # Install required packages
+    log_info "Installing required packages..."
+    pacman -S --noconfirm \
+        python python-pip \
+        nginx \
+        git \
+        openssh \
+        base-devel \
+        nodejs npm \
+        wget \
+        curl \
+        || log_warning "Some packages may have failed to install, continuing..."
     
-    # Install MongoDB manually (not in swupd)
+    # Install MongoDB manually (from official MongoDB repository)
     log_info "Installing MongoDB..."
     install_mongodb
     
@@ -351,6 +317,12 @@ init_server() {
     # Install CPU affinity management scripts (needed before configuring services)
     install_cpu_affinity_scripts
     
+    # Configure Nginx security and rate limiting - must be done after nginx is installed
+    configure_nginx_security
+    
+    # Configure Nginx logging (disable all logging) - must be done after nginx is installed
+    configure_nginx_logging
+    
     # Configure Nginx CPU affinity (P-cores)
     configure_nginx_affinity
     
@@ -370,8 +342,10 @@ init_server() {
     log_info "All services configured to auto-start on boot"
     log_info "CPU affinity: MongoDB & Nginx -> P-cores (0-5), Python apps -> E-cores (6-13)"
     log_info "System optimized: swappiness=1, noatime, TCP tuning, MongoDB performance config"
-    log_info "Telemetry disabled: 0 telemetry sent (all settings persistent)"
     log_info "System logging disabled: logs only in volatile RAM (all settings persistent)"
+    log_info "Nginx logging disabled: all access and error logs disabled"
+    log_info "MongoDB logging disabled: no log files created, quiet mode enabled"
+    log_info "Security configured: Firewall, fail2ban, Nginx rate limiting, security headers"
     log_info ""
     log_info "Next steps:"
     log_info "1. Configure .env file: nano /var/www/cinestream/.env"
@@ -540,8 +514,9 @@ install_mongodb() {
     mv "mongodb-linux-x86_64-${MONGO_VERSION}" "$MONGO_DIR"
     rm "$MONGO_TARBALL"
     
-    # Create data and log directories
+    # Create data directory (log directory not needed as logging is disabled)
     mkdir -p "$MONGO_DATA_DIR"
+    # Create log directory structure but it won't be used (logging disabled)
     mkdir -p "$MONGO_LOG_DIR"
     chown -R mongodb:mongodb "$MONGO_DATA_DIR" "$MONGO_LOG_DIR" 2>/dev/null || true
     
@@ -551,6 +526,7 @@ install_mongodb() {
     fi
     
     # Create systemd service file with CPU affinity for P-cores (0-5)
+    # Logging disabled: no logpath, using --quiet flag
     cat > "$SYSTEMD_DIR/mongodb.service" <<EOF
 [Unit]
 Description=MongoDB Database Server
@@ -563,11 +539,15 @@ Group=mongodb
 Type=forking
 # CPU Affinity: P-cores (0-5) for Intel i9-12900HK
 CPUAffinity=0 1 2 3 4 5
+# Logging disabled: --quiet flag suppresses all output, no logpath specified
 ExecStart=$MONGO_DIR/bin/mongod --dbpath=$MONGO_DATA_DIR --quiet --fork
 ExecStop=$MONGO_DIR/bin/mongod --shutdown --dbpath=$MONGO_DATA_DIR
 PIDFile=$MONGO_DATA_DIR/mongod.lock
 Restart=on-failure
 RestartSec=10
+# Redirect all output to /dev/null to ensure no logging
+StandardOutput=null
+StandardError=null
 # Ensure affinity is set after start
 ExecStartPost=/bin/bash -c 'sleep 2 && /usr/local/bin/cinestream-set-cpu-affinity.sh mongodb || true'
 
@@ -761,6 +741,33 @@ systemLog:
   destination: null
   verbosity: 0
   quiet: true
+  # Completely disable all logging - no log files created
+  logAppend: false
+  logRotate: reopen
+  # Disable component logging
+  component:
+    accessControl:
+      verbosity: 0
+    command:
+      verbosity: 0
+    control:
+      verbosity: 0
+    geo:
+      verbosity: 0
+    index:
+      verbosity: 0
+    network:
+      verbosity: 0
+    query:
+      verbosity: 0
+    replication:
+      verbosity: 0
+    sharding:
+      verbosity: 0
+    storage:
+      verbosity: 0
+    write:
+      verbosity: 0
 
 net:
   port: 27017
@@ -898,6 +905,343 @@ IO_EOF
     log_warning "Run 'sudo sysctl -p' to apply kernel parameters immediately"
 }
 
+# Configure comprehensive firewall rules
+configure_firewall() {
+    log_info "Configuring firewall rules..."
+    
+    # Check for firewalld (common on Arch-based systems)
+    if command -v firewall-cmd &> /dev/null; then
+        log_info "Configuring firewalld..."
+        
+        # Enable firewalld if not running
+        if ! systemctl is-active --quiet firewalld 2>/dev/null; then
+            systemctl enable firewalld 2>/dev/null || true
+            systemctl start firewalld 2>/dev/null || true
+        fi
+        
+        # Set default zone to drop (deny by default)
+        firewall-cmd --set-default-zone=drop 2>/dev/null || true
+        
+        # Allow loopback
+        firewall-cmd --permanent --add-interface=lo 2>/dev/null || true
+        
+        # Allow established and related connections
+        firewall-cmd --permanent --add-service=ssh 2>/dev/null || true
+        
+        # Allow HTTP and HTTPS
+        firewall-cmd --permanent --add-service=http 2>/dev/null || true
+        firewall-cmd --permanent --add-service=https 2>/dev/null || true
+        
+        # Rate limiting: Limit connections per IP
+        firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="0.0.0.0/0" port port="80" protocol="tcp" limit value=25/m accept' 2>/dev/null || true
+        firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="0.0.0.0/0" port port="443" protocol="tcp" limit value=25/m accept' 2>/dev/null || true
+        
+        # Block common attack ports
+        firewall-cmd --permanent --remove-service=dhcpv6-client 2>/dev/null || true
+        firewall-cmd --permanent --remove-service=mdns 2>/dev/null || true
+        
+        # Reload firewall
+        firewall-cmd --reload 2>/dev/null || true
+        log_success "Firewalld configured with security rules"
+        
+    # Check for ufw (alternative firewall)
+    elif command -v ufw &> /dev/null; then
+        log_info "Configuring UFW..."
+        
+        # Enable UFW
+        ufw --force enable 2>/dev/null || true
+        
+        # Default policies
+        ufw default deny incoming 2>/dev/null || true
+        ufw default allow outgoing 2>/dev/null || true
+        
+        # Allow SSH (important: do this first!)
+        ufw allow 22/tcp 2>/dev/null || true
+        
+        # Allow HTTP and HTTPS
+        ufw allow 80/tcp 2>/dev/null || true
+        ufw allow 443/tcp 2>/dev/null || true
+        
+        # Rate limiting
+        ufw limit 22/tcp 2>/dev/null || true
+        
+        log_success "UFW configured with security rules"
+        
+    # Fallback: Use iptables directly
+    else
+        log_info "Configuring iptables rules..."
+        
+        # Flush existing rules
+        iptables -F 2>/dev/null || true
+        iptables -X 2>/dev/null || true
+        
+        # Default policies
+        iptables -P INPUT DROP 2>/dev/null || true
+        iptables -P FORWARD DROP 2>/dev/null || true
+        iptables -P OUTPUT ACCEPT 2>/dev/null || true
+        
+        # Allow loopback
+        iptables -A INPUT -i lo -j ACCEPT 2>/dev/null || true
+        
+        # Allow established and related connections
+        iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+        
+        # Allow SSH (rate limited)
+        iptables -A INPUT -p tcp --dport 22 -m state --state NEW -m recent --set --name SSH 2>/dev/null || true
+        iptables -A INPUT -p tcp --dport 22 -m state --state NEW -m recent --update --seconds 60 --hitcount 4 --name SSH -j DROP 2>/dev/null || true
+        iptables -A INPUT -p tcp --dport 22 -j ACCEPT 2>/dev/null || true
+        
+        # Allow HTTP and HTTPS
+        iptables -A INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
+        iptables -A INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
+        
+        # Save iptables rules (if iptables-persistent or netfilter-persistent available)
+        if command -v iptables-save &> /dev/null; then
+            mkdir -p /etc/iptables 2>/dev/null || true
+            iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+        fi
+        
+        log_success "iptables configured with security rules"
+    fi
+}
+
+# Configure system security hardening
+configure_security_hardening() {
+    log_info "Configuring system security hardening..."
+    
+    # Install fail2ban for intrusion prevention
+    if command -v pacman &> /dev/null; then
+        log_info "Installing fail2ban..."
+        pacman -S --noconfirm fail2ban 2>/dev/null || log_warning "Failed to install fail2ban"
+        
+        if command -v fail2ban-client &> /dev/null; then
+            # Configure fail2ban
+            configure_fail2ban
+        fi
+    fi
+    
+    # Configure kernel security parameters
+    log_info "Configuring kernel security parameters..."
+    
+    cat >> /etc/sysctl.d/99-security-hardening.conf <<'SECURITY_EOF'
+
+# Security Hardening Configuration
+# Prevent IP spoofing
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+
+# Ignore ICMP redirects
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.all.secure_redirects = 0
+net.ipv4.conf.default.secure_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+
+# Ignore ICMP ping requests (optional - uncomment to enable)
+# net.ipv4.icmp_echo_ignore_all = 1
+
+# Disable source routing
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv6.conf.all.accept_source_route = 0
+net.ipv6.conf.default.accept_source_route = 0
+
+# Log suspicious packets
+net.ipv4.conf.all.log_martians = 1
+net.ipv4.conf.default.log_martians = 1
+
+# SYN flood protection
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_max_syn_backlog = 2048
+net.ipv4.tcp_synack_retries = 2
+net.ipv4.tcp_syn_retries = 5
+
+# Ignore ping broadcasts
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+# Ignore bad ICMP errors
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+# Protect against SYN flood attacks
+net.ipv4.tcp_syncookies = 1
+
+# Disable IP forwarding (unless needed)
+net.ipv4.ip_forward = 0
+net.ipv6.conf.all.forwarding = 0
+SECURITY_EOF
+    
+    # Apply security settings
+    sysctl -p /etc/sysctl.d/99-security-hardening.conf 2>/dev/null || true
+    
+    log_success "System security hardening configured"
+}
+
+# Configure fail2ban
+configure_fail2ban() {
+    log_info "Configuring fail2ban..."
+    
+    # Create fail2ban jail configuration
+    cat > /etc/fail2ban/jail.local <<'FAIL2BAN_EOF'
+[DEFAULT]
+# Ban hosts for 1 hour
+bantime = 3600
+# Override /etc/fail2ban/jail.d/00-firewalld.conf:
+banaction = iptables-multiport
+# Find hosts within 10 minutes
+findtime = 600
+# Ban after 5 failures
+maxretry = 5
+
+[sshd]
+enabled = true
+port = ssh
+logpath = %(sshd_log)s
+backend = %(sshd_backend)s
+maxretry = 3
+bantime = 7200
+
+[nginx-http-auth]
+enabled = true
+port = http,https
+logpath = /var/log/nginx/error.log
+
+[nginx-limit-req]
+enabled = true
+port = http,https
+logpath = /var/log/nginx/error.log
+maxretry = 10
+
+[nginx-botsearch]
+enabled = true
+port = http,https
+logpath = /var/log/nginx/access.log
+maxretry = 2
+FAIL2BAN_EOF
+    
+    # Enable and start fail2ban
+    systemctl enable fail2ban 2>/dev/null || true
+    systemctl start fail2ban 2>/dev/null || true
+    
+    log_success "fail2ban configured and started"
+}
+
+# Configure Nginx security and rate limiting
+configure_nginx_security() {
+    log_info "Configuring Nginx security settings..."
+    
+    local NGINX_MAIN_CONF="/etc/nginx/nginx.conf"
+    
+    if [[ -f "$NGINX_MAIN_CONF" ]]; then
+        # Backup original config
+        cp "$NGINX_MAIN_CONF" "${NGINX_MAIN_CONF}.backup.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+        
+        # Create security configuration snippet
+        mkdir -p /etc/nginx/conf.d 2>/dev/null || true
+        cat > /etc/nginx/conf.d/security.conf <<'NGINX_SECURITY_EOF'
+# Security Configuration for CineStream
+
+# Rate limiting zones
+limit_req_zone $binary_remote_addr zone=general_limit:10m rate=10r/s;
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=5r/s;
+limit_req_zone $binary_remote_addr zone=strict_limit:10m rate=2r/s;
+
+# Connection limiting
+limit_conn_zone $binary_remote_addr zone=conn_limit:10m;
+limit_conn_zone $binary_remote_addr zone=conn_limit_per_ip:10m;
+
+# Hide Nginx version
+server_tokens off;
+
+# Security headers (will be included in server blocks)
+# X-Frame-Options: Prevent clickjacking
+# X-Content-Type-Options: Prevent MIME sniffing
+# X-XSS-Protection: Enable XSS filter
+# Referrer-Policy: Control referrer information
+# Permissions-Policy: Control browser features
+# Content-Security-Policy: Control resource loading
+
+# Timeouts to prevent slowloris attacks
+client_body_timeout 10s;
+client_header_timeout 10s;
+keepalive_timeout 5s 5s;
+send_timeout 10s;
+
+# Buffer sizes to prevent buffer overflow attacks
+client_body_buffer_size 128k;
+client_header_buffer_size 1k;
+client_max_body_size 10m;
+large_client_header_buffers 4 4k;
+
+# Disable unnecessary methods
+if ($request_method !~ ^(GET|HEAD|POST|OPTIONS)$ ) {
+    return 405;
+}
+
+# Block common attack patterns
+location ~* \.(env|git|svn|htaccess|htpasswd|ini|log|sh|sql|conf)$ {
+    deny all;
+    return 404;
+}
+
+# Block access to hidden files
+location ~ /\. {
+    deny all;
+    return 404;
+}
+NGINX_SECURITY_EOF
+        
+        # Include security config in main nginx.conf if not already included
+        if ! grep -q "include.*conf.d/security.conf" "$NGINX_MAIN_CONF"; then
+            sed -i '/^http {/a\
+    include /etc/nginx/conf.d/security.conf;
+' "$NGINX_MAIN_CONF" 2>/dev/null || true
+        fi
+        
+        log_success "Nginx security configuration created"
+    else
+        log_warning "Nginx main config not found"
+    fi
+}
+
+# Configure Nginx to disable logging globally
+configure_nginx_logging() {
+    log_info "Configuring Nginx to disable all logging..."
+    
+    # Create Nginx main config override to disable logging
+    local NGINX_MAIN_CONF="/etc/nginx/nginx.conf"
+    
+    if [[ -f "$NGINX_MAIN_CONF" ]]; then
+        # Backup original config
+        cp "$NGINX_MAIN_CONF" "${NGINX_MAIN_CONF}.backup.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+        
+        # Disable access_log and error_log in http block
+        if ! grep -q "# CineStream: Logging disabled" "$NGINX_MAIN_CONF"; then
+            # Add logging disable directives in http block
+            sed -i '/^http {/a\
+    # CineStream: Logging disabled\
+    access_log off;\
+    error_log off;
+' "$NGINX_MAIN_CONF" 2>/dev/null || {
+                # Alternative: add to end of http block
+                sed -i '/^}/i\
+    # CineStream: Logging disabled\
+    access_log off;\
+    error_log off;
+' "$NGINX_MAIN_CONF" 2>/dev/null || true
+            }
+        fi
+        
+        # Also disable logging in any existing server blocks
+        sed -i 's/access_log[^;]*;/access_log off;/g' "$NGINX_MAIN_CONF" 2>/dev/null || true
+        sed -i 's/error_log[^;]*;/error_log off;/g' "$NGINX_MAIN_CONF" 2>/dev/null || true
+        
+        log_success "Nginx logging disabled globally"
+    else
+        log_warning "Nginx main config not found, logging will be disabled per-site"
+    fi
+}
+
 # Configure Nginx CPU affinity to P-cores
 configure_nginx_affinity() {
     log_info "Configuring Nginx CPU affinity to P-cores (0-5)..."
@@ -912,6 +1256,9 @@ configure_nginx_affinity() {
 CPUAffinity=0 1 2 3 4 5
 # Ensure affinity is set after start
 ExecStartPost=/bin/bash -c 'sleep 1 && /usr/local/bin/cinestream-set-cpu-affinity.sh nginx || true'
+# Disable logging to systemd journal
+StandardOutput=null
+StandardError=null
 EOF
     
     log_success "Nginx CPU affinity configured"
@@ -1136,10 +1483,10 @@ deploy_application() {
         return 1
     fi
     
-    # Create Python virtual environment (Clear Linux requirement: all Python code must run in venv)
+    # Create Python virtual environment
     log_info "Creating Python virtual environment..."
     if [[ ! -d "$APP_DIR/venv" ]]; then
-        python3 -m venv "$APP_DIR/venv"
+        python -m venv "$APP_DIR/venv"
         log_success "Created virtual environment at $APP_DIR/venv"
     else
         log_info "Virtual environment already exists"
@@ -1159,7 +1506,7 @@ deploy_application() {
     # Create .env file template if it doesn't exist
     if [[ ! -f "$APP_DIR/.env" ]]; then
         log_info "Creating .env file template..."
-        # Generate SECRET_KEY using venv Python (Clear Linux requirement: use venv for all Python code)
+        # Generate SECRET_KEY using venv Python
         local secret_key
         secret_key=$("$APP_DIR/venv/bin/python" -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || echo "change-me-in-production")
         cat > "$APP_DIR/.env" <<EOF
@@ -1213,7 +1560,7 @@ EOF
     
     # Create systemd service template
     log_info "Creating systemd services..."
-    log_info "All Python processes will use venv: $APP_DIR/venv/bin/python (Clear Linux requirement)"
+    log_info "All Python processes will use venv: $APP_DIR/venv/bin/python"
     local SERVICE_USER
     # Use SUDO_USER if available (when running with sudo), otherwise use current user
     if [[ -n "${SUDO_USER:-}" ]]; then
@@ -1300,16 +1647,10 @@ EOF
         systemctl start "${APP_NAME}@${port}.service" 2>/dev/null || true
     done
     
-    # Configure firewall
-    log_info "Configuring firewall..."
-    if command -v firewall-cmd &> /dev/null; then
-        firewall-cmd --permanent --add-service=http 2>/dev/null || true
-        firewall-cmd --permanent --add-service=https 2>/dev/null || true
-        firewall-cmd --reload 2>/dev/null || true
-        log_success "Firewall configured"
-    else
-        log_warning "firewall-cmd not found, skipping firewall configuration"
-    fi
+    # Configure comprehensive firewall and security
+    log_info "Configuring firewall and security..."
+    configure_firewall
+    configure_security_hardening
     
     # Wait a moment for processes to start
     sleep 2
@@ -1381,8 +1722,8 @@ install_ssl() {
     # Check if certbot is installed
     if ! command -v certbot &> /dev/null; then
         log_info "Certbot not found. Installing certbot..."
-        swupd bundle-add certbot -y || {
-            log_error "Failed to install certbot. Please install manually: swupd bundle-add certbot"
+        pacman -S --noconfirm certbot certbot-nginx || {
+            log_error "Failed to install certbot. Please install manually: pacman -S certbot certbot-nginx"
             exit 1
         }
         log_success "Certbot installed"
@@ -1619,12 +1960,60 @@ server {
     # ssl_prefer_server_ciphers on;
     # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https:; frame-ancestors 'self';" always;
+    
+    # Rate limiting
+    limit_req zone=general_limit burst=20 nodelay;
+    limit_conn conn_limit 10;
+    
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https:; frame-ancestors 'self';" always;
+    
+    # Rate limiting
+    limit_req zone=general_limit burst=20 nodelay;
+    limit_conn conn_limit 10;
+    
     # Logging disabled
     access_log off;
     error_log off;
     
-    # Proxy settings
+    # Rate limiting for API endpoints
+    location /api/ {
+        limit_req zone=api_limit burst=10 nodelay;
+        limit_conn conn_limit_per_ip 5;
+        
+        proxy_pass http://${UPSTREAM_NAME};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$server_name;
+        
+        # Timeouts
+        proxy_connect_timeout 30s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 30s;
+        
+        # Pass through error responses from backend
+        proxy_intercept_errors off;
+    }
+    
+    # Proxy settings for main site
     location / {
+        limit_req zone=general_limit burst=20 nodelay;
+        limit_conn conn_limit 10;
+        
         proxy_pass http://${UPSTREAM_NAME};
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -1697,7 +2086,7 @@ EOF
 # Main command dispatcher
 main() {
     check_root
-    check_clear_linux
+    check_cachyos
     
     case "${1:-}" in
         init-server)
@@ -1733,7 +2122,7 @@ main() {
             echo "Usage: $0 <command> [arguments]"
             echo ""
             echo "Commands:"
-            echo "  init-server                    Initialize Clear Linux server"
+            echo "  init-server                    Initialize CachyOS server"
             echo "  uninit-server [yes]            Remove all CineStream components"
             echo "                                (use 'yes' to also remove MongoDB)"
             echo "  start-all                      Start all services"
