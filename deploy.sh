@@ -292,6 +292,7 @@ init_server() {
             nodejs npm \
             wget \
             curl \
+            go \
             2>/dev/null; then
             packages_installed=true
             break
@@ -343,12 +344,12 @@ init_server() {
     systemctl enable mongodb.service
     systemctl enable disable-transparent-hugepages.service 2>/dev/null || true
     systemctl enable configure-io-scheduler.service 2>/dev/null || true
-    # Restart MongoDB to apply new configuration if it was already running
-    if systemctl is-active --quiet mongodb.service 2>/dev/null; then
-        systemctl restart mongodb.service || systemctl start mongodb.service
-    else
-        systemctl start mongodb.service
-    fi
+    # Stop MongoDB first to avoid duplicates, then start
+    systemctl stop mongodb.service 2>/dev/null || true
+    # Kill any stray mongod processes
+    pkill -9 mongod 2>/dev/null || true
+    sleep 1
+    systemctl start mongodb.service
     
     # Create CineStream master target for coordinated startup
     create_master_target
@@ -594,7 +595,147 @@ check_mongodb_installed() {
     return 1
 }
 
-# Install MongoDB from official repository (preferred method)
+# Install yay (AUR helper) if not already installed
+install_yay() {
+    if command -v yay &> /dev/null; then
+        log_info "yay is already installed"
+        return 0
+    fi
+    
+    log_info "Installing yay (AUR helper)..."
+    
+    # Check if we're running as root
+    if [[ $EUID -eq 0 ]]; then
+        # Get the actual user (not root)
+        local INSTALL_USER="${SUDO_USER:-}"
+        if [[ -z "$INSTALL_USER" ]]; then
+            log_error "Cannot install yay as root. Please run as a regular user or with sudo from a user account."
+            log_error "To install yay manually:"
+            log_error "  1. Switch to a regular user: su - yourusername"
+            log_error "  2. Install yay: cd /tmp && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si"
+            return 1
+        fi
+        
+        log_info "Installing yay as user: $INSTALL_USER"
+        
+        # Install yay as the regular user
+        cd /tmp
+        if [[ -d "/tmp/yay" ]]; then
+            rm -rf /tmp/yay
+        fi
+        
+        # Clone and build yay as the regular user
+        sudo -u "$INSTALL_USER" git clone https://aur.archlinux.org/yay.git /tmp/yay 2>/dev/null || {
+            log_error "Failed to clone yay repository"
+            return 1
+        }
+        
+        cd /tmp/yay
+        sudo -u "$INSTALL_USER" makepkg -si --noconfirm 2>&1 || {
+            log_error "Failed to build/install yay"
+            log_error "You may need to install yay manually as a regular user"
+            return 1
+        }
+        
+        # Verify yay is installed
+        if command -v yay &> /dev/null; then
+            log_success "yay installed successfully"
+            return 0
+        else
+            log_error "yay installation completed but yay command not found"
+            return 1
+        fi
+    else
+        # Running as regular user - install directly
+        cd /tmp
+        if [[ -d "/tmp/yay" ]]; then
+            rm -rf /tmp/yay
+        fi
+        
+        git clone https://aur.archlinux.org/yay.git /tmp/yay 2>/dev/null || {
+            log_error "Failed to clone yay repository"
+            return 1
+        }
+        
+        cd /tmp/yay
+        makepkg -si --noconfirm 2>&1 || {
+            log_error "Failed to build/install yay"
+            return 1
+        }
+        
+        if command -v yay &> /dev/null; then
+            log_success "yay installed successfully"
+            return 0
+        else
+            log_error "yay installation completed but yay command not found"
+            return 1
+        fi
+    fi
+}
+
+# Install MongoDB from AUR using yay (preferred method)
+install_mongodb_from_aur() {
+    log_info "Installing MongoDB from AUR using yay..."
+    
+    # Ensure yay is installed
+    if ! command -v yay &> /dev/null; then
+        log_info "yay not found, installing it first..."
+        if ! install_yay; then
+            log_warning "Failed to install yay, cannot install MongoDB from AUR"
+            return 1
+        fi
+    fi
+    
+    # Get the user who should run yay (not root)
+    local YAY_USER="${SUDO_USER:-}"
+    if [[ -z "$YAY_USER" ]] && [[ $EUID -ne 0 ]]; then
+        YAY_USER=$(whoami)
+    fi
+    
+    if [[ -z "$YAY_USER" ]]; then
+        log_warning "Cannot determine user for yay. Attempting as root (may fail)..."
+        log_info "If this fails, install MongoDB manually as a regular user: yay -S mongodb-bin"
+        
+        # Try with --noconfirm to avoid prompts
+        local yay_output
+        yay_output=$(yay -S --noconfirm mongodb-bin 2>&1)
+        local yay_exit=$?
+    else
+        log_info "Installing MongoDB from AUR as user: $YAY_USER"
+        
+        # Run yay as the regular user
+        local yay_output
+        yay_output=$(sudo -u "$YAY_USER" yay -S --noconfirm mongodb-bin 2>&1)
+        local yay_exit=$?
+    fi
+    
+    # Check if installation succeeded
+    if [[ $yay_exit -eq 0 ]] && (pacman -Q mongodb-bin &>/dev/null || [[ -f "/usr/bin/mongod" ]] || [[ -f "/opt/mongodb/bin/mongod" ]]); then
+        log_success "MongoDB installed from AUR via yay"
+        # Create symlinks if needed
+        if [[ -f "/usr/bin/mongod" ]] && [[ ! -f "/opt/mongodb/bin/mongod" ]]; then
+            mkdir -p /opt/mongodb/bin
+            ln -s /usr/bin/mongod /opt/mongodb/bin/mongod 2>/dev/null || true
+            if [[ -f "/usr/bin/mongosh" ]]; then
+                ln -s /usr/bin/mongosh /opt/mongodb/bin/mongosh 2>/dev/null || true
+            fi
+        fi
+        return 0
+    else
+        log_warning "AUR installation via yay failed."
+        if [[ -n "$YAY_USER" ]]; then
+            log_info "You can try installing manually as user $YAY_USER:"
+            log_info "  su - $YAY_USER"
+            log_info "  yay -S mongodb-bin"
+        else
+            log_info "You can try installing manually as a regular user:"
+            log_info "  yay -S mongodb-bin"
+        fi
+        return 1
+    fi
+}
+
+# Install MongoDB from official repository (fallback method)
 install_mongodb_from_repo() {
     log_info "Trying to install MongoDB from official repositories..."
     
@@ -612,35 +753,6 @@ install_mongodb_from_repo() {
         fi
     fi
     
-    # Try AUR if yay is available (but warn about running as root)
-    if command -v yay &> /dev/null; then
-        log_warning "yay should not be run as root. Attempting AUR installation..."
-        log_info "If this fails, install MongoDB manually as a regular user: yay -S mongodb-bin"
-        
-        # Try with --noconfirm to avoid prompts, but it may still fail
-        local yay_output
-        yay_output=$(yay -S --noconfirm mongodb-bin 2>&1)
-        local yay_exit=$?
-        
-        # Check if installation succeeded by verifying the package is installed
-        if [[ $yay_exit -eq 0 ]] && (pacman -Q mongodb-bin &>/dev/null || [[ -f "/usr/bin/mongod" ]] || [[ -f "/opt/mongodb/bin/mongod" ]]); then
-            log_success "MongoDB installed from AUR"
-            # Create symlinks if needed
-            if [[ -f "/usr/bin/mongod" ]] && [[ ! -f "/opt/mongodb/bin/mongod" ]]; then
-                mkdir -p /opt/mongodb/bin
-                ln -s /usr/bin/mongod /opt/mongodb/bin/mongod 2>/dev/null || true
-                if [[ -f "/usr/bin/mongosh" ]]; then
-                    ln -s /usr/bin/mongosh /opt/mongodb/bin/mongosh 2>/dev/null || true
-                fi
-            fi
-            return 0
-        else
-            log_warning "AUR installation failed (yay may not work properly as root)."
-            log_info "Please install MongoDB manually as a regular user: yay -S mongodb-bin"
-            return 1
-        fi
-    fi
-    
     return 1
 }
 
@@ -655,10 +767,18 @@ install_mongodb() {
     fi
     
     log_info "Installing MongoDB..."
-    log_warning "Note: Direct downloads from MongoDB.org may return 403 Forbidden."
     log_info "Trying multiple installation methods..."
     
-    # Method 1: Try installing from official repositories (most reliable)
+    # Method 1: Try installing from AUR using yay (preferred method)
+    if install_mongodb_from_aur; then
+        log_success "MongoDB installed from AUR via yay"
+        # Verify installation
+        if check_mongodb_installed; then
+            return
+        fi
+    fi
+    
+    # Method 2: Try installing from official repositories (fallback)
     if install_mongodb_from_repo; then
         log_success "MongoDB installed from official repository"
         # Verify installation
@@ -666,6 +786,10 @@ install_mongodb() {
             return
         fi
     fi
+    
+    # Method 3: Try manual download (may fail due to 403)
+    log_warning "Repository/AUR installation failed, trying manual download..."
+    log_warning "Note: Direct downloads from MongoDB.org may return 403 Forbidden."
     
     # Method 2: Try manual download (may fail due to 403)
     log_info "Repository installation failed, trying manual download..."
@@ -1514,9 +1638,13 @@ configure_nginx_security() {
         cp "$NGINX_MAIN_CONF" "${NGINX_MAIN_CONF}.backup.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
         
         # Create security configuration snippet
+        # Note: Only http-level directives can be in this file
+        # if and location directives must be in server blocks
         mkdir -p /etc/nginx/conf.d 2>/dev/null || true
         cat > /etc/nginx/conf.d/security.conf <<'NGINX_SECURITY_EOF'
 # Security Configuration for CineStream
+# This file contains http-level directives only
+# Server-level directives (if, location) are added per-server in set_domain
 
 # Rate limiting zones
 limit_req_zone $binary_remote_addr zone=general_limit:10m rate=10r/s;
@@ -1541,7 +1669,7 @@ server_tokens off;
 # Timeouts to prevent slowloris attacks
 client_body_timeout 10s;
 client_header_timeout 10s;
-keepalive_timeout 5s 5s;
+# keepalive_timeout is typically already set in default nginx.conf, so we don't override it here
 send_timeout 10s;
 
 # Buffer sizes to prevent buffer overflow attacks
@@ -1549,23 +1677,6 @@ client_body_buffer_size 128k;
 client_header_buffer_size 1k;
 client_max_body_size 10m;
 large_client_header_buffers 4 4k;
-
-# Disable unnecessary methods
-if ($request_method !~ ^(GET|HEAD|POST|OPTIONS)$ ) {
-    return 405;
-}
-
-# Block common attack patterns
-location ~* \.(env|git|svn|htaccess|htpasswd|ini|log|sh|sql|conf)$ {
-    deny all;
-    return 404;
-}
-
-# Block access to hidden files
-location ~ /\. {
-    deny all;
-    return 404;
-}
 NGINX_SECURITY_EOF
         
         # Include security config in main nginx.conf if not already included
@@ -1640,6 +1751,158 @@ StandardError=null
 EOF
     
     log_success "Nginx CPU affinity configured"
+}
+
+# Configure Nginx for localhost access
+configure_nginx_localhost() {
+    log_info "Configuring Nginx for localhost access..."
+    
+    # Auto-detect application
+    local APP_NAME
+    APP_NAME=$(detect_app_name)
+    if [[ -z "$APP_NAME" ]]; then
+        log_warning "No application found, skipping localhost configuration"
+        return
+    fi
+    
+    local APP_DIR="$WWW_ROOT/$APP_NAME"
+    if [[ ! -f "$APP_DIR/.deploy_config" ]]; then
+        log_warning "Application not properly deployed, skipping localhost configuration"
+        return
+    fi
+    
+    # Load app config
+    source "$APP_DIR/.deploy_config"
+    PROCESS_COUNT=${PROCESS_COUNT:-20}
+    START_PORT=${START_PORT:-8001}
+    
+    local UPSTREAM_NAME="${APP_NAME}_backend"
+    local LOCALHOST_CONF="/etc/nginx/conf.d/localhost.conf"
+    
+    # Create upstream block
+    cat > "$LOCALHOST_CONF" <<EOF
+# Localhost access configuration for ${APP_NAME}
+# This allows accessing the application via http://localhost or http://127.0.0.1
+
+upstream ${UPSTREAM_NAME}_localhost {
+    ip_hash;  # Sticky sessions
+EOF
+    
+    # Add all backend servers
+    for ((i=0; i<PROCESS_COUNT; i++)); do
+        local port=$((START_PORT + i))
+        echo "    server 127.0.0.1:${port};" >> "$LOCALHOST_CONF"
+    done
+    
+    cat >> "$LOCALHOST_CONF" <<EOF
+}
+
+# HTTP server for localhost (no SSL needed for local access)
+server {
+    listen 80;
+    listen [::]:80;
+    server_name localhost 127.0.0.1;
+    
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    
+    # Rate limiting
+    limit_req zone=general_limit burst=20 nodelay;
+    limit_conn conn_limit 10;
+    
+    # Logging disabled
+    access_log off;
+    error_log /dev/null;
+    
+    # Disable unnecessary HTTP methods
+    if (\$request_method !~ ^(GET|HEAD|POST|OPTIONS)\$ ) {
+        return 405;
+    }
+    
+    # Block common attack patterns
+    location ~* \.(env|git|svn|htaccess|htpasswd|ini|log|sh|sql|conf)\$ {
+        deny all;
+        return 404;
+    }
+    
+    # Block access to hidden files
+    location ~ /\. {
+        deny all;
+        return 404;
+    }
+    
+    # API endpoints
+    location /api/ {
+        limit_req zone=api_limit burst=10 nodelay;
+        limit_conn conn_limit_per_ip 5;
+        
+        proxy_pass http://${UPSTREAM_NAME}_localhost;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$server_name;
+        
+        # Timeouts
+        proxy_connect_timeout 30s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 30s;
+        
+        proxy_intercept_errors off;
+    }
+    
+    # Main site
+    location / {
+        limit_req zone=general_limit burst=20 nodelay;
+        limit_conn conn_limit 10;
+        
+        proxy_pass http://${UPSTREAM_NAME}_localhost;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$server_name;
+        
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        
+        proxy_intercept_errors off;
+    }
+    
+    # Static files
+    location /static/ {
+        proxy_pass http://${UPSTREAM_NAME}_localhost;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        
+        proxy_cache_valid 200 30d;
+        add_header Cache-Control "public, immutable";
+        
+        proxy_intercept_errors off;
+    }
+}
+EOF
+    
+    log_success "Localhost configuration created: $LOCALHOST_CONF"
+    
+    # Test and reload Nginx
+    if nginx -t 2>/dev/null; then
+        systemctl reload nginx.service 2>/dev/null || true
+        log_success "Nginx reloaded - application now accessible at http://localhost"
+    else
+        log_warning "Nginx configuration test failed, but localhost config created"
+    fi
 }
 
 # Stop all services
@@ -1838,11 +2101,18 @@ uninit_server() {
     log_info "To completely reinitialize, run: $0 init-server"
 }
 
-# Deploy application automatically
+# Deploy application (with optional app name)
 deploy_application() {
-    local APP_NAME="cinestream"
+    local APP_NAME="${1:-cinestream}"  # Default to "cinestream" if not specified
     local APP_DIR="$WWW_ROOT/$APP_NAME"
     # Use global SCRIPT_DIR (defined at top of script)
+    
+    # Check if app already exists
+    if [[ -d "$APP_DIR" && -f "$APP_DIR/.deploy_config" ]]; then
+        log_warning "Application '$APP_NAME' already exists at $APP_DIR"
+        log_info "To redeploy, remove it first or use a different name"
+        return 1
+    fi
     
     log_info "Deploying application to $APP_DIR..."
     
@@ -1904,19 +2174,61 @@ SECRET_KEY=$secret_key
 CLAUDE_MODEL=haiku
 EOF
         chmod 600 "$APP_DIR/.env"
-        log_warning ".env file created with default values. Please update ANTHROPIC_API_KEY!"
+s        log_warning ".env file created with default values. Please update ANTHROPIC_API_KEY!"
+
     else
         log_info ".env file already exists, skipping creation"
     fi
+    
+    # Determine service user BEFORE creating services
+    local SERVICE_USER
+    # Use SUDO_USER if available (when running with sudo), otherwise use current user
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        SERVICE_USER="$SUDO_USER"
+    else
+        SERVICE_USER=$(whoami)
+    fi
+    
+    # Fix ownership of app directory and files so service user can access them
+    log_info "Setting ownership of application files to $SERVICE_USER..."
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR" 2>/dev/null || true
+    # Ensure .env is readable by service user (but still secure)
+    chmod 640 "$APP_DIR/.env" 2>/dev/null || true
+    chown "$SERVICE_USER:$SERVICE_USER" "$APP_DIR/.env" 2>/dev/null || true
+    
+    # Calculate available port range for this app
+    # Each app needs PROCESS_COUNT ports, starting from 8001
+    # Find the highest port in use and assign next available range
+    local START_PORT=8001
+    local PROCESS_COUNT=20
+    local highest_port=8000
+    
+    # Check all existing apps to find highest port in use
+    for existing_app_dir in "$WWW_ROOT"/*; do
+        if [[ -d "$existing_app_dir" && -f "$existing_app_dir/.deploy_config" ]]; then
+            # Source in a subshell to avoid variable conflicts
+            local existing_start=$(grep "^START_PORT=" "$existing_app_dir/.deploy_config" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "8001")
+            local existing_count=$(grep "^PROCESS_COUNT=" "$existing_app_dir/.deploy_config" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "20")
+            local existing_end=$((existing_start + existing_count - 1))
+            if [[ $existing_end -gt $highest_port ]]; then
+                highest_port=$existing_end
+            fi
+        fi
+    done
+    
+    # Assign next available port range
+    START_PORT=$((highest_port + 1))
+    log_info "Assigned port range: $START_PORT-$((START_PORT + PROCESS_COUNT - 1)) for $APP_NAME"
     
     # Create deployment configuration
     log_info "Creating deployment configuration..."
     cat > "$APP_DIR/.deploy_config" <<EOF
 APP_NAME=$APP_NAME
-START_PORT=8001
-PROCESS_COUNT=20
+START_PORT=$START_PORT
+PROCESS_COUNT=$PROCESS_COUNT
 DOMAIN_NAME=""
 EOF
+    chown "$SERVICE_USER:$SERVICE_USER" "$APP_DIR/.deploy_config" 2>/dev/null || true
     
     # Initialize database (if .env is configured)
     log_info "Initializing database..."
@@ -1939,13 +2251,6 @@ EOF
     # Create systemd service template
     log_info "Creating systemd services..."
     log_info "All Python processes will use venv: $APP_DIR/venv/bin/python"
-    local SERVICE_USER
-    # Use SUDO_USER if available (when running with sudo), otherwise use current user
-    if [[ -n "${SUDO_USER:-}" ]]; then
-        SERVICE_USER="$SUDO_USER"
-    else
-        SERVICE_USER=$(whoami)
-    fi
     
     cat > "$SYSTEMD_DIR/${APP_NAME}@.service" <<EOF
 [Unit]
@@ -2018,12 +2323,31 @@ EOF
     systemctl enable "${APP_NAME}-refresh.timer" 2>/dev/null || true
     systemctl start "${APP_NAME}-refresh.timer" 2>/dev/null || true
     
-    # Enable and start all 20 processes
-    log_info "Starting application processes..."
-    for port in {8001..8020}; do
-        systemctl enable "${APP_NAME}@${port}.service" 2>/dev/null || true
-        systemctl start "${APP_NAME}@${port}.service" 2>/dev/null || true
+    # Load port configuration from .deploy_config
+    source "$APP_DIR/.deploy_config"
+    PROCESS_COUNT=${PROCESS_COUNT:-20}
+    START_PORT=${START_PORT:-8001}
+    local END_PORT=$((START_PORT + PROCESS_COUNT - 1))
+    
+    # Stop any existing processes first to avoid duplicates
+    log_info "Stopping any existing processes for $APP_NAME..."
+    for ((port=START_PORT; port<=END_PORT; port++)); do
+        systemctl stop "${APP_NAME}@${port}.service" 2>/dev/null || true
     done
+    
+    # Enable and start all processes
+    log_info "Starting $PROCESS_COUNT application processes (ports $START_PORT-$END_PORT)..."
+    for ((port=START_PORT; port<=END_PORT; port++)); do
+        systemctl enable "${APP_NAME}@${port}.service" 2>/dev/null || true
+        # Only start if not already active
+        if ! systemctl is-active --quiet "${APP_NAME}@${port}.service" 2>/dev/null; then
+            systemctl start "${APP_NAME}@${port}.service" 2>/dev/null || true
+        fi
+    done
+    
+    # Configure localhost access via Nginx
+    log_info "Configuring localhost access..."
+    configure_nginx_localhost
     
     # Configure comprehensive firewall and security
     log_info "Configuring firewall and security..."
@@ -2033,9 +2357,15 @@ EOF
     # Wait a moment for processes to start
     sleep 2
     
+    # Load port configuration
+    source "$APP_DIR/.deploy_config"
+    PROCESS_COUNT=${PROCESS_COUNT:-20}
+    START_PORT=${START_PORT:-8001}
+    local END_PORT=$((START_PORT + PROCESS_COUNT - 1))
+    
     # Check if processes are running
     local running=0
-    for port in {8001..8020}; do
+    for ((port=START_PORT; port<=END_PORT; port++)); do
         if systemctl is-active --quiet "${APP_NAME}@${port}.service" 2>/dev/null; then
             ((running++))
         fi
@@ -2223,23 +2553,40 @@ install_ssl() {
 # Set domain for an application
 set_domain() {
     local DOMAIN="${1:-}"
+    local APP_NAME="${2:-}"  # Optional app name
     
     if [[ -z "$DOMAIN" ]]; then
-        log_error "Usage: $0 set-domain <domain>"
+        log_error "Usage: $0 set-domain <domain> [app-name]"
         log_error "Example: $0 set-domain movies.example.com"
+        log_error "Example: $0 set-domain movies.example.com cinestream"
+        log_error ""
+        log_error "If app-name is not specified, the first app found will be used."
         exit 1
     fi
     
-    # Auto-detect app name
-    local APP_NAME
-    APP_NAME=$(detect_app_name)
+    # Auto-detect app name if not provided
     if [[ -z "$APP_NAME" ]]; then
-        log_error "No application found in $WWW_ROOT"
-        log_error "Please deploy an application first"
-        exit 1
+        APP_NAME=$(detect_app_name)
+        if [[ -z "$APP_NAME" ]]; then
+            log_error "No application found in $WWW_ROOT"
+            log_error "Please deploy an application first"
+            exit 1
+        fi
+        log_info "Auto-detected application: $APP_NAME"
+    else
+        # Verify app exists
+        if [[ ! -d "$WWW_ROOT/$APP_NAME" ]] || [[ ! -f "$WWW_ROOT/$APP_NAME/.deploy_config" ]]; then
+            log_error "Application '$APP_NAME' not found in $WWW_ROOT"
+            log_error "Available apps:"
+            for app_dir in "$WWW_ROOT"/*; do
+                if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
+                    log_error "  - $(basename "$app_dir")"
+                fi
+            done
+            exit 1
+        fi
+        log_info "Using specified application: $APP_NAME"
     fi
-    
-    log_info "Detected application: $APP_NAME"
     
     local APP_DIR="$WWW_ROOT/$APP_NAME"
     
@@ -2350,21 +2697,26 @@ server {
     limit_req zone=general_limit burst=20 nodelay;
     limit_conn conn_limit 10;
     
-    # Security headers
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https:; frame-ancestors 'self';" always;
-    
-    # Rate limiting
-    limit_req zone=general_limit burst=20 nodelay;
-    limit_conn conn_limit 10;
-    
     # Logging disabled
     access_log off;
-    error_log off;
+    error_log /dev/null;
+    
+    # Disable unnecessary HTTP methods
+    if (\$request_method !~ ^(GET|HEAD|POST|OPTIONS)\$ ) {
+        return 405;
+    }
+    
+    # Block common attack patterns
+    location ~* \.(env|git|svn|htaccess|htpasswd|ini|log|sh|sql|conf)\$ {
+        deny all;
+        return 404;
+    }
+    
+    # Block access to hidden files
+    location ~ /\. {
+        deny all;
+        return 404;
+    }
     
     # Rate limiting for API endpoints
     location /api/ {
@@ -2488,8 +2840,19 @@ main() {
         optimize-system)
             optimize_system
             ;;
+        deploy-app)
+            if [[ -z "$2" ]]; then
+                log_error "Usage: $0 deploy-app <app-name>"
+                log_error "Example: $0 deploy-app myapp"
+                log_error ""
+                log_error "This will deploy a new application with the specified name."
+                log_error "The app will be deployed to /var/www/<app-name>/"
+                exit 1
+            fi
+            deploy_application "$2"
+            ;;
         set-domain)
-            set_domain "${2:-}"
+            set_domain "${2:-}" "${3:-}"
             ;;
         install-ssl)
             install_ssl "${2:-}"
@@ -2509,8 +2872,11 @@ main() {
             echo "  status                         Show status of all services"
             echo "  optimize-system                Optimize system for web server + MongoDB"
             echo "                                (swap, swappiness, noatime, kernel params)"
-            echo "  set-domain <domain>            Configure domain for the application"
+            echo "  deploy-app <app-name>          Deploy an additional application"
+            echo "                                Example: $0 deploy-app myapp"
+            echo "  set-domain <domain> [app]     Configure domain for an application"
             echo "                                Example: $0 set-domain movies.example.com"
+            echo "                                Example: $0 set-domain movies.example.com cinestream"
             echo "  install-ssl <domain>          Install SSL certificate for a domain"
             echo "                                Example: $0 install-ssl movies.example.com"
             exit 1
@@ -2600,28 +2966,101 @@ show_status() {
     echo "--- Application Services ---"
     for app_dir in "$WWW_ROOT"/*; do
         if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
-            source "$app_dir/.deploy_config"
-            # Default to 20 processes if not specified
-            PROCESS_COUNT=${PROCESS_COUNT:-20}
-            START_PORT=${START_PORT:-8001}
-            APP_NAME=$(basename "$app_dir")
+            # Reset variables to avoid conflicts from previous iterations
+            local APP_NAME=""
+            local PROCESS_COUNT=20
+            local START_PORT=8001
+            local DOMAIN_NAME=""
             
-            echo "[$APP_NAME] Domain: $DOMAIN_NAME"
+            # Source config in a way that doesn't pollute the environment
+            APP_NAME=$(basename "$app_dir")
+            if [[ -f "$app_dir/.deploy_config" ]]; then
+                # Read config values safely
+                PROCESS_COUNT=$(grep "^PROCESS_COUNT=" "$app_dir/.deploy_config" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "20")
+                START_PORT=$(grep "^START_PORT=" "$app_dir/.deploy_config" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "8001")
+                DOMAIN_NAME=$(grep "^DOMAIN_NAME=" "$app_dir/.deploy_config" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
+            fi
+            
+            # Convert to integers
+            PROCESS_COUNT=$((PROCESS_COUNT))
+            START_PORT=$((START_PORT))
+            local END_PORT=$((START_PORT + PROCESS_COUNT - 1))
+            
+            echo "[$APP_NAME]"
+            if [[ -n "$DOMAIN_NAME" ]]; then
+                echo "  Domain: $DOMAIN_NAME"
+            else
+                echo "  Domain: (not configured)"
+            fi
             
             local running=0
+            local failed=0
+            local inactive=0
             local total=$PROCESS_COUNT
+            
+            # Check each service more thoroughly
             for ((i=0; i<PROCESS_COUNT; i++)); do
                 local port=$((START_PORT + i))
-                if systemctl is-active --quiet "${APP_NAME}@${port}.service" 2>/dev/null; then
-                    ((running++))
-                fi
+                local service_name="${APP_NAME}@${port}.service"
+                
+                # Check service state
+                local state=$(systemctl show "$service_name" -p ActiveState --value 2>/dev/null || echo "not-found")
+                
+                case "$state" in
+                    active|activating)
+                        ((running++))
+                        ;;
+                    failed)
+                        ((failed++))
+                        ;;
+                    inactive|dead)
+                        ((inactive++))
+                        ;;
+                esac
             done
             
-            echo "  Processes: $running/$total running (ports $START_PORT-$((START_PORT + PROCESS_COUNT - 1)))"
+            echo "  Processes: $running/$total running (ports $START_PORT-$END_PORT)"
+            if [[ $failed -gt 0 ]]; then
+                echo "  Failed: $failed processes (check logs: sudo journalctl -u ${APP_NAME}@${START_PORT}.service)"
+            fi
+            if [[ $inactive -gt 0 ]] && [[ $inactive -lt $total ]]; then
+                echo "  Inactive: $inactive processes"
+            fi
+            
+            # Also check if processes are actually listening on ports (more reliable)
+            local listening=0
+            if command -v ss &>/dev/null; then
+                for ((port=START_PORT; port<=END_PORT; port++)); do
+                    if ss -tln 2>/dev/null | grep -q ":$port "; then
+                        ((listening++))
+                    fi
+                done
+            elif command -v netstat &>/dev/null; then
+                for ((port=START_PORT; port<=END_PORT; port++)); do
+                    if netstat -tln 2>/dev/null | grep -q ":$port "; then
+                        ((listening++))
+                    fi
+                done
+            fi
+            
+            if [[ $listening -gt 0 ]]; then
+                if [[ $listening -ne $running ]]; then
+                    echo "  Listening: $listening/$total ports (processes may be running but systemd status differs)"
+                else
+                    echo "  Listening: $listening/$total ports ✓"
+                fi
+            else
+                echo "  Listening: 0/$total ports (no processes listening)"
+            fi
+            
             echo -n "  Auto-start: "
             systemctl is-enabled "${APP_NAME}@${START_PORT}.service" 2>/dev/null || echo "no"
             echo -n "  Daily refresh: "
             systemctl is-active "${APP_NAME}-refresh.timer" 2>/dev/null || echo "inactive"
+            
+            # Show service user if available
+            local service_user=$(systemctl show "${APP_NAME}@${START_PORT}.service" -p User --value 2>/dev/null || echo "unknown")
+            echo "  Service user: $service_user"
             echo ""
         fi
     done

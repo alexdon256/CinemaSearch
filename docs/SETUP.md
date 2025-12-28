@@ -29,8 +29,11 @@ sudo ./deploy.sh init-server
 
 **What this does:**
 - Updates system packages
-- Installs Python 3, Nginx, Git, Node.js, and other required packages
-- Downloads and installs MongoDB 7.0.0
+- Installs Python 3, Nginx, Git, Node.js, Go, and other required packages
+- **Installs yay (AUR helper)** - automatically if not present
+- **Installs MongoDB via yay** - uses `mongodb-bin` package from AUR (preferred method)
+  - Falls back to official repositories if AUR fails
+  - Falls back to manual download if both fail
 - Installs Claude CLI tools
 - Creates directory structure (`/var/www`)
 - Configures CPU affinity management
@@ -39,10 +42,11 @@ sudo ./deploy.sh init-server
   - Creates Python virtual environment
   - Installs all Python dependencies
   - Creates `.env` file template (with auto-generated SECRET_KEY)
-  - Creates `.deploy_config` file
+  - Creates `.deploy_config` file with automatic port assignment
   - Initializes database (if API key is configured)
-  - Creates systemd services for 20 worker processes
+  - Creates systemd services for 20 worker processes (ports 8001-8020)
   - Starts all application processes
+  - Configures localhost access via Nginx
   - Configures firewall (ports 80 and 443)
 - Starts MongoDB and Nginx services
 - Sets up auto-start configuration
@@ -63,7 +67,14 @@ sudo systemctl status nginx.service
 sudo ./deploy.sh status
 
 # Test MongoDB connection
-/opt/mongodb/bin/mongosh --eval "db.version()"
+# Try mongosh first (from AUR package), fallback to mongod --eval
+if command -v mongosh &>/dev/null; then
+    mongosh --eval "db.version()"
+elif [[ -f /opt/mongodb/bin/mongosh ]]; then
+    /opt/mongodb/bin/mongosh --eval "db.version()"
+elif command -v mongod &>/dev/null; then
+    mongod --version
+fi
 ```
 
 ---
@@ -151,7 +162,7 @@ curl -I http://YOUR_SERVER_IP
 
 ---
 
-### Step 4: Configure DNS
+### Step 5: Configure DNS
 
 Point your domain to your server's IP address.
 
@@ -180,7 +191,7 @@ Point your domain to your server's IP address.
 
 ---
 
-### Step 5: Install SSL Certificate
+### Step 6: Install SSL Certificate
 
 Once DNS is propagated, install the SSL certificate.
 
@@ -212,7 +223,7 @@ curl -I https://movies.example.com
 
 ---
 
-### Step 6: Enable Auto-Start
+### Step 7: Enable Auto-Start
 
 Ensure all services start automatically on boot.
 
@@ -283,7 +294,7 @@ cat /sys/kernel/mm/transparent_hugepage/enabled
 
 ---
 
-### Step 7: Verify Everything Works
+### Step 8: Verify Everything Works
 
 Test the complete setup.
 

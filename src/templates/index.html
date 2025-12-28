@@ -1487,6 +1487,34 @@
         let pollingInterval = null;
         let autocompleteTimeout = null;
         
+        // Auto-fill city and country if detected from IP
+        {% if detected_city and detected_country %}
+        (function() {
+            // Set city
+            cityInput.value = '{{ detected_city }}';
+            {% if detected_region %}
+            cityInput.dataset.state = '{{ detected_region }}';
+            {% endif %}
+            
+            // Set country
+            const countryName = '{{ detected_country }}';
+            countryInput.value = countryName;
+            
+            // Find and select the country in the dropdown
+            const countryOption = Array.from(countrySelect.options).find(opt => opt.textContent.trim() === countryName);
+            if (countryOption) {
+                countrySelect.value = countryOption.value;
+            }
+            
+            // Trigger search automatically if both city and country are detected
+            setTimeout(() => {
+                if (cityInput.value && countrySelect.value) {
+                    searchBtn.click();
+                }
+            }, 500);
+        })();
+        {% endif %}
+        
         // Comprehensive country list (ISO 3166-1)
         const countries = [
             "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Argentina", "Armenia", 

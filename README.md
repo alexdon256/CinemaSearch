@@ -45,10 +45,12 @@ sudo ./deploy.sh init-server
 
 This installs:
 - System package updates
-- Python 3, Nginx, Git, Node.js
-- MongoDB (manually installed)
+- Python 3, Nginx, Git, Node.js, Go
+- yay (AUR helper) - automatically installed if not present
+- MongoDB (via yay/AUR - mongodb-bin package)
 - Claude CLI tools
 - CPU affinity management
+- Automatically deploys the first application (cinestream)
 
 ### Cleanup and Redeployment
 
@@ -78,22 +80,49 @@ sudo ./deploy.sh stop-all
 sudo ./deploy.sh uninit-server
 ```
 
-### 3. Domain Configuration
+### 3. Deploy Additional Applications (Optional)
+
+You can deploy multiple applications/websites on the same server:
+
+```bash
+# Deploy a new application with a custom name
+sudo ./deploy.sh deploy-app myapp
+
+# Each app gets its own:
+# - Directory: /var/www/<app-name>/
+# - Port range (automatically assigned)
+# - Nginx configuration
+# - Domain configuration
+```
+
+**Port Assignment:**
+- First app (`cinestream`): ports 8001-8020
+- Second app (`myapp`): ports 8021-8040
+- Third app: ports 8041-8060
+- And so on...
+
+### 4. Domain Configuration
 
 After deploying your application, configure a domain name:
 
 ```bash
-# Set domain (app name is auto-detected)
+# Set domain (app name is auto-detected if only one app exists)
 sudo ./deploy.sh set-domain <domain>
 
-# Example: Configure movies.example.com
+# Or specify the app name explicitly
+sudo ./deploy.sh set-domain <domain> <app-name>
+
+# Example: Configure movies.example.com for cinestream app
 sudo ./deploy.sh set-domain movies.example.com
+
+# Example: Configure blog.example.com for myapp
+sudo ./deploy.sh set-domain blog.example.com myapp
 ```
 
 This command will:
-- Auto-detect your application
+- Auto-detect your application (or use specified app name)
 - Update the application's `.deploy_config` with the domain
-- Generate Nginx configuration with upstream backend (10 processes)
+- Generate Nginx configuration with upstream backend (20 processes)
 - Configure HTTP (port 80) with HTTPS redirect
 - Configure HTTPS (port 443) with SSL placeholders
 - Test and reload Nginx
@@ -102,6 +131,8 @@ This command will:
 1. Point DNS A record to your server's IP address
 2. Wait for DNS propagation (1-48 hours)
 3. Install SSL certificate: `sudo ./deploy.sh install-ssl <domain>`
+
+**Note:** The first app (`cinestream`) is also accessible via `http://localhost` for local testing.
 
 ## Project Structure
 
@@ -121,8 +152,11 @@ This command will:
 │       └── index.html       # Frontend template
 ├── docs/
 │   ├── SETUP.md             # Server setup guide
+│   ├── MULTIPLE_APPS.md     # Guide for deploying multiple applications
 │   ├── SITES.md             # Service management guide
 │   ├── ARCHITECTURE.md      # System architecture documentation
+│   ├── DOMAINS.md           # Domain configuration and SSL setup
+│   ├── SECURITY.md          # Security configuration
 │   └── CPU_AFFINITY.md      # CPU affinity configuration
 └── README.md                # This file
 ```
@@ -174,7 +208,7 @@ Example:
 sudo ./deploy.sh set-domain movies.example.com
 ```
 
-This configures Nginx to route the domain to your application's 10 worker processes (app name is auto-detected).
+This configures Nginx to route the domain to your application's 20 worker processes (app name is auto-detected or can be specified).
 
 ### Install SSL Certificate
 

@@ -136,10 +136,65 @@ def get_visitor_count():
         return 0
 
 def detect_city_from_ip():
-    """Detect user's city from IP address (simplified - in production use GeoIP)"""
-    # This is a placeholder - in production, use a GeoIP service
-    # For now, return None to trigger on-demand scraping
-    return None
+    """Detect user's city and country from IP address using free GeoIP service"""
+    try:
+        # Get real client IP from request headers (works with Nginx proxy)
+        # X-Forwarded-For contains the original client IP when behind a proxy
+        client_ip = request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
+        if not client_ip:
+            client_ip = request.headers.get('X-Real-IP', '').strip()
+        if not client_ip:
+            client_ip = request.remote_addr
+        
+        # Skip geolocation for localhost/private IPs
+        if client_ip in ('127.0.0.1', 'localhost', '::1') or client_ip.startswith(('192.168.', '10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.20.', '172.21.', '172.22.', '172.23.', '172.24.', '172.25.', '172.26.', '172.27.', '172.28.', '172.29.', '172.30.', '172.31.')):
+            return None
+        
+        # Use free ip-api.com service (no API key required, 45 requests/minute limit)
+        # Alternative: ipapi.co (requires API key for city-level data)
+        import urllib.request
+        import json
+        import time
+        
+        # Rate limiting: cache results for 1 hour per IP
+        cache_key = f"geoip_{client_ip}"
+        cached = session.get(cache_key)
+        if cached:
+            return cached
+        
+        # Request geolocation (free tier: 45 req/min, no API key needed)
+        url = f"http://ip-api.com/json/{client_ip}?fields=status,country,regionName,city,lat,lon"
+        
+        try:
+            with urllib.request.urlopen(url, timeout=3) as response:
+                data = json.loads(response.read().decode())
+                
+                if data.get('status') == 'success':
+                    city = data.get('city', '')
+                    country = data.get('country', '')
+                    region = data.get('regionName', '')
+                    
+                    if city and country:
+                        result = {
+                            'city': city,
+                            'country': country,
+                            'region': region,
+                            'lat': data.get('lat'),
+                            'lon': data.get('lon')
+                        }
+                        # Cache in session for 1 hour
+                        session[cache_key] = result
+                        return result
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
+            # Silently fail - geolocation is optional
+            print(f"Geolocation error for IP {client_ip}: {e}")
+            pass
+        
+        return None
+    except Exception as e:
+        # Silently fail - geolocation is optional
+        print(f"Geolocation error: {e}")
+        return None
 
 @app.before_request
 def before_request():
@@ -164,8 +219,11 @@ def index():
             lang = 'en'
         t = TRANSLATIONS[lang]
         
-        # Detect city
-        city = detect_city_from_ip()
+        # Detect city and country from IP
+        geo_data = detect_city_from_ip()
+        detected_city = geo_data.get('city') if geo_data else None
+        detected_country = geo_data.get('country') if geo_data else None
+        detected_region = geo_data.get('region') if geo_data else None
         
         # Get locations
         try:
@@ -179,7 +237,10 @@ def index():
                              lang=lang,
                              locations=locations,
                              visitor_count=get_visitor_count(),
-                             donation_url=DONATION_URL)
+                             donation_url=DONATION_URL,
+                             detected_city=detected_city,
+                             detected_country=detected_country,
+                             detected_region=detected_region)
     except Exception as e:
         print(f"Error in index route: {e}")
         import traceback

@@ -202,34 +202,58 @@ Process Shutdown:
 
 ## Multi-Site Multi-Tenancy
 
+### Deployment
+
+Multiple applications can be deployed on the same server:
+
+```bash
+# Deploy first app (automatic during init-server)
+sudo ./deploy.sh init-server  # Creates cinestream app
+
+# Deploy additional apps
+sudo ./deploy.sh deploy-app blogapp
+sudo ./deploy.sh deploy-app shopapp
+```
+
 ### Isolation Strategy
 
 Each application is completely isolated:
 
 ```
 /var/www/
-├── movie_app/
+├── cinestream/           (First app - ports 8001-8020)
 │   ├── .env              (Isolated secrets)
+│   ├── .deploy_config    (Port range, domain, etc.)
 │   ├── venv/             (Isolated Python environment)
 │   ├── src/              (Isolated source code)
 │   └── static/           (Isolated static files)
 │
-├── blog_app/
+├── blogapp/              (Second app - ports 8021-8040)
 │   ├── .env
+│   ├── .deploy_config
 │   ├── venv/
 │   └── src/
 │
-└── shop_app/
+└── shopapp/              (Third app - ports 8041-8060)
     ├── .env
+    ├── .deploy_config
     ├── venv/
     └── src/
 ```
 
+### Automatic Port Assignment
+
+- **First app**: Ports 8001-8020 (20 processes)
+- **Second app**: Ports 8021-8040 (20 processes)
+- **Third app**: Ports 8041-8060 (20 processes)
+- Ports are automatically assigned to avoid conflicts
+
 ### Nginx Routing
 
-Nginx routes traffic based on `server_name`:
+Nginx routes traffic based on `server_name`. Each app gets its own config file:
 
 ```nginx
+# /etc/nginx/conf.d/cinestream.conf
 server {
     server_name movies.example.com;
     # Routes to movie_app backend
