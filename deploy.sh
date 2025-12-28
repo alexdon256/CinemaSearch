@@ -365,10 +365,33 @@ init_server() {
     # Configure Nginx CPU affinity (P-cores)
     configure_nginx_affinity
     
-    # Start and enable Nginx
+    # Test Nginx configuration before starting
+    log_info "Testing Nginx configuration..."
+    if nginx -t 2>&1; then
+        log_success "Nginx configuration is valid"
+    else
+        log_error "Nginx configuration test failed!"
+        log_error "Please check the configuration: nginx -t"
+        log_error "You may need to fix the configuration manually or deploy an application first"
+        # Don't exit - continue with other setup, user can fix Nginx later
+    fi
+    
+    # Start and enable Nginx (only if config is valid)
     systemctl daemon-reload
     systemctl enable nginx.service
-    systemctl start nginx.service
+    
+    if nginx -t &>/dev/null; then
+        if systemctl start nginx.service 2>&1; then
+            log_success "Nginx started successfully"
+        else
+            log_warning "Nginx failed to start. This may be normal if no application is deployed yet."
+            log_info "Nginx will start automatically once an application is deployed and configured."
+            log_info "To check status: systemctl status nginx.service"
+        fi
+    else
+        log_warning "Skipping Nginx start due to configuration errors"
+        log_info "Nginx will be started automatically when you deploy an application"
+    fi
     
     # Deploy application automatically
     log_info "Deploying CineStream application..."
@@ -529,41 +552,182 @@ EOF
     log_success "Master startup target created and enabled"
 }
 
+# Check if MongoDB is already installed
+check_mongodb_installed() {
+    local MONGO_DIR="/opt/mongodb"
+    
+    # Check multiple possible locations
+    if [[ -f "$MONGO_DIR/bin/mongod" ]]; then
+        log_info "MongoDB found at $MONGO_DIR/bin/mongod"
+        return 0
+    fi
+    
+    if [[ -f "/usr/bin/mongod" ]]; then
+        log_info "MongoDB found at /usr/bin/mongod (repository installation)"
+        # Create compatibility symlinks
+        mkdir -p "$MONGO_DIR/bin" 2>/dev/null || true
+        if [[ ! -f "$MONGO_DIR/bin/mongod" ]]; then
+            ln -s /usr/bin/mongod "$MONGO_DIR/bin/mongod" 2>/dev/null || true
+        fi
+        if [[ ! -f "$MONGO_DIR/bin/mongosh" ]] && [[ -f "/usr/bin/mongosh" ]]; then
+            ln -s /usr/bin/mongosh "$MONGO_DIR/bin/mongosh" 2>/dev/null || true
+        fi
+        return 0
+    fi
+    
+    # Check if mongodb-bin from AUR is installed
+    if pacman -Q mongodb-bin &>/dev/null; then
+        log_info "MongoDB found (mongodb-bin package from AUR)"
+        # AUR package typically installs to /opt/mongodb or /usr/bin
+        if [[ -f "/opt/mongodb/bin/mongod" ]]; then
+            return 0
+        elif [[ -f "/usr/bin/mongod" ]]; then
+            mkdir -p "$MONGO_DIR/bin" 2>/dev/null || true
+            ln -s /usr/bin/mongod "$MONGO_DIR/bin/mongod" 2>/dev/null || true
+            if [[ -f "/usr/bin/mongosh" ]]; then
+                ln -s /usr/bin/mongosh "$MONGO_DIR/bin/mongosh" 2>/dev/null || true
+            fi
+            return 0
+        fi
+    fi
+    
+    return 1
+}
+
+# Install MongoDB from official repository (preferred method)
+install_mongodb_from_repo() {
+    log_info "Trying to install MongoDB from official repositories..."
+    
+    # Check if mongodb package is available in official repos
+    if pacman -Si mongodb &>/dev/null; then
+        log_info "MongoDB package found in official repositories, installing..."
+        if pacman -S --noconfirm mongodb 2>/dev/null; then
+            # MongoDB from official repos installs to /usr/bin, create symlink for compatibility
+            if [[ -f "/usr/bin/mongod" ]] && [[ ! -d "/opt/mongodb/bin" ]]; then
+                mkdir -p /opt/mongodb/bin
+                ln -s /usr/bin/mongod /opt/mongodb/bin/mongod 2>/dev/null || true
+                ln -s /usr/bin/mongosh /opt/mongodb/bin/mongosh 2>/dev/null || true
+            fi
+            return 0
+        fi
+    fi
+    
+    # Try AUR if yay is available (but warn about running as root)
+    if command -v yay &> /dev/null; then
+        log_warning "yay should not be run as root. Attempting AUR installation..."
+        log_info "If this fails, install MongoDB manually as a regular user: yay -S mongodb-bin"
+        
+        # Try with --noconfirm to avoid prompts, but it may still fail
+        local yay_output
+        yay_output=$(yay -S --noconfirm mongodb-bin 2>&1)
+        local yay_exit=$?
+        
+        # Check if installation succeeded by verifying the package is installed
+        if [[ $yay_exit -eq 0 ]] && (pacman -Q mongodb-bin &>/dev/null || [[ -f "/usr/bin/mongod" ]] || [[ -f "/opt/mongodb/bin/mongod" ]]); then
+            log_success "MongoDB installed from AUR"
+            # Create symlinks if needed
+            if [[ -f "/usr/bin/mongod" ]] && [[ ! -f "/opt/mongodb/bin/mongod" ]]; then
+                mkdir -p /opt/mongodb/bin
+                ln -s /usr/bin/mongod /opt/mongodb/bin/mongod 2>/dev/null || true
+                if [[ -f "/usr/bin/mongosh" ]]; then
+                    ln -s /usr/bin/mongosh /opt/mongodb/bin/mongosh 2>/dev/null || true
+                fi
+            fi
+            return 0
+        else
+            log_warning "AUR installation failed (yay may not work properly as root)."
+            log_info "Please install MongoDB manually as a regular user: yay -S mongodb-bin"
+            return 1
+        fi
+    fi
+    
+    return 1
+}
+
 # Install MongoDB manually
 install_mongodb() {
-    local MONGO_VERSION="7.0.15"
     local MONGO_DIR="/opt/mongodb"
-    local MONGO_TARBALL="mongodb-linux-x86_64-${MONGO_VERSION}.tgz"
     
-    if [[ -d "$MONGO_DIR/bin" ]]; then
-        log_info "MongoDB already installed at $MONGO_DIR"
+    # First, check if MongoDB is already installed
+    if check_mongodb_installed; then
+        log_success "MongoDB is already installed"
         return
     fi
     
-    log_info "Downloading MongoDB ${MONGO_VERSION}..."
+    log_info "Installing MongoDB..."
+    log_warning "Note: Direct downloads from MongoDB.org may return 403 Forbidden."
+    log_info "Trying multiple installation methods..."
+    
+    # Method 1: Try installing from official repositories (most reliable)
+    if install_mongodb_from_repo; then
+        log_success "MongoDB installed from official repository"
+        # Verify installation
+        if check_mongodb_installed; then
+            return
+        fi
+    fi
+    
+    # Method 2: Try manual download (may fail due to 403)
+    log_info "Repository installation failed, trying manual download..."
+    local MONGO_VERSION="7.0.16"
+    local MONGO_TARBALL="mongodb-linux-x86_64-${MONGO_VERSION}.tgz"
     cd /tmp
     
     # Try multiple download methods and URLs
     local download_success=false
     
     # Method 1: Try official MongoDB download (community edition)
-    # Note: MongoDB may require authentication for some versions, so we try multiple URLs
-    local MONGO_URLS=(
-        "https://fastdl.mongodb.org/linux/${MONGO_TARBALL}"
-        "https://downloads.mongodb.org/linux/${MONGO_TARBALL}"
-    )
+    # Try multiple version numbers in case specific version doesn't exist
+    local MONGO_VERSIONS=("7.0.16" "7.0.15" "7.0.14" "7.0.13" "7.0.12" "7.0.11" "7.0.10")
+    local MONGO_URLS=()
     
-    # Also try latest 7.0.x version if specific version fails
+    for ver in "${MONGO_VERSIONS[@]}"; do
+        MONGO_URLS+=("https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-${ver}.tgz")
+    done
+    
+    # Also try latest version URLs if specific versions fail
     local MONGO_LATEST_URLS=(
+        "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-7.0.tgz"
         "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-7.0.tgz"
-        "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-latest.tgz"
     )
     
     for MONGO_URL in "${MONGO_URLS[@]}"; do
         log_info "Trying download from: $MONGO_URL"
-        if wget --timeout=30 --tries=3 "$MONGO_URL" -O "$MONGO_TARBALL" 2>/dev/null; then
-            download_success=true
-            break
+        rm -f "$MONGO_TARBALL" 2>/dev/null || true
+        
+        # Use wget with better error checking
+        if wget --timeout=30 --tries=2 --spider "$MONGO_URL" 2>&1 | grep -q "200 OK"; then
+            log_info "URL exists, downloading..."
+            if wget --timeout=60 --tries=3 --progress=bar:force "$MONGO_URL" -O "$MONGO_TARBALL" 2>&1; then
+                # Verify the file was actually downloaded and is not empty
+                if [[ -f "$MONGO_TARBALL" ]] && [[ -s "$MONGO_TARBALL" ]]; then
+                    local file_size=$(stat -f%z "$MONGO_TARBALL" 2>/dev/null || stat -c%s "$MONGO_TARBALL" 2>/dev/null || echo "0")
+                    # MongoDB tarballs are typically > 100MB
+                    if [[ $file_size -gt 104857600 ]]; then
+                        # Check if it's actually a gzip file
+                        if file "$MONGO_TARBALL" 2>/dev/null | grep -qE "gzip|compressed|archive"; then
+                            download_success=true
+                            MONGO_VERSION=$(echo "$MONGO_URL" | sed 's/.*mongodb-linux-x86_64-\([0-9.]*\)\.tgz/\1/')
+                            log_success "Successfully downloaded MongoDB ${MONGO_VERSION} tarball ($(du -h "$MONGO_TARBALL" | cut -f1))"
+                            break
+                        else
+                            log_warning "Downloaded file doesn't appear to be a valid tarball (type: $(file "$MONGO_TARBALL" 2>/dev/null || echo 'unknown')), trying next URL..."
+                            rm -f "$MONGO_TARBALL"
+                        fi
+                    else
+                        log_warning "Downloaded file is too small (${file_size} bytes), likely an error page, trying next URL..."
+                        rm -f "$MONGO_TARBALL"
+                    fi
+                else
+                    log_warning "Downloaded file is empty or missing, trying next URL..."
+                    rm -f "$MONGO_TARBALL"
+                fi
+            else
+                log_warning "Download failed from $MONGO_URL"
+                rm -f "$MONGO_TARBALL"
+            fi
+        else
+            log_warning "URL not accessible: $MONGO_URL"
         fi
     done
     
@@ -571,9 +735,26 @@ install_mongodb() {
     if [[ "$download_success" == "false" ]]; then
         log_info "Trying with curl..."
         for MONGO_URL in "${MONGO_URLS[@]}"; do
-            if curl -L --connect-timeout 30 --max-time 300 "$MONGO_URL" -o "$MONGO_TARBALL" 2>/dev/null; then
-                download_success=true
-                break
+            log_info "Trying curl download from: $MONGO_URL"
+            if curl -L --connect-timeout 30 --max-time 300 --progress-bar "$MONGO_URL" -o "$MONGO_TARBALL" 2>&1 | tee /tmp/mongodb_download.log; then
+                # Verify the file was actually downloaded and is not empty
+                if [[ -f "$MONGO_TARBALL" ]] && [[ -s "$MONGO_TARBALL" ]]; then
+                    # Check if it's actually a gzip file
+                    if file "$MONGO_TARBALL" | grep -q "gzip\|compressed"; then
+                        download_success=true
+                        log_success "Successfully downloaded MongoDB tarball with curl ($(du -h "$MONGO_TARBALL" | cut -f1))"
+                        break
+                    else
+                        log_warning "Downloaded file doesn't appear to be a valid tarball, trying next URL..."
+                        rm -f "$MONGO_TARBALL"
+                    fi
+                else
+                    log_warning "Downloaded file is empty or missing, trying next URL..."
+                    rm -f "$MONGO_TARBALL"
+                fi
+            else
+                log_warning "Curl download failed from $MONGO_URL"
+                rm -f "$MONGO_TARBALL"
             fi
         done
     fi
@@ -583,60 +764,106 @@ install_mongodb() {
         log_info "Trying latest MongoDB version..."
         for MONGO_URL in "${MONGO_LATEST_URLS[@]}"; do
             log_info "Trying: $MONGO_URL"
-            if wget --timeout=30 --tries=3 "$MONGO_URL" -O "$MONGO_TARBALL" 2>/dev/null || \
-               curl -L --connect-timeout 30 --max-time 300 "$MONGO_URL" -o "$MONGO_TARBALL" 2>/dev/null; then
-                download_success=true
-                # Extract to get actual version
-                tar -xzf "$MONGO_TARBALL" 2>/dev/null || true
-                local actual_dir=$(ls -d mongodb-linux-x86_64-* 2>/dev/null | head -1)
-                if [[ -n "$actual_dir" ]]; then
-                    MONGO_VERSION=$(echo "$actual_dir" | sed 's/mongodb-linux-x86_64-//')
-                    log_info "Downloaded MongoDB version: $MONGO_VERSION"
-                    rm -rf "$actual_dir" 2>/dev/null || true
+            # Try wget first
+            if wget --timeout=30 --tries=3 "$MONGO_URL" -O "$MONGO_TARBALL" 2>&1 | tee /tmp/mongodb_download.log || \
+               curl -L --connect-timeout 30 --max-time 300 --progress-bar "$MONGO_URL" -o "$MONGO_TARBALL" 2>&1 | tee /tmp/mongodb_download.log; then
+                # Verify download
+                if [[ -f "$MONGO_TARBALL" ]] && [[ -s "$MONGO_TARBALL" ]] && file "$MONGO_TARBALL" | grep -q "gzip\|compressed"; then
+                    download_success=true
+                    log_success "Downloaded MongoDB tarball ($(du -h "$MONGO_TARBALL" | cut -f1))"
+                    # Try to extract to get actual version (but don't fail if it doesn't work)
+                    if tar -tzf "$MONGO_TARBALL" 2>/dev/null | head -1 | grep -q "mongodb-linux-x86_64"; then
+                        local first_entry=$(tar -tzf "$MONGO_TARBALL" 2>/dev/null | head -1)
+                        if [[ -n "$first_entry" ]]; then
+                            local actual_dir=$(echo "$first_entry" | cut -d'/' -f1)
+                            if [[ -n "$actual_dir" ]] && [[ "$actual_dir" =~ mongodb-linux-x86_64- ]]; then
+                                MONGO_VERSION=$(echo "$actual_dir" | sed 's/mongodb-linux-x86_64-//')
+                                log_info "Detected MongoDB version: $MONGO_VERSION"
+                            fi
+                        fi
+                    fi
+                    break
+                else
+                    log_warning "Downloaded file is invalid, trying next URL..."
+                    rm -f "$MONGO_TARBALL"
                 fi
-                break
+            else
+                log_warning "Download failed from $MONGO_URL"
+                rm -f "$MONGO_TARBALL"
             fi
         done
     fi
     
-    # Method 3: Try installing from AUR or alternative method
+    # Method 3: Check if MongoDB was installed manually or by user
     if [[ "$download_success" == "false" ]]; then
-        log_warning "Direct download failed. Trying alternative installation methods..."
+        log_warning "Direct download failed. Checking if MongoDB is already installed..."
         
-        # Check if mongodb-bin is available in AUR
-        if command -v yay &> /dev/null; then
-            log_info "Trying to install MongoDB from AUR using yay..."
-            if yay -S --noconfirm mongodb-bin 2>/dev/null; then
-                log_success "MongoDB installed from AUR"
-                # Create symlink for compatibility
-                if [[ -d "/opt/mongodb" ]] && [[ ! -d "$MONGO_DIR" ]]; then
-                    ln -s /opt/mongodb "$MONGO_DIR" 2>/dev/null || true
-                fi
-                return
-            fi
+        # Check if MongoDB is already installed (maybe user installed it manually)
+        if check_mongodb_installed; then
+            log_success "MongoDB found (may have been installed manually)"
+            return
         fi
         
-        log_error "Failed to download MongoDB using all methods."
+        log_error "Failed to install MongoDB using all automatic methods."
         log_error ""
+        log_error "MongoDB direct downloads are currently blocked (403 Forbidden)."
         log_error "Please install MongoDB manually using one of these methods:"
         log_error ""
-        log_error "Option 1: Download manually"
-        log_error "  wget https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-${MONGO_VERSION}.tgz"
-        log_error "  tar -xzf mongodb-linux-x86_64-${MONGO_VERSION}.tgz"
-        log_error "  sudo mv mongodb-linux-x86_64-${MONGO_VERSION} /opt/mongodb"
+        log_error "Option 1: Install from official repositories (RECOMMENDED)"
+        log_error "  sudo pacman -S mongodb"
+        log_error "  Then re-run: sudo ./deploy.sh init-server"
         log_error ""
-        log_error "Option 2: Install from AUR (if yay is available)"
+        log_error "Option 2: Install from AUR (as regular user, NOT sudo)"
         log_error "  yay -S mongodb-bin"
+        log_error "  Note: yay should NOT be run with sudo. Run as regular user."
+        log_error "  After installation, re-run: sudo ./deploy.sh init-server"
         log_error ""
-        log_error "Option 3: Use MongoDB Community Edition repository"
-        log_error "  See: https://www.mongodb.com/docs/manual/administration/install-on-linux/"
+        log_error "Option 3: Download from MongoDB website (requires accepting terms)"
+        log_error "  Visit: https://www.mongodb.com/try/download/community"
+        log_error "  Accept terms and download mongodb-linux-x86_64-7.0.16.tgz"
+        log_error "  Then:"
+        log_error "    cd /tmp"
+        log_error "    tar -xzf mongodb-linux-x86_64-7.0.16.tgz"
+        log_error "    sudo mv mongodb-linux-x86_64-7.0.16 /opt/mongodb"
+        log_error "    sudo chown -R mongodb:mongodb /opt/mongodb"
+        log_error "    sudo ./deploy.sh init-server"
         log_error ""
         exit 1
     fi
     
     log_info "Extracting MongoDB..."
-    if ! tar -xzf "$MONGO_TARBALL" 2>/dev/null; then
+    
+    # Verify tarball exists and is valid before extraction
+    if [[ ! -f "$MONGO_TARBALL" ]]; then
+        log_error "MongoDB tarball not found: $MONGO_TARBALL"
+        exit 1
+    fi
+    
+    if [[ ! -s "$MONGO_TARBALL" ]]; then
+        log_error "MongoDB tarball is empty"
+        exit 1
+    fi
+    
+    # Test tarball integrity before extraction
+    log_info "Verifying tarball integrity..."
+    if ! tar -tzf "$MONGO_TARBALL" >/dev/null 2>&1; then
+        log_error "MongoDB tarball is corrupted or invalid"
+        log_error "File size: $(du -h "$MONGO_TARBALL" | cut -f1)"
+        log_error "File type: $(file "$MONGO_TARBALL" 2>/dev/null || echo 'unknown')"
+        log_error ""
+        log_error "The download may have failed. Please check:"
+        log_error "  1. Internet connection"
+        log_error "  2. MongoDB download URL accessibility"
+        log_error "  3. Try manual download: wget https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-7.0.16.tgz"
+        exit 1
+    fi
+    
+    # Extract with output for debugging
+    log_info "Extracting tarball (this may take a moment)..."
+    if ! tar -xzf "$MONGO_TARBALL" 2>&1; then
         log_error "Failed to extract MongoDB tarball"
+        log_error "Tarball location: $MONGO_TARBALL"
+        log_error "Tarball size: $(du -h "$MONGO_TARBALL" | cut -f1)"
         exit 1
     fi
     
@@ -644,6 +871,8 @@ install_mongodb() {
     local mongo_extracted_dir=$(ls -d mongodb-linux-x86_64-* 2>/dev/null | head -1)
     if [[ -z "$mongo_extracted_dir" ]]; then
         log_error "Could not find extracted MongoDB directory"
+        log_error "Contents of /tmp:"
+        ls -la /tmp/mongodb* 2>/dev/null || echo "No mongodb files found"
         exit 1
     fi
     
@@ -675,9 +904,10 @@ Group=mongodb
 Type=forking
 # CPU Affinity: P-cores (0-5) for Intel i9-12900HK
 CPUAffinity=0 1 2 3 4 5
-# Logging disabled: --quiet flag suppresses all output, no logpath specified
-ExecStart=$MONGO_DIR/bin/mongod --dbpath=$MONGO_DATA_DIR --quiet --fork
-ExecStop=$MONGO_DIR/bin/mongod --shutdown --dbpath=$MONGO_DATA_DIR
+    # Logging disabled: --quiet flag suppresses all output, no logpath specified
+    # Support both /opt/mongodb/bin/mongod (manual install) and /usr/bin/mongod (repo install)
+    ExecStart=/bin/sh -c 'MONGO_BIN=""; if [ -f /opt/mongodb/bin/mongod ]; then MONGO_BIN=/opt/mongodb/bin/mongod; elif [ -f /usr/bin/mongod ]; then MONGO_BIN=/usr/bin/mongod; else echo "MongoDB not found"; exit 1; fi; $MONGO_BIN --dbpath=/opt/mongodb/data --quiet --fork'
+    ExecStop=/bin/sh -c 'MONGO_BIN=""; if [ -f /opt/mongodb/bin/mongod ]; then MONGO_BIN=/opt/mongodb/bin/mongod; elif [ -f /usr/bin/mongod ]; then MONGO_BIN=/usr/bin/mongod; fi; [ -n "$MONGO_BIN" ] && $MONGO_BIN --shutdown --dbpath=/opt/mongodb/data || true'
 PIDFile=$MONGO_DATA_DIR/mongod.lock
 Restart=on-failure
 RestartSec=10
@@ -938,8 +1168,19 @@ EOF
             # Backup service file
             cp "$SYSTEMD_DIR/mongodb.service" "$SYSTEMD_DIR/mongodb.service.backup.$(date +%Y%m%d_%H%M%S)"
             
+            # Update ExecStart to use config file (support both installation paths)
+            local mongo_binary=""
+            if [[ -f "$MONGO_DIR/bin/mongod" ]]; then
+                mongo_binary="$MONGO_DIR/bin/mongod"
+            elif [[ -f "/usr/bin/mongod" ]]; then
+                mongo_binary="/usr/bin/mongod"
+            else
+                log_warning "MongoDB binary not found, skipping service update"
+                return
+            fi
+            
             # Update ExecStart to use config file
-            sed -i "s|ExecStart=.*mongod.*|ExecStart=$MONGO_DIR/bin/mongod --config $mongo_conf|" "$SYSTEMD_DIR/mongodb.service"
+            sed -i "s|ExecStart=.*|ExecStart=$mongo_binary --config $mongo_conf|" "$SYSTEMD_DIR/mongodb.service"
             log_success "Updated MongoDB service to use configuration file"
         fi
     fi
@@ -1352,25 +1593,26 @@ configure_nginx_logging() {
         cp "$NGINX_MAIN_CONF" "${NGINX_MAIN_CONF}.backup.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
         
         # Disable access_log and error_log in http block
+        # Note: error_log cannot be "off" in http block, so we set it to /dev/null
         if ! grep -q "# CineStream: Logging disabled" "$NGINX_MAIN_CONF"; then
             # Add logging disable directives in http block
             sed -i '/^http {/a\
     # CineStream: Logging disabled\
     access_log off;\
-    error_log off;
+    error_log /dev/null;
 ' "$NGINX_MAIN_CONF" 2>/dev/null || {
                 # Alternative: add to end of http block
                 sed -i '/^}/i\
     # CineStream: Logging disabled\
     access_log off;\
-    error_log off;
+    error_log /dev/null;
 ' "$NGINX_MAIN_CONF" 2>/dev/null || true
             }
         fi
         
         # Also disable logging in any existing server blocks
         sed -i 's/access_log[^;]*;/access_log off;/g' "$NGINX_MAIN_CONF" 2>/dev/null || true
-        sed -i 's/error_log[^;]*;/error_log off;/g' "$NGINX_MAIN_CONF" 2>/dev/null || true
+        sed -i 's|error_log[^;]*;|error_log /dev/null;|g' "$NGINX_MAIN_CONF" 2>/dev/null || true
         
         log_success "Nginx logging disabled globally"
     else
