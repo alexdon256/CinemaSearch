@@ -58,10 +58,10 @@ This installs:
 To remove all CineStream components for redeployment:
 
 ```bash
-# Remove all components (preserves MongoDB)
+# Remove all components (preserves MongoDB and Nginx)
 sudo ./deploy.sh uninit-server
 
-# Remove all components including MongoDB
+# Remove all components including MongoDB and Nginx
 sudo ./deploy.sh uninit-server yes
 ```
 

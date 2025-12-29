@@ -523,12 +523,27 @@ taskset -p $(pgrep -f "main.py.*--port")
 If you need to start over:
 
 ```bash
-# Remove all CineStream components (preserves MongoDB)
+# Remove all CineStream components (preserves MongoDB and Nginx)
 sudo ./deploy.sh uninit-server
 
-# Or remove everything including MongoDB
+# Or remove everything including MongoDB and Nginx
 sudo ./deploy.sh uninit-server yes
 ```
+
+**What gets removed:**
+
+**Without `yes` (default):**
+- All deployed applications and sites
+- All systemd services (application processes, timers)
+- All Nginx configurations (but Nginx service stays)
+- CPU affinity configurations
+- CineStream systemd targets
+- MongoDB and Nginx are preserved
+
+**With `yes` (complete cleanup):**
+- Everything above, plus:
+- MongoDB service, data, and package (with confirmation prompts)
+- Nginx service, configurations, and package (with confirmation prompts)
 
 After cleanup, you can run `init-server` again to start fresh.
 

@@ -2316,6 +2316,7 @@ uninit_server() {
     log_warning "  - CineStream systemd targets and timers"
     if [[ "$REMOVE_MONGODB" == "yes" ]]; then
         log_warning "  - MongoDB service and data (DESTRUCTIVE!)"
+        log_warning "  - Nginx service and package (DESTRUCTIVE!)"
     fi
     echo ""
     read -p "Are you sure you want to continue? Type 'yes' to confirm: " CONFIRM
@@ -2394,7 +2395,7 @@ uninit_server() {
     log_info "Removing Nginx CPU affinity configuration..."
     rm -rf "$SYSTEMD_DIR/nginx.service.d"
     
-    # Remove MongoDB if requested
+    # Remove MongoDB and Nginx if requested
     if [[ "$REMOVE_MONGODB" == "yes" ]]; then
         log_warning "Removing MongoDB (this will delete all data!)..."
         systemctl stop mongodb.service 2>/dev/null || true
@@ -2416,9 +2417,41 @@ uninit_server() {
         if [[ "$REMOVE_INSTALL" == "yes" ]]; then
             rm -rf /opt/mongodb
             log_warning "MongoDB installation removed"
+            
+            # Also try to uninstall MongoDB package if installed via package manager
+            if command -v yay &> /dev/null && yay -Q mongodb-bin &>/dev/null; then
+                log_info "Uninstalling MongoDB package (mongodb-bin)..."
+                yay -Rns --noconfirm mongodb-bin 2>/dev/null || true
+            elif pacman -Q mongodb &>/dev/null; then
+                log_info "Uninstalling MongoDB package..."
+                pacman -Rns --noconfirm mongodb 2>/dev/null || true
+            fi
+        fi
+        
+        # Remove Nginx
+        log_warning "Removing Nginx service and package..."
+        systemctl stop nginx.service 2>/dev/null || true
+        systemctl disable nginx.service 2>/dev/null || true
+        
+        # Remove all Nginx configurations
+        log_info "Removing Nginx configurations..."
+        rm -f "$NGINX_CONF_DIR"/*.conf 2>/dev/null || true
+        rm -f /etc/nginx/conf.d/security.conf 2>/dev/null || true
+        rm -f /etc/nginx/conf.d/localhost.conf 2>/dev/null || true
+        
+        # Ask for confirmation before removing Nginx package
+        read -p "Remove Nginx package? Type 'yes' to confirm: " REMOVE_NGINX
+        if [[ "$REMOVE_NGINX" == "yes" ]]; then
+            log_info "Uninstalling Nginx package..."
+            pacman -Rns --noconfirm nginx 2>/dev/null || {
+                log_warning "Failed to uninstall Nginx package (may not be installed via pacman)"
+            }
+            log_warning "Nginx package removed"
+        else
+            log_info "Nginx package preserved (only service and configs removed)"
         fi
     else
-        log_info "MongoDB service and data preserved (use 'uninit-server yes' to remove)"
+        log_info "MongoDB and Nginx services preserved (use 'uninit-server yes' to remove)"
     fi
     
     # Reload systemd
@@ -2433,9 +2466,13 @@ uninit_server() {
     log_info "Remaining components:"
     if [[ "$REMOVE_MONGODB" != "yes" ]]; then
         log_info "  - MongoDB (service and data preserved)"
+        log_info "  - Nginx (service preserved, configurations removed)"
+    else
+        log_info "  - All CineStream components removed"
+        log_info "  - MongoDB removed (if confirmed)"
+        log_info "  - Nginx removed (if confirmed)"
     fi
-    log_info "  - Nginx (service preserved, configurations removed)"
-    log_info "  - System packages (not removed)"
+    log_info "  - System packages (not removed unless explicitly uninstalled)"
     log_info ""
     log_info "To completely reinitialize, run: $0 init-server"
 }
