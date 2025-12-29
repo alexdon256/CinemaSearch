@@ -1387,6 +1387,18 @@ IO_EOF
         log_success "Set readahead for MongoDB data device"
     fi
     
+    # 9. CPU Governor (ensure automatic scaling is enabled - ondemand/schedutil)
+    ensure_cpu_automatic_scaling
+    
+    # 10. Additional kernel optimizations
+    configure_additional_kernel_optimizations
+    
+    # 11. Nginx worker optimization
+    optimize_nginx_workers
+    
+    # 12. Disable unnecessary services for server performance
+    disable_unnecessary_services
+    
     log_success "System optimization complete!"
     log_info ""
     log_info "Optimizations applied:"
@@ -1401,9 +1413,336 @@ IO_EOF
         log_info "  - MongoDB: Not installed (skipped MongoDB optimizations)"
     fi
     log_info "  - I/O scheduler: Optimized for storage type"
+    log_info "  - CPU governor: Automatic scaling (ondemand/schedutil - turbo when needed, power saving when idle)"
+    log_info "  - Memory overcommit: Optimized"
+    log_info "  - Nginx workers: Optimized"
+    log_info "  - Unnecessary services: Disabled (see details above)"
     log_info ""
     log_warning "Note: Some changes require reboot to take full effect"
     log_warning "Run 'sudo sysctl -p' to apply kernel parameters immediately"
+}
+
+# Ensure CPU governor uses automatic scaling (ondemand/schedutil)
+# This allows CPU to turbo when needed but save power when idle
+ensure_cpu_automatic_scaling() {
+    log_info "Ensuring CPU automatic scaling (ondemand/schedutil) is enabled..."
+    
+    # Check if cpufreq is available
+    if [[ ! -d /sys/devices/system/cpu/cpu0/cpufreq ]]; then
+        log_info "  CPU frequency scaling not available (may be disabled in BIOS or not supported)"
+        return 0
+    fi
+    
+    # Remove any performance mode service if it exists
+    if systemctl list-unit-files | grep -q "set-cpu-performance.service"; then
+        log_info "  Removing CPU performance mode service (restoring automatic scaling)..."
+        systemctl stop set-cpu-performance.service 2>/dev/null || true
+        systemctl disable set-cpu-performance.service 2>/dev/null || true
+        systemctl mask set-cpu-performance.service 2>/dev/null || true
+        rm -f /etc/systemd/system/set-cpu-performance.service 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
+        log_success "  Removed CPU performance mode service"
+    fi
+    
+    # Check current governor and set to ondemand/schedutil if it's locked to performance
+    local cpu_count
+    cpu_count=$(nproc)
+    local changed_count=0
+    
+    for ((cpu=0; cpu<cpu_count; cpu++)); do
+        if [[ -f "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_governor" ]]; then
+            local current_governor
+            current_governor=$(cat "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_governor" 2>/dev/null || echo "")
+            
+            # If locked to performance, change to ondemand or schedutil
+            if [[ "$current_governor" == "performance" ]]; then
+                local available_governors
+                available_governors=$(cat "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_available_governors" 2>/dev/null || echo "")
+                
+                # Prefer schedutil (modern), fallback to ondemand
+                if echo "$available_governors" | grep -q "schedutil"; then
+                    echo "schedutil" > "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_governor" 2>/dev/null && ((changed_count++)) || true
+                elif echo "$available_governors" | grep -q "ondemand"; then
+                    echo "ondemand" > "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_governor" 2>/dev/null && ((changed_count++)) || true
+                fi
+            fi
+        fi
+    done
+    
+    if [[ $changed_count -gt 0 ]]; then
+        log_success "  Restored automatic CPU scaling for $changed_count CPUs (turbo when needed, power saving when idle)"
+    else
+        log_info "  CPU automatic scaling already configured (no changes needed)"
+    fi
+}
+
+# Configure additional kernel optimizations
+configure_additional_kernel_optimizations() {
+    log_info "Configuring additional kernel optimizations..."
+    
+    # Additional sysctl optimizations
+    cat >> /etc/sysctl.conf <<'SYSCTL_EXTRA_EOF'
+
+# Additional performance optimizations
+# Memory overcommit (allow overcommit for better performance)
+vm.overcommit_memory=1
+vm.overcommit_ratio=50
+
+# Reduce swapiness even more (already set to 1, but ensure it's optimal)
+vm.swappiness=1
+
+# OOM killer tuning (prefer killing processes with higher oom_score_adj)
+vm.oom_kill_allocating_task=0
+
+# Virtual memory management
+vm.dirty_expire_centisecs=3000
+vm.dirty_writeback_centisecs=500
+
+# Network optimizations (additional)
+net.ipv4.tcp_slow_start_after_idle=0
+net.ipv4.tcp_fastopen=3
+net.ipv4.tcp_sack=1
+net.ipv4.tcp_timestamps=1
+net.ipv4.tcp_ecn=0
+net.ipv4.tcp_syncookies=1
+
+# Increase connection tracking timeout
+net.netfilter.nf_conntrack_tcp_timeout_established=86400
+net.netfilter.nf_conntrack_tcp_timeout_time_wait=60
+
+# IPv6 optimizations (if IPv6 is used)
+net.ipv6.conf.all.disable_ipv6=0
+net.ipv6.conf.default.disable_ipv6=0
+
+# Kernel scheduler optimizations
+kernel.sched_migration_cost_ns=5000000
+kernel.sched_autogroup_enabled=0
+
+# Increase PID limit
+kernel.pid_max=4194304
+SYSCTL_EXTRA_EOF
+    
+    # Apply settings immediately
+    sysctl -p /etc/sysctl.conf >/dev/null 2>&1 || true
+    
+    log_success "Applied additional kernel optimizations"
+}
+
+# Optimize Nginx worker configuration
+optimize_nginx_workers() {
+    log_info "Optimizing Nginx worker configuration..."
+    
+    # Get CPU count
+    local cpu_count
+    cpu_count=$(nproc)
+    
+    # Calculate optimal worker processes (usually 1 per CPU core, or 2x for hyperthreading)
+    local worker_processes=$cpu_count
+    
+    # Check if Nginx config exists
+    local nginx_conf="/etc/nginx/nginx.conf"
+    if [[ ! -f "$nginx_conf" ]]; then
+        log_warning "  Nginx configuration not found, skipping worker optimization"
+        return 0
+    fi
+    
+    # Backup nginx config
+    cp "$nginx_conf" "${nginx_conf}.backup.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+    
+    # Update worker_processes if it's set to auto or a low value
+    if grep -q "worker_processes auto" "$nginx_conf" || grep -q "worker_processes 1" "$nginx_conf"; then
+        # Replace worker_processes line
+        sed -i "s/worker_processes.*/worker_processes $worker_processes;/" "$nginx_conf" 2>/dev/null || {
+            # If replacement failed, try adding it after the first line
+            sed -i "1a worker_processes $worker_processes;" "$nginx_conf" 2>/dev/null || true
+        }
+        
+        # Add worker_connections if not present (default is 512, increase to 2048)
+        if ! grep -q "worker_connections" "$nginx_conf"; then
+            # Find the events block and add worker_connections
+            sed -i '/events {/a\    worker_connections 2048;' "$nginx_conf" 2>/dev/null || true
+        else
+            # Update existing worker_connections to 2048
+            sed -i 's/worker_connections.*/worker_connections 2048;/' "$nginx_conf" 2>/dev/null || true
+        fi
+        
+        # Add worker_rlimit_nofile for better file descriptor handling
+        if ! grep -q "worker_rlimit_nofile" "$nginx_conf"; then
+            sed -i "/worker_processes/a\worker_rlimit_nofile 65536;" "$nginx_conf" 2>/dev/null || true
+        fi
+        
+        # Test Nginx configuration
+        if nginx -t 2>/dev/null; then
+            log_success "Optimized Nginx workers: $worker_processes processes, 2048 connections per worker"
+            # Reload Nginx if it's running
+            if systemctl is-active --quiet nginx.service 2>/dev/null; then
+                systemctl reload nginx.service 2>/dev/null || true
+            fi
+        else
+            log_warning "  Nginx configuration test failed, restoring backup"
+            cp "${nginx_conf}.backup.$(date +%Y%m%d_%H%M%S)" "$nginx_conf" 2>/dev/null || true
+        fi
+    else
+        log_info "  Nginx worker_processes already optimized"
+    fi
+}
+
+# Disable unnecessary services for server performance
+disable_unnecessary_services() {
+    log_info "Disabling unnecessary services for server performance..."
+    
+    # List of services to disable (safe for headless server, but keep audio/network for multimedia)
+    local services_to_disable=(
+        # Desktop environment services
+        "bluetooth.service"
+        "bluetooth.target"
+        "cups.service"              # Printing service
+        "cups-browsed.service"       # Printer discovery
+        
+        # Power management (prevent sleep/suspend)
+        "sleep.target"
+        "suspend.target"
+        "hibernate.target"
+        "hybrid-sleep.target"
+        
+        # Desktop services (keep minimal for multimedia)
+        "accounts-daemon.service"    # User account management (desktop)
+        "colord.service"            # Color management (desktop)
+        "ModemManager.service"      # Modem management (not needed)
+        "polkit.service"            # PolicyKit (desktop)
+        "upower.service"           # Power management (desktop)
+        
+        # Other unnecessary services
+        "fstrim.timer"              # SSD trim (can be run manually)
+    )
+    
+    # Note: Audio services (PulseAudio, ALSA) are KEPT ENABLED for video playback
+    # Note: Network services (NetworkManager, Avahi) are KEPT ENABLED for WiFi and network connectivity
+    
+    local disabled_count=0
+    local skipped_count=0
+    
+    for service in "${services_to_disable[@]}"; do
+        # Check if service exists
+        if systemctl list-unit-files | grep -q "^${service}"; then
+            # Check if service is already disabled/masked
+            local status
+            status=$(systemctl is-enabled "$service" 2>/dev/null || echo "not-found")
+            
+            if [[ "$status" != "masked" ]] && [[ "$status" != "disabled" ]]; then
+                # Stop the service first
+                systemctl stop "$service" 2>/dev/null || true
+                
+                # Disable and mask the service
+                systemctl disable "$service" 2>/dev/null || true
+                systemctl mask "$service" 2>/dev/null || true
+                
+                log_info "  Disabled: $service"
+                ((disabled_count++))
+            else
+                log_info "  Already disabled: $service"
+                ((skipped_count++))
+            fi
+        else
+            log_info "  Not found: $service (skipped)"
+            ((skipped_count++))
+        fi
+    done
+    
+    # Keep NetworkManager enabled for WiFi support (needed for multimedia use)
+    if systemctl list-unit-files | grep -q "^NetworkManager.service"; then
+        local nm_status
+        nm_status=$(systemctl is-active NetworkManager.service 2>/dev/null || echo "inactive")
+        
+        if [[ "$nm_status" != "active" ]]; then
+            log_info "  Enabling NetworkManager for WiFi support..."
+            systemctl unmask NetworkManager.service 2>/dev/null || true
+            systemctl enable NetworkManager.service 2>/dev/null || true
+            systemctl start NetworkManager.service 2>/dev/null || true
+        else
+            log_info "  NetworkManager is active (needed for WiFi)"
+        fi
+    fi
+    
+    # Keep audio services enabled for video playback
+    if systemctl list-unit-files | grep -q "^pulseaudio.service"; then
+        local pa_status
+        pa_status=$(systemctl is-active pulseaudio.service 2>/dev/null || echo "inactive")
+        
+        if [[ "$pa_status" != "active" ]]; then
+            log_info "  Enabling PulseAudio for audio support..."
+            systemctl unmask pulseaudio.service 2>/dev/null || true
+            systemctl --user enable pulseaudio.service 2>/dev/null || true
+            systemctl --user start pulseaudio.service 2>/dev/null || true
+        else
+            log_info "  PulseAudio is active (needed for audio)"
+        fi
+    fi
+    
+    # Keep rtkit-daemon for real-time audio processing
+    if systemctl list-unit-files | grep -q "^rtkit-daemon.service"; then
+        local rtkit_status
+        rtkit_status=$(systemctl is-active rtkit-daemon.service 2>/dev/null || echo "inactive")
+        
+        if [[ "$rtkit_status" != "active" ]]; then
+            log_info "  Enabling rtkit-daemon for audio processing..."
+            systemctl unmask rtkit-daemon.service 2>/dev/null || true
+            systemctl enable rtkit-daemon.service 2>/dev/null || true
+            systemctl start rtkit-daemon.service 2>/dev/null || true
+        fi
+    fi
+    
+    # Disable unnecessary timers
+    local timers_to_disable=(
+        "fstrim.timer"              # SSD trim (can be run manually)
+        "systemd-tmpfiles-clean.timer"  # Temp file cleanup (optional)
+    )
+    
+    for timer in "${timers_to_disable[@]}"; do
+        if systemctl list-unit-files | grep -q "^${timer}"; then
+            local timer_status
+            timer_status=$(systemctl is-enabled "$timer" 2>/dev/null || echo "not-found")
+            
+            if [[ "$timer_status" == "enabled" ]]; then
+                systemctl stop "$timer" 2>/dev/null || true
+                systemctl disable "$timer" 2>/dev/null || true
+                log_info "  Disabled timer: $timer"
+                ((disabled_count++))
+            fi
+        fi
+    done
+    
+    # Reload systemd
+    systemctl daemon-reload 2>/dev/null || true
+    
+    # Keep geoclue enabled for geolocation support (needed for app city/country detection)
+    if systemctl list-unit-files | grep -q "^geoclue.service"; then
+        local geoclue_status
+        geoclue_status=$(systemctl is-active geoclue.service 2>/dev/null || echo "inactive")
+        
+        if [[ "$geoclue_status" != "active" ]]; then
+            log_info "  Enabling geoclue for geolocation support..."
+            systemctl unmask geoclue.service 2>/dev/null || true
+            systemctl enable geoclue.service 2>/dev/null || true
+            systemctl start geoclue.service 2>/dev/null || true
+        else
+            log_info "  geoclue is active (needed for geolocation)"
+        fi
+    fi
+    
+    log_success "Service optimization complete: $disabled_count services disabled, $skipped_count skipped/not found"
+    log_info ""
+    log_info "Services kept enabled for multimedia and geolocation:"
+    log_info "  - NetworkManager (WiFi and network connectivity)"
+    log_info "  - PulseAudio (audio playback)"
+    log_info "  - rtkit-daemon (real-time audio processing)"
+    log_info "  - Avahi (network discovery)"
+    log_info "  - geoclue (geolocation support for city/country detection)"
+    
+    # Show summary of what's still running
+    log_info ""
+    log_info "Active services summary:"
+    systemctl list-units --type=service --state=running | grep -E "(mongodb|nginx|cinestream|ssh|NetworkManager|pulseaudio|rtkit)" | head -15 || true
 }
 
 # Configure comprehensive firewall rules
@@ -2871,7 +3210,7 @@ main() {
             echo "  enable-autostart               Enable all services to start on boot"
             echo "  status                         Show status of all services"
             echo "  optimize-system                Optimize system for web server + MongoDB"
-            echo "                                (swap, swappiness, noatime, kernel params)"
+            echo "                                (swap, swappiness, noatime, kernel params, disable services)"
             echo "  deploy-app <app-name>          Deploy an additional application"
             echo "                                Example: $0 deploy-app myapp"
             echo "  set-domain <domain> [app]     Configure domain for an application"

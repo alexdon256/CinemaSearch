@@ -14,11 +14,12 @@ CineStream is a high-performance, localized movie showtime aggregation platform 
 - 🎯 **Incremental Scraping**: Intelligently scrapes only missing date ranges, reducing API token usage by up to 93%
 - 📦 **Movie-Centric Data Model**: Efficient structure that stores movie images once per movie, not per showtime
 - 🌍 **Multi-Language Support**: Full localization for Ukrainian (UA), English (EN), and Russian (RU)
-- ⚡ **High Concurrency**: 10 parallel worker processes per application for maximum throughput
+- ⚡ **High Concurrency**: 20 parallel worker processes per application for maximum throughput
 - 🔒 **Enterprise Security**: SSL/TLS encryption, secure environment variables, MongoDB authentication
 - 🎨 **Modern UI**: Professional, responsive design with donation integration
 - 📊 **Visitor Analytics**: Built-in visitor counter with MongoDB persistence
 - 🔄 **Automated Refresh**: Daily background jobs to keep data fresh
+- 🚀 **Auto-Start on Boot**: All services configured to start automatically on system boot
 
 ## Architecture Highlights
 

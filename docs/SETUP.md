@@ -447,6 +447,59 @@ sudo firewall-cmd --list-services
 sudo certbot certonly --webroot -w /var/www/html -d movies.example.com
 ```
 
+### Server Not Accessible After Sleep Mode
+
+**Important:** The server and applications **will NOT work** when your PC is in sleep mode. Sleep mode suspends the CPU, network interfaces, and all processes.
+
+**What happens:**
+- All services (MongoDB, Nginx, application processes) are paused
+- Network connections are dropped
+- The server becomes unreachable
+- Services will resume automatically when the PC wakes up
+
+**Solutions for 24/7 operation:**
+
+1. **Disable sleep mode (recommended for servers):**
+   ```bash
+   # Disable sleep/suspend
+   sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+   
+   # Or configure systemd to prevent sleep
+   sudo systemctl edit sleep.target
+   # Add: [Unit]
+   #      RefuseManualStart=yes
+   ```
+
+2. **Configure power management (if you want to keep sleep for desktop use):**
+   ```bash
+   # Check current power settings
+   systemctl status sleep.target
+   
+   # Prevent automatic sleep (but allow manual sleep)
+   # Edit /etc/systemd/logind.conf
+   sudo nano /etc/systemd/logind.conf
+   # Set: HandleSuspendKey=ignore
+   #      HandleLidSwitch=ignore
+   ```
+
+3. **Use a dedicated server:**
+   - For production, use a VPS or cloud server that doesn't sleep
+   - Or use a dedicated server machine that stays on 24/7
+
+4. **Auto-start on wake (already configured):**
+   - Services are configured to auto-start on boot
+   - When the PC wakes from sleep, services will resume automatically
+   - However, there may be a brief delay while services restart
+
+**Verify services after wake:**
+```bash
+# Check all services are running
+sudo ./deploy.sh status
+
+# Restart services if needed
+sudo ./deploy.sh start-all
+```
+
 ### CPU Affinity Not Working
 
 ```bash
@@ -493,20 +546,42 @@ sudo ./deploy.sh optimize-system
 ```
 
 **Optimizations include:**
-- **Memory Management**: Low swappiness (1), optimized dirty ratios
+- **Memory Management**: Low swappiness (1), optimized dirty ratios, memory overcommit tuning
 - **Filesystem**: `noatime` mount option for better I/O performance
-- **Network**: TCP tuning for high concurrency (4096 connections, optimized buffers)
+- **Network**: TCP tuning for high concurrency (4096 connections, optimized buffers, fast open, connection tracking)
 - **MongoDB**: WiredTiger cache sizing, compression, connection pools
-- **Kernel**: Transparent hugepages disabled, I/O scheduler optimization
+- **Kernel**: Transparent hugepages disabled, I/O scheduler optimization, scheduler tuning
+- **CPU**: Automatic scaling governor (ondemand/schedutil - turbo when needed, power saving when idle)
+- **Nginx**: Optimized worker processes (1 per CPU core), increased worker connections (2048), file descriptor limits
 - **File Descriptors**: Increased limits (65536) for web server workloads
+- **Service Optimization**: Disables unnecessary services (bluetooth, printing, desktop services, power management)
+
+**Services Disabled:**
+The optimization automatically disables unnecessary services for server performance:
+- **Desktop Services**: Bluetooth, printing (CUPS), color management, geolocation
+- **Power Management**: Sleep, suspend, hibernate targets (prevents accidental sleep)
+- **Other**: PolicyKit, UPower, modem management
+
+**Services Kept Enabled (for multimedia and app functionality):**
+- **Network Services**: NetworkManager (WiFi support), Avahi (network discovery)
+- **Audio Services**: PulseAudio, ALSA, rtkit-daemon (for video playback with sound)
+- **Geolocation**: geoclue (for city/country detection in the application)
+
+**Performance Impact:**
+- **CPU Automatic Scaling**: CPU automatically boosts to turbo when under load, saves power when idle (best balance)
+- **Nginx Workers**: Optimized worker count matches CPU cores for better load distribution
+- **Memory Overcommit**: Allows better memory utilization for database workloads
+- **TCP Fast Open**: Reduces connection establishment time
+- **Kernel Scheduler**: Optimized for server workloads, reduced migration costs
 
 **When to re-run:**
 - After system memory changes
 - After MongoDB version updates
 - If you notice performance degradation
 - After major system updates
+- After CPU/core count changes (for Nginx worker optimization)
 
-**Note:** Some optimizations (like `noatime` in `/etc/fstab`) require a reboot to take full effect.
+**Note:** Some optimizations (like `noatime` in `/etc/fstab`, CPU governor) require a reboot to take full effect. Disabled services are masked to prevent accidental re-enabling.
 
 ## Next Steps
 
