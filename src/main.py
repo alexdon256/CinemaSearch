@@ -194,7 +194,7 @@ def detect_city_from_ip():
     except Exception as e:
         # Silently fail - geolocation is optional
         print(f"Geolocation error: {e}")
-        return None
+    return None
 
 @app.before_request
 def before_request():

@@ -280,20 +280,17 @@ init_server() {
     # Try to refresh package database first
     pacman -Sy --noconfirm 2>/dev/null || log_warning "Package database refresh had issues, continuing..."
     
+    # Check if yay is available via pacman and add it to the package list
+    local package_list="python python-pip nginx git openssh base-devel nodejs npm wget curl go"
+    if pacman -Si yay &>/dev/null; then
+        log_info "yay is available in repositories, adding to package list..."
+        package_list="$package_list yay"
+    fi
+    
     # Install packages with retry logic
     local packages_installed=false
     for attempt in 1 2 3; do
-        if pacman -S --noconfirm \
-            python python-pip \
-            nginx \
-            git \
-            openssh \
-            base-devel \
-            nodejs npm \
-            wget \
-            curl \
-            go \
-            2>/dev/null; then
+        if pacman -S --noconfirm $package_list 2>/dev/null; then
             packages_installed=true
             break
         else
@@ -604,6 +601,37 @@ install_yay() {
     
     log_info "Installing yay (AUR helper)..."
     
+    # Method 1: Try installing via pacman first (may be available in some repos)
+    log_info "Trying to install yay via pacman..."
+    
+    # Refresh package database first
+    pacman -Sy --noconfirm &>/dev/null || true
+    
+    # Check if yay is available in repositories
+    if pacman -Si yay &>/dev/null; then
+        log_info "yay found in repositories, installing via pacman..."
+        # Try installing with retry logic
+        for attempt in 1 2 3; do
+            if pacman -S --noconfirm yay 2>/dev/null; then
+                if command -v yay &> /dev/null; then
+                    log_success "yay installed successfully via pacman"
+                    return 0
+                fi
+            fi
+            if [[ $attempt -lt 3 ]]; then
+                log_warning "Installation attempt $attempt failed, retrying..."
+                sleep 1
+                pacman -Sy --noconfirm &>/dev/null || true
+            fi
+        done
+        log_warning "pacman installation failed after retries, trying AUR method..."
+    else
+        log_info "yay not found in repositories, will try AUR installation..."
+    fi
+    
+    # Method 2: Fall back to AUR installation (build from source)
+    log_info "yay not available in repositories, installing from AUR..."
+    
     # Check if we're running as root
     if [[ $EUID -eq 0 ]]; then
         # Get the actual user (not root)
@@ -616,7 +644,7 @@ install_yay() {
             return 1
         fi
         
-        log_info "Installing yay as user: $INSTALL_USER"
+        log_info "Installing yay from AUR as user: $INSTALL_USER"
         
         # Install yay as the regular user
         cd /tmp
@@ -639,7 +667,7 @@ install_yay() {
         
         # Verify yay is installed
         if command -v yay &> /dev/null; then
-            log_success "yay installed successfully"
+            log_success "yay installed successfully from AUR"
             return 0
         else
             log_error "yay installation completed but yay command not found"
@@ -664,7 +692,7 @@ install_yay() {
         }
         
         if command -v yay &> /dev/null; then
-            log_success "yay installed successfully"
+            log_success "yay installed successfully from AUR"
             return 0
         else
             log_error "yay installation completed but yay command not found"
@@ -1399,6 +1427,12 @@ IO_EOF
     # 12. Disable unnecessary services for server performance
     disable_unnecessary_services
     
+    # 13. Configure GRUB to skip boot menu
+    configure_grub_boot
+    
+    # 14. Optimize startup and shutdown
+    optimize_startup_shutdown
+    
     log_success "System optimization complete!"
     log_info ""
     log_info "Optimizations applied:"
@@ -1417,6 +1451,8 @@ IO_EOF
     log_info "  - Memory overcommit: Optimized"
     log_info "  - Nginx workers: Optimized"
     log_info "  - Unnecessary services: Disabled (see details above)"
+    log_info "  - GRUB: Boot menu disabled (direct boot)"
+    log_info "  - Startup/Shutdown: Optimized for faster boot times"
     log_info ""
     log_warning "Note: Some changes require reboot to take full effect"
     log_warning "Run 'sudo sysctl -p' to apply kernel parameters immediately"
@@ -1743,6 +1779,172 @@ disable_unnecessary_services() {
     log_info ""
     log_info "Active services summary:"
     systemctl list-units --type=service --state=running | grep -E "(mongodb|nginx|cinestream|ssh|NetworkManager|pulseaudio|rtkit)" | head -15 || true
+}
+
+# Configure GRUB to skip boot menu (direct boot)
+configure_grub_boot() {
+    log_info "Configuring GRUB to skip boot menu..."
+    
+    # Check if GRUB is installed
+    if [[ ! -f /etc/default/grub ]]; then
+        log_warning "  GRUB configuration not found at /etc/default/grub (may be using different bootloader)"
+        return 0
+    fi
+    
+    # Backup original GRUB config
+    if [[ ! -f /etc/default/grub.backup ]]; then
+        cp /etc/default/grub /etc/default/grub.backup 2>/dev/null || true
+    fi
+    
+    local grub_conf="/etc/default/grub"
+    local changed=false
+    
+    # Set GRUB_TIMEOUT to 0 (skip menu)
+    if grep -q "^GRUB_TIMEOUT=" "$grub_conf"; then
+        local current_timeout
+        current_timeout=$(grep "^GRUB_TIMEOUT=" "$grub_conf" | cut -d= -f2 | tr -d '"' || echo "")
+        if [[ "$current_timeout" != "0" ]]; then
+            sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/' "$grub_conf"
+            changed=true
+            log_info "  Set GRUB_TIMEOUT=0 (skip boot menu)"
+        fi
+    else
+        echo "GRUB_TIMEOUT=0" >> "$grub_conf"
+        changed=true
+        log_info "  Added GRUB_TIMEOUT=0"
+    fi
+    
+    # Set GRUB_TIMEOUT_STYLE to hidden (no countdown)
+    if grep -q "^GRUB_TIMEOUT_STYLE=" "$grub_conf"; then
+        local current_style
+        current_style=$(grep "^GRUB_TIMEOUT_STYLE=" "$grub_conf" | cut -d= -f2 | tr -d '"' || echo "")
+        if [[ "$current_style" != "hidden" ]]; then
+            sed -i 's/^GRUB_TIMEOUT_STYLE=.*/GRUB_TIMEOUT_STYLE=hidden/' "$grub_conf"
+            changed=true
+            log_info "  Set GRUB_TIMEOUT_STYLE=hidden"
+        fi
+    else
+        echo "GRUB_TIMEOUT_STYLE=hidden" >> "$grub_conf"
+        changed=true
+        log_info "  Added GRUB_TIMEOUT_STYLE=hidden"
+    fi
+    
+    # Update GRUB if changes were made
+    if [[ "$changed" == "true" ]]; then
+        log_info "  Updating GRUB configuration..."
+        if command -v grub-mkconfig &>/dev/null; then
+            grub-mkconfig -o /boot/grub/grub.cfg 2>/dev/null && {
+                log_success "  GRUB configured to skip boot menu (direct boot)"
+            } || {
+                log_warning "  Failed to update GRUB config (may need manual update: sudo grub-mkconfig -o /boot/grub/grub.cfg)"
+            }
+        elif command -v update-grub &>/dev/null; then
+            update-grub 2>/dev/null && {
+                log_success "  GRUB configured to skip boot menu (direct boot)"
+            } || {
+                log_warning "  Failed to update GRUB config (may need manual update: sudo update-grub)"
+            }
+        else
+            log_warning "  GRUB update command not found. Please run manually:"
+            log_warning "    sudo grub-mkconfig -o /boot/grub/grub.cfg"
+            log_warning "    or"
+            log_warning "    sudo update-grub"
+        fi
+    else
+        log_info "  GRUB already configured to skip boot menu"
+    fi
+}
+
+# Optimize startup and shutdown times
+optimize_startup_shutdown() {
+    log_info "Optimizing startup and shutdown times..."
+    
+    # 1. Reduce systemd default timeout for faster boot
+    local systemd_system_conf="/etc/systemd/system.conf"
+    local changed=false
+    
+    if [[ -f "$systemd_system_conf" ]]; then
+        # Backup if not already backed up
+        if ! grep -q "# CineStream backup" "$systemd_system_conf" 2>/dev/null; then
+            cp "$systemd_system_conf" "${systemd_system_conf}.backup.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+        fi
+        
+        # Reduce default timeout for services (from 90s to 30s)
+        if ! grep -q "^DefaultTimeoutStartSec=" "$systemd_system_conf"; then
+            echo "" >> "$systemd_system_conf"
+            echo "# CineStream: Optimize startup/shutdown times" >> "$systemd_system_conf"
+            echo "DefaultTimeoutStartSec=30s" >> "$systemd_system_conf"
+            changed=true
+            log_info "  Set DefaultTimeoutStartSec=30s (faster service startup)"
+        elif grep -q "^DefaultTimeoutStartSec=90s" "$systemd_system_conf"; then
+            sed -i 's/^DefaultTimeoutStartSec=90s/DefaultTimeoutStartSec=30s/' "$systemd_system_conf"
+            changed=true
+            log_info "  Updated DefaultTimeoutStartSec=30s"
+        fi
+        
+        # Reduce shutdown timeout (from 90s to 20s)
+        if ! grep -q "^DefaultTimeoutStopSec=" "$systemd_system_conf"; then
+            echo "DefaultTimeoutStopSec=20s" >> "$systemd_system_conf"
+            changed=true
+            log_info "  Set DefaultTimeoutStopSec=20s (faster shutdown)"
+        elif grep -q "^DefaultTimeoutStopSec=90s" "$systemd_system_conf"; then
+            sed -i 's/^DefaultTimeoutStopSec=90s/DefaultTimeoutStopSec=20s/' "$systemd_system_conf"
+            changed=true
+            log_info "  Updated DefaultTimeoutStopSec=20s"
+        fi
+        
+        # Reduce abort timeout (from 90s to 10s)
+        if ! grep -q "^DefaultTimeoutAbortSec=" "$systemd_system_conf"; then
+            echo "DefaultTimeoutAbortSec=10s" >> "$systemd_system_conf"
+            changed=true
+            log_info "  Set DefaultTimeoutAbortSec=10s"
+        fi
+    fi
+    
+    # 2. Enable parallel service startup (already default, but ensure it's enabled)
+    local systemd_user_conf="/etc/systemd/user.conf"
+    if [[ -f "$systemd_user_conf" ]]; then
+        if ! grep -q "^DefaultTimeoutStartSec=" "$systemd_user_conf"; then
+            echo "" >> "$systemd_user_conf"
+            echo "# CineStream: Optimize user service startup" >> "$systemd_user_conf"
+            echo "DefaultTimeoutStartSec=30s" >> "$systemd_user_conf"
+            changed=true
+        fi
+    fi
+    
+    # 3. Optimize journald for faster startup
+    local journald_conf="/etc/systemd/journald.conf"
+    if [[ -f "$journald_conf" ]]; then
+        # Reduce journal size limits for faster startup
+        if ! grep -q "^SystemMaxUse=" "$journald_conf" || grep -q "^#SystemMaxUse=" "$journald_conf"; then
+            if grep -q "^#SystemMaxUse=" "$journald_conf"; then
+                sed -i 's/^#SystemMaxUse=.*/SystemMaxUse=100M/' "$journald_conf"
+            else
+                echo "SystemMaxUse=100M" >> "$journald_conf"
+            fi
+            changed=true
+            log_info "  Set journal SystemMaxUse=100M (faster startup)"
+        fi
+    fi
+    
+    # 4. Disable unnecessary systemd services that slow down boot
+    # (Already handled in disable_unnecessary_services, but ensure critical ones are optimized)
+    
+    # 5. Optimize filesystem mount options for faster boot (already done in optimize_system with noatime)
+    
+    # Reload systemd if changes were made
+    if [[ "$changed" == "true" ]]; then
+        systemctl daemon-reload 2>/dev/null || true
+        log_success "  Startup/shutdown optimizations applied"
+        log_info "  - Service timeouts: 30s startup, 20s shutdown"
+        log_info "  - Journal size: Limited to 100M for faster startup"
+    else
+        log_info "  Startup/shutdown already optimized"
+    fi
+    
+    # 6. Enable systemd-analyze blame to help identify slow services (informational)
+    log_info "  To identify slow boot services, run: systemd-analyze blame"
+    log_info "  To see boot time, run: systemd-analyze"
 }
 
 # Configure comprehensive firewall rules
