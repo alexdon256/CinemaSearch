@@ -2350,11 +2350,13 @@ configure_nginx_localhost() {
     local DOMAIN_NAME="${DOMAIN_NAME:-}"
     if [[ -n "$DOMAIN_NAME" ]]; then
         # Check if SSL certificate exists for the domain
-        if [[ -f "/etc/letsencrypt/live/${DOMAIN_NAME}/fullchain.pem" ]] || \
-           [[ -f "/etc/nginx/conf.d/${APP_NAME}.conf" ]] && \
-           grep -q "ssl_certificate" "/etc/nginx/conf.d/${APP_NAME}.conf" 2>/dev/null; then
+        if [[ -f "/etc/letsencrypt/live/${DOMAIN_NAME}/fullchain.pem" ]]; then
             SSL_ENABLED=true
             log_info "SSL detected for domain '$DOMAIN_NAME' - localhost will redirect to HTTPS"
+        elif [[ -f "/etc/nginx/conf.d/${APP_NAME}.conf" ]] && \
+             grep -q "ssl_certificate" "/etc/nginx/conf.d/${APP_NAME}.conf" 2>/dev/null; then
+            SSL_ENABLED=true
+            log_info "SSL detected in Nginx config for domain '$DOMAIN_NAME' - localhost will redirect to HTTPS"
         fi
     fi
     
