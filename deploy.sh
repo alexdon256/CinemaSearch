@@ -3676,6 +3676,8 @@ diagnose_internet_access() {
 stop_all() {
     log_info "Stopping all services..."
     
+    # Note: SSH is intentionally NOT stopped to maintain remote access
+    
     # Stop all app services
     for app_dir in "$WWW_ROOT"/*; do
         if [[ -d "$app_dir" && -f "$app_dir/.deploy_config" ]]; then
@@ -3703,6 +3705,9 @@ stop_all() {
 # Start all services
 start_all() {
     log_info "Starting all services..."
+    
+    # Ensure SSH is running first
+    ensure_ssh_service
     
     # Start MongoDB first
     systemctl start mongodb.service
@@ -3746,6 +3751,8 @@ uninit_server() {
         log_warning "  - MongoDB service and data (DESTRUCTIVE!)"
         log_warning "  - Nginx service and package (DESTRUCTIVE!)"
     fi
+    log_info ""
+    log_info "Note: SSH service will be preserved, enabled, and kept running"
     echo ""
     read -p "Are you sure you want to continue? Type 'yes' to confirm: " CONFIRM
     
@@ -3755,6 +3762,10 @@ uninit_server() {
     fi
     
     log_info "Starting server cleanup..."
+    
+    # Ensure SSH remains enabled and running (critical for remote access)
+    log_info "Ensuring SSH service remains enabled and running..."
+    ensure_ssh_service
     
     # Stop all services first
     log_info "Stopping all services..."
@@ -3890,6 +3901,10 @@ uninit_server() {
     rm -f /var/log/cinestream-cpu-affinity.log
     rm -f /var/log/cinestream-cpu-affinity-monitor.log
     
+    # Ensure SSH is still enabled and running after cleanup
+    log_info "Re-ensuring SSH service is enabled and running..."
+    ensure_ssh_service
+    
     log_success "Server cleanup complete!"
     log_info "Remaining components:"
     if [[ "$REMOVE_MONGODB" != "yes" ]]; then
@@ -3900,6 +3915,7 @@ uninit_server() {
         log_info "  - MongoDB removed (if confirmed)"
         log_info "  - Nginx removed (if confirmed)"
     fi
+    log_info "  - SSH (service preserved, enabled, and running)"
     log_info "  - System packages (not removed unless explicitly uninstalled)"
     log_info ""
     log_info "To completely reinitialize, run: $0 init-server"
@@ -4761,6 +4777,9 @@ enable_autostart() {
     # Enable core services
     systemctl enable mongodb.service 2>/dev/null || true
     systemctl enable nginx.service 2>/dev/null || true
+    
+    # Enable SSH service
+    ensure_ssh_service
     
     # Create master target if it doesn't exist
     if [[ ! -f "$SYSTEMD_DIR/cinestream.target" ]]; then
