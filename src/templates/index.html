@@ -1565,6 +1565,7 @@
         let showtimes = [];
         let pollingInterval = null;
         let autocompleteTimeout = null;
+        let skeletonTimeout = null;
         
         // Auto-fill city and country if detected from IP
         {% if detected_city and detected_country %}
@@ -2506,25 +2507,49 @@
         
         // Helper functions for UI states
         function showLoadingSkeleton() {
+            // Clear any existing skeleton timeout
+            if (skeletonTimeout) {
+                clearTimeout(skeletonTimeout);
+                skeletonTimeout = null;
+            }
             // Show spinner first, then skeleton after a brief moment
             showLoadingState('Preparing to load showtimes...');
-            setTimeout(() => {
-                container.innerHTML = `
-                    <div class="loading-skeleton">
-                        ${Array(6).fill(0).map(() => `
-                            <div class="skeleton-card">
-                                <div class="skeleton-image"></div>
-                                <div class="skeleton-content">
-                                    <div class="skeleton-line short"></div>
-                                    <div class="skeleton-line medium"></div>
-                                    <div class="skeleton-line"></div>
-                                    <div class="skeleton-line short"></div>
+            skeletonTimeout = setTimeout(() => {
+                // Only show skeleton if we're still loading (no error/result shown yet)
+                if (container.querySelector('.loading-skeleton') === null && 
+                    container.querySelector('.error-state') === null &&
+                    container.querySelector('.empty-state') === null) {
+                    container.innerHTML = `
+                        <div class="loading-skeleton">
+                            ${Array(6).fill(0).map(() => `
+                                <div class="skeleton-card">
+                                    <div class="skeleton-image"></div>
+                                    <div class="skeleton-content">
+                                        <div class="skeleton-line short"></div>
+                                        <div class="skeleton-line medium"></div>
+                                        <div class="skeleton-line"></div>
+                                        <div class="skeleton-line short"></div>
+                                    </div>
                                 </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                `;
+                            `).join('')}
+                        </div>
+                    `;
+                }
+                skeletonTimeout = null;
             }, 500);
+        }
+        
+        function clearLoadingSkeleton() {
+            // Clear skeleton timeout if it exists
+            if (skeletonTimeout) {
+                clearTimeout(skeletonTimeout);
+                skeletonTimeout = null;
+            }
+            // Remove skeleton from DOM if present
+            const skeleton = container.querySelector('.loading-skeleton');
+            if (skeleton) {
+                skeleton.remove();
+            }
         }
         
         function showLoadingState(message = 'Loading...') {
@@ -2568,6 +2593,7 @@
         
         function showEmptyState(message, icon = '🎬') {
             hideLoadingOverlay();
+            clearLoadingSkeleton(); // Clear skeleton when showing empty state
             container.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-state-icon">${icon}</div>
@@ -2579,6 +2605,7 @@
         
         function showErrorState(message, retryCallback = null) {
             hideLoadingOverlay();
+            clearLoadingSkeleton(); // Clear skeleton when showing error state
             const errorHtml = `
                 <div class="error-state">
                     <div class="error-icon">⚠️</div>
@@ -2599,6 +2626,7 @@
         
         function renderShowtimes() {
             hideLoadingOverlay();
+            clearLoadingSkeleton(); // Clear skeleton when rendering showtimes
             if (!showtimes || showtimes.length === 0) {
                 showEmptyState('{{ translations.no_showtimes or "No showtimes found" }}', '🎬');
                 return;
