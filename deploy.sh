@@ -2392,8 +2392,22 @@ configure_nginx_localhost() {
     
     # Also check for any other files that might serve the default page
     # Look for server blocks with root pointing to /usr/share/nginx/html (default welcome page location)
-    for conf_file in /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null; do
-        if [[ -f "$conf_file" ]] && [[ "$conf_file" != "$LOCALHOST_CONF" ]]; then
+    local conf_files=()
+    # Collect conf.d files
+    if [[ -d "/etc/nginx/conf.d" ]]; then
+        for conf_file in /etc/nginx/conf.d/*.conf; do
+            [[ -f "$conf_file" ]] && conf_files+=("$conf_file")
+        done
+    fi
+    # Collect sites-enabled files
+    if [[ -d "/etc/nginx/sites-enabled" ]]; then
+        for conf_file in /etc/nginx/sites-enabled/*; do
+            [[ -f "$conf_file" ]] && conf_files+=("$conf_file")
+        done
+    fi
+    
+    for conf_file in "${conf_files[@]}"; do
+        if [[ "$conf_file" != "$LOCALHOST_CONF" ]]; then
             # Check if this config serves the default welcome page
             if grep -q "root.*/usr/share/nginx/html" "$conf_file" 2>/dev/null || \
                grep -q "root.*/var/www/html" "$conf_file" 2>/dev/null; then
