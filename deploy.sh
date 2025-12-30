@@ -2548,24 +2548,60 @@ server {
     error_log /dev/null;
 EOF
 
-    # If SSL is enabled, redirect to HTTPS; otherwise serve HTTP directly
-    if [[ "$SSL_ENABLED" == "true" ]] && [[ -n "$DOMAIN_NAME" ]]; then
+    # Always redirect HTTP to HTTPS (port 443)
+    # If domain is configured, redirect to domain's HTTPS; otherwise redirect to same host on HTTPS
+    if [[ -n "$DOMAIN_NAME" ]] && [[ "$SSL_ENABLED" == "true" ]]; then
         cat >> "$LOCALHOST_CONF" <<EOF
     
     # Redirect to HTTPS domain (SSL is configured)
-    # Redirect localhost/IP requests to the configured domain's HTTPS
     location / {
         return 301 https://${DOMAIN_NAME}\$request_uri;
     }
 }
 EOF
     else
+        # Redirect to HTTPS on same host (will need SSL certificate)
         cat >> "$LOCALHOST_CONF" <<EOF
     
+    # Redirect all HTTP requests to HTTPS (port 443)
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+EOF
+    fi
+    
+    # Add HTTPS server block (port 443)
+    if [[ "$SSL_ENABLED" == "true" ]] && [[ -n "$DOMAIN_NAME" ]]; then
+        # SSL is configured - use proper certificates
+        cat >> "$LOCALHOST_CONF" <<EOF
+
+# HTTPS server for localhost and IP access (SSL enabled)
+server {
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
+    server_name _;
+    
+    # SSL certificate paths
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN_NAME}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN_NAME}/privkey.pem;
+    
+    # SSL configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    
     # Security headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-XSS-Protection "1; mode=block" always;
+    
+    # Logging disabled
+    access_log off;
+    error_log /dev/null;
     
     # Rate limiting
     limit_req zone=general_limit burst=20 nodelay;
@@ -2648,7 +2684,152 @@ EOF
     }
 }
 EOF
+    else
+        # SSL not configured - create self-signed certificate for localhost/IP access
+        log_info "SSL not configured. Creating self-signed certificate for HTTPS..."
+        local ssl_dir="/etc/nginx/ssl"
+        mkdir -p "$ssl_dir"
+        
+        local cert_file="$ssl_dir/localhost-selfsigned.crt"
+        local key_file="$ssl_dir/localhost-selfsigned.key"
+        
+        # Create self-signed certificate if it doesn't exist
+        if [[ ! -f "$cert_file" ]] || [[ ! -f "$key_file" ]]; then
+            log_info "Generating self-signed SSL certificate..."
+            openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                -keyout "$key_file" \
+                -out "$cert_file" \
+                -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost" \
+                2>/dev/null || {
+                log_error "Failed to generate self-signed certificate"
+                log_error "Install openssl: sudo pacman -S openssl"
+                return 1
+            }
+            chmod 600 "$key_file"
+            chmod 644 "$cert_file"
+            log_success "Self-signed certificate created"
+        else
+            log_info "Self-signed certificate already exists"
+        fi
+        
+        # Create HTTPS server with self-signed certificate
+        cat >> "$LOCALHOST_CONF" <<EOF
+
+# HTTPS server for localhost and IP access (self-signed certificate)
+server {
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
+    server_name _;
+    
+    # Self-signed SSL certificate (for localhost/IP access without domain)
+    ssl_certificate $cert_file;
+    ssl_certificate_key $key_file;
+    
+    # SSL configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    
+    # Security headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    
+    # Logging disabled
+    access_log off;
+    error_log /dev/null;
+    
+    # Rate limiting
+    limit_req zone=general_limit burst=20 nodelay;
+    limit_conn conn_limit 10;
+    
+    # Disable unnecessary HTTP methods
+    if (\$request_method !~ ^(GET|HEAD|POST|OPTIONS)\$ ) {
+        return 405;
+    }
+    
+    # Block common attack patterns
+    location ~* \.(env|git|svn|htaccess|htpasswd|ini|log|sh|sql|conf)\$ {
+        deny all;
+        return 404;
+    }
+    
+    # Block access to hidden files
+    location ~ /\. {
+        deny all;
+        return 404;
+    }
+    
+    # API endpoints
+    location /api/ {
+        limit_req zone=api_limit burst=10 nodelay;
+        limit_conn conn_limit_per_ip 5;
+        
+        proxy_pass http://${UPSTREAM_NAME}_localhost;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$server_name;
+        
+        # Timeouts
+        proxy_connect_timeout 30s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 30s;
+        
+        proxy_intercept_errors off;
+    }
+    
+    # Main site
+    location / {
+        limit_req zone=general_limit burst=20 nodelay;
+        limit_conn conn_limit 10;
+        
+        proxy_pass http://${UPSTREAM_NAME}_localhost;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$server_name;
+        
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        
+        proxy_intercept_errors off;
+    }
+    
+    # Static files
+    location /static/ {
+        proxy_pass http://${UPSTREAM_NAME}_localhost;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        
+        proxy_cache_valid 200 30d;
+        add_header Cache-Control "public, immutable";
+        
+        proxy_intercept_errors off;
+    }
+}
+EOF
+        log_info "HTTPS server configured with self-signed certificate"
+        log_info "Note: Browsers will show a security warning for self-signed certificates"
+        log_info "For production, set up a domain and use Let's Encrypt:"
+        log_info "  1. sudo $0 set-domain yourdomain.com"
+        log_info "  2. sudo $0 install-ssl yourdomain.com"
     fi
+    
     
     log_success "Localhost configuration created: $LOCALHOST_CONF"
     
@@ -2982,17 +3163,20 @@ enable_internet_access() {
     log_info "  - Public IP: $public_ip"
     log_info ""
     log_info "Try accessing from internet:"
-    log_info "  - http://$public_ip"
+    log_info "  - https://$public_ip (HTTPS - recommended)"
+    log_info "  - http://$public_ip (HTTP - automatically redirects to HTTPS)"
     if [[ -n "$ipv4_addresses" ]]; then
         echo "$ipv4_addresses" | while read -r ip; do
-            log_info "  - http://$ip (from local network)"
+            log_info "  - https://$ip (from local network)"
         done
     fi
     log_info ""
     log_info "Security note:"
-    log_info "  - HTTP (port 80) is open for internet access"
-    log_info "  - Consider setting up SSL/HTTPS for secure access"
-    log_info "  - Run: sudo $0 install-ssl <your-domain> (if you have a domain)"
+    log_info "  - HTTP (port 80) automatically redirects to HTTPS (port 443)"
+    log_info "  - HTTPS (port 443) is configured with SSL"
+    log_info "  - For production with a domain, use Let's Encrypt:"
+    log_info "    sudo $0 set-domain yourdomain.com"
+    log_info "    sudo $0 install-ssl yourdomain.com"
     log_info ""
 }
 
@@ -3123,6 +3307,185 @@ abracadabra() {
     log_info ""
     log_info "Check status: sudo $0 status"
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+# Diagnose internet access issues and provide router configuration help
+diagnose_internet_access() {
+    log_info "🔍 Diagnosing internet access issues..."
+    log_info ""
+    
+    # Get server information
+    local ipv4_addresses
+    ipv4_addresses=$(ip -4 addr show 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' || \
+                    ifconfig 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' || true)
+    local public_ip
+    public_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || \
+                curl -s --max-time 5 https://ifconfig.me 2>/dev/null || \
+                curl -s --max-time 5 https://icanhazip.com 2>/dev/null || \
+                echo "Unable to detect")
+    local local_ip
+    local_ip=$(echo "$ipv4_addresses" | head -1 || echo "Not detected")
+    
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Server Information:"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "  Local IP Address: $local_ip"
+    log_info "  Public IP Address: $public_ip"
+    log_info ""
+    
+    # Check if server is behind NAT
+    if [[ -n "$local_ip" ]] && [[ -n "$public_ip" ]] && [[ "$local_ip" != "$public_ip" ]]; then
+        log_warning "⚠ Your server is behind a router/NAT"
+        log_warning "   Local IP ($local_ip) ≠ Public IP ($public_ip)"
+        log_warning "   Port forwarding is REQUIRED for internet access"
+        log_info ""
+    fi
+    
+    # Check Nginx
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Checking Nginx:"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    if systemctl is-active --quiet nginx.service 2>/dev/null; then
+        log_success "✓ Nginx is running"
+    else
+        log_error "✗ Nginx is NOT running"
+        log_info "  Start it: sudo systemctl start nginx"
+    fi
+    
+    # Check if Nginx is listening
+    if ss -tlnp 2>/dev/null | grep -q ":80.*nginx" || netstat -tlnp 2>/dev/null | grep -q ":80.*nginx"; then
+        local listen_info
+        listen_info=$(ss -tlnp 2>/dev/null | grep ":80" | head -1 || netstat -tlnp 2>/dev/null | grep ":80" | head -1 || echo "")
+        if echo "$listen_info" | grep -q "0.0.0.0:80\|\\*:80"; then
+            log_success "✓ Nginx is listening on all interfaces (0.0.0.0:80)"
+        else
+            log_warning "⚠ Nginx listening info: $listen_info"
+        fi
+    else
+        log_error "✗ Nginx is NOT listening on port 80"
+    fi
+    
+    # Check firewall
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Checking Firewall:"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    if command -v firewall-cmd &> /dev/null && systemctl is-active --quiet firewalld 2>/dev/null; then
+        if firewall-cmd --list-services 2>/dev/null | grep -q "http"; then
+            log_success "✓ Firewalld allows HTTP (port 80)"
+        else
+            log_error "✗ Firewalld does NOT allow HTTP"
+            log_info "  Fix: sudo firewall-cmd --permanent --add-service=http && sudo firewall-cmd --reload"
+        fi
+    elif command -v ufw &> /dev/null; then
+        if ufw status 2>/dev/null | grep -q "80/tcp.*ALLOW"; then
+            log_success "✓ UFW allows port 80"
+        else
+            log_error "✗ UFW does NOT allow port 80"
+            log_info "  Fix: sudo ufw allow 80/tcp"
+        fi
+    else
+        log_warning "⚠ No firewall detected or firewall status unknown"
+    fi
+    
+    # Test local connectivity
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Testing Local Connectivity:"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    if curl -s --max-time 3 -o /dev/null -w "%{http_code}" http://localhost/ 2>/dev/null | grep -q "[23][0-9][0-9]"; then
+        log_success "✓ Server responds locally (http://localhost)"
+    else
+        log_error "✗ Server does NOT respond locally"
+        log_info "  Check: sudo systemctl status nginx"
+        log_info "  Check: sudo systemctl status cinestream@8001.service"
+    fi
+    
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🌐 TP-LINK ROUTER CONFIGURATION GUIDE"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info ""
+    log_info "To make your server accessible from the internet, configure port forwarding:"
+    log_info ""
+    log_info "STEP 1: Access Router Admin Panel"
+    log_info "  - Open browser: http://192.168.1.1 or http://192.168.0.1"
+    log_info "  - Login with admin credentials (check router label)"
+    log_info ""
+    log_info "STEP 2: Find Port Forwarding / Virtual Server"
+    log_info "  - Look for: 'Port Forwarding', 'Virtual Server', 'NAT Forwarding', or 'Advanced' → 'NAT Forwarding'"
+    log_info "  - Common locations:"
+    log_info "    • Advanced → NAT Forwarding → Port Forwarding"
+    log_info "    • Advanced → Virtual Server"
+    log_info "    • Firewall → Port Forwarding"
+    log_info ""
+    log_info "STEP 3: Add Port Forwarding Rules"
+    log_info ""
+    log_info "  Rule 1 - HTTP (Port 80) - Redirects to HTTPS:"
+    log_info "    Service Name: CineStream HTTP"
+    log_info "    External Port: 80"
+    log_info "    Internal Port: 80"
+    log_info "    Protocol: TCP (or Both)"
+    log_info "    Internal IP: $local_ip"
+    log_info "    Status: Enabled"
+    log_info ""
+    log_info "  Rule 2 - HTTPS (Port 443) - Main Access:"
+    log_info "    Service Name: CineStream HTTPS"
+    log_info "    External Port: 443"
+    log_info "    Internal Port: 443"
+    log_info "    Protocol: TCP (or Both)"
+    log_info "    Internal IP: $local_ip"
+    log_info "    Status: Enabled"
+    log_info ""
+    log_info "  NOTE: All HTTP (port 80) requests automatically redirect to HTTPS (port 443)"
+    log_info ""
+    log_info "STEP 4: Save and Apply"
+    log_info "  - Click 'Save' or 'Apply'"
+    log_info "  - Router may restart (takes 1-2 minutes)"
+    log_info ""
+    log_info "STEP 5: Verify Port Forwarding"
+    log_info "  - Use online port checker: https://www.yougetsignal.com/tools/open-ports/"
+    log_info "  - Test Port 80: Should be open (redirects to HTTPS)"
+    log_info "  - Test Port 443: Should be open (main HTTPS access)"
+    log_info "  - Access your site: https://$public_ip"
+    log_info "  - Note: HTTP (http://$public_ip) will automatically redirect to HTTPS"
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "TROUBLESHOOTING:"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info ""
+    log_info "If port forwarding doesn't work:"
+    log_info ""
+    log_info "1. Check Router Firewall:"
+    log_info "   - Some routers have a firewall that blocks forwarded ports"
+    log_info "   - Look for 'Firewall Rules' or 'Access Control'"
+    log_info "   - Ensure port 80 is allowed"
+    log_info ""
+    log_info "2. Check ISP Blocking:"
+    log_info "   - Some ISPs block ports 80 and 443 for residential connections"
+    log_info "   - Port 80: Used for HTTP→HTTPS redirect (required)"
+    log_info "   - Port 443: Used for HTTPS access (required)"
+    log_info "   - If blocked, contact your ISP or use a VPS with ports 80/443 open"
+    log_info ""
+    log_info "3. Verify Server IP:"
+    log_info "   - Make sure your server's IP is: $local_ip"
+    log_info "   - Check: ip addr show | grep inet"
+    log_info "   - If IP changed, update port forwarding rule"
+    log_info ""
+    log_info "4. Test from Different Network:"
+    log_info "   - Try accessing from mobile data (not WiFi)"
+    log_info "   - Or ask someone on a different network to test"
+    log_info ""
+    log_info "5. Check Router Logs:"
+    log_info "   - Some TP-Link routers show connection attempts in logs"
+    log_info "   - Look for 'System Log' or 'Security Log'"
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info ""
+    log_info "After configuring port forwarding, test access:"
+    log_info "  - From internet: http://$public_ip"
+    log_info "  - Should show your CineStream application"
+    log_info ""
 }
 
 # Stop all services
@@ -4148,6 +4511,9 @@ main() {
         abracadabra)
             abracadabra
             ;;
+        diagnose-internet)
+            diagnose_internet_access
+            ;;
         *)
             echo "CineStream Master Deployment Script v21.0"
             echo ""
@@ -4178,6 +4544,8 @@ main() {
             echo "                                Runs: init-server, deploy-app cinestream,"
             echo "                                enable-autostart, optimize-system, start-all,"
             echo "                                fix-localhost, enable-internet-access"
+            echo "  diagnose-internet              Diagnose internet access issues"
+            echo "                                Shows router configuration guide (TP-Link)"
             exit 1
             ;;
     esac
