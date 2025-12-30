@@ -71,7 +71,7 @@ sudo ./deploy.sh status
 if command -v mongosh &>/dev/null; then
     mongosh --eval "db.version()"
 elif [[ -f /opt/mongodb/bin/mongosh ]]; then
-    /opt/mongodb/bin/mongosh --eval "db.version()"
+/opt/mongodb/bin/mongosh --eval "db.version()"
 elif command -v mongod &>/dev/null; then
     mongod --version
 fi
