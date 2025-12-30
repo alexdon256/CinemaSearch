@@ -2410,8 +2410,22 @@ configure_nginx_localhost() {
     
     # Double-check: Remove any default_server from other configs one more time
     log_info "Final check: Removing default_server from all other configs..."
-    for conf_file in /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null; do
-        if [[ -f "$conf_file" ]] && [[ "$conf_file" != "$LOCALHOST_CONF" ]]; then
+    local final_check_files=()
+    # Collect conf.d files
+    if [[ -d "/etc/nginx/conf.d" ]]; then
+        for conf_file in /etc/nginx/conf.d/*.conf; do
+            [[ -f "$conf_file" ]] && final_check_files+=("$conf_file")
+        done
+    fi
+    # Collect sites-enabled files
+    if [[ -d "/etc/nginx/sites-enabled" ]]; then
+        for conf_file in /etc/nginx/sites-enabled/*; do
+            [[ -f "$conf_file" ]] && final_check_files+=("$conf_file")
+        done
+    fi
+    
+    for conf_file in "${final_check_files[@]}"; do
+        if [[ "$conf_file" != "$LOCALHOST_CONF" ]]; then
             if grep -q "listen.*default_server" "$conf_file" 2>/dev/null; then
                 log_warning "Found default_server in $conf_file - removing it..."
                 sed -i 's/ listen \([0-9]*\) default_server;/ listen \1;/g' "$conf_file" 2>/dev/null || true
