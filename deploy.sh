@@ -2605,7 +2605,6 @@ EOF
 }
 EOF
     fi
-EOF
     
     log_success "Localhost configuration created: $LOCALHOST_CONF"
     
