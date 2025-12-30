@@ -393,7 +393,26 @@ init_server() {
     
     # Deploy application automatically
     log_info "Deploying CineStream application..."
+    set +e  # Temporarily disable exit on error to handle deployment gracefully
     deploy_application
+    local deploy_result=$?
+    set -e  # Re-enable exit on error
+    
+    if [[ $deploy_result -eq 0 ]]; then
+        log_success "Application deployed successfully"
+    elif [[ $deploy_result -eq 1 ]]; then
+        # Check if app already exists (this is not a fatal error)
+        if [[ -d "$WWW_ROOT/cinestream" && -f "$WWW_ROOT/cinestream/.deploy_config" ]]; then
+            log_info "Application 'cinestream' already exists, skipping deployment"
+            log_info "To redeploy, remove it first: sudo rm -rf $WWW_ROOT/cinestream"
+        else
+            log_warning "Application deployment failed"
+            log_info "You can try deploying manually later: sudo ./deploy.sh deploy-app cinestream"
+        fi
+    else
+        log_error "Application deployment failed with exit code: $deploy_result"
+        log_error "Please check the error messages above and fix any issues"
+    fi
     
     log_success "Server initialization complete!"
     log_info "MongoDB is running on 127.0.0.1:27017"
@@ -2752,7 +2771,7 @@ SECRET_KEY=$secret_key
 CLAUDE_MODEL=haiku
 EOF
         chmod 600 "$APP_DIR/.env"
-s        log_warning ".env file created with default values. Please update ANTHROPIC_API_KEY!"
+        log_warning ".env file created with default values. Please update ANTHROPIC_API_KEY!"
 
     else
         log_info ".env file already exists, skipping creation"
