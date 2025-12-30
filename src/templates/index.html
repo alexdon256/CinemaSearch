@@ -334,8 +334,14 @@
             transition: background 0.2s;
         }
         
-        .suggestion-item:hover {
+        .suggestion-item:hover,
+        .suggestion-item.selected {
             background: var(--accent);
+        }
+        
+        .suggestion-item.selected {
+            outline: 2px solid var(--accent);
+            outline-offset: -2px;
         }
         
         .suggestion-item:last-child {
@@ -395,6 +401,31 @@
         
         .loading-overlay .spinner-glow {
             margin: 0 auto 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        /* Ensure spinner circles are perfectly centered */
+        .loading-overlay .spinner-glow::before,
+        .loading-overlay .spinner-glow::after {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            margin: 0;
+        }
+        
+        /* Center the movie icon inside spinner */
+        .loading-overlay .spinner-glow > * {
+            position: relative;
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
         }
         
         .loading-overlay .loading-text {
@@ -732,8 +763,14 @@
             transition: background 0.2s;
         }
         
-        .country-option:hover {
+        .country-option:hover,
+        .country-option.selected {
             background: var(--accent);
+        }
+        
+        .country-option.selected {
+            outline: 2px solid var(--accent);
+            outline-offset: -2px;
         }
         
         .country-option:last-child {
@@ -1605,9 +1642,13 @@
                 clearTimeout(countrySearchTimeout);
             }
             
+            // Reset selection when input changes
+            selectedCountryIndex = -1;
+            
             if (query.length === 0) {
                 countryDropdown.classList.remove('show');
                 countrySelect.value = '';
+                selectedCountryIndex = -1;
                 return;
             }
             
@@ -1622,26 +1663,84 @@
                     return;
                 }
                 
-                filtered.forEach(country => {
+                filtered.forEach((country, index) => {
                     const div = document.createElement('div');
                     div.className = 'country-option';
                     div.textContent = country;
-                    div.addEventListener('click', () => {
+                    
+                    // Function to select this country (used by both click and keyboard)
+                    const selectCountry = () => {
                         countryInput.value = country;
                         countrySelect.value = country;
                         countryDropdown.classList.remove('show');
-                    });
+                        selectedCountryIndex = -1; // Reset selection
+                    };
+                    
+                    div.addEventListener('click', selectCountry);
                     countryDropdown.appendChild(div);
                 });
                 
                 countryDropdown.classList.add('show');
+                selectedCountryIndex = -1; // Reset selection when new suggestions are shown
             }, 200);
         });
+        
+        // Keyboard navigation for country suggestions
+        countryInput.addEventListener('keydown', (e) => {
+            const countryOptions = countryDropdown.querySelectorAll('.country-option');
+            
+            if (!countryDropdown.classList.contains('show') || countryOptions.length === 0) {
+                // If suggestions are not visible, allow Enter key to work normally
+                return;
+            }
+            
+            switch (e.key) {
+                case 'ArrowDown':
+                    e.preventDefault();
+                    selectedCountryIndex = (selectedCountryIndex + 1) % countryOptions.length;
+                    updateCountrySelection(countryOptions);
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    selectedCountryIndex = selectedCountryIndex <= 0 
+                        ? countryOptions.length - 1 
+                        : selectedCountryIndex - 1;
+                    updateCountrySelection(countryOptions);
+                    break;
+                case 'Enter':
+                    e.preventDefault();
+                    if (selectedCountryIndex >= 0 && selectedCountryIndex < countryOptions.length) {
+                        countryOptions[selectedCountryIndex].click();
+                    } else {
+                        // If no selection, close dropdown
+                        countryDropdown.classList.remove('show');
+                        selectedCountryIndex = -1;
+                    }
+                    break;
+                case 'Escape':
+                    e.preventDefault();
+                    countryDropdown.classList.remove('show');
+                    selectedCountryIndex = -1;
+                    break;
+            }
+        });
+        
+        function updateCountrySelection(countryOptions) {
+            countryOptions.forEach((item, index) => {
+                if (index === selectedCountryIndex) {
+                    item.classList.add('selected');
+                    item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                } else {
+                    item.classList.remove('selected');
+                }
+            });
+        }
         
         // Hide country dropdown when clicking outside
         document.addEventListener('click', (e) => {
             if (!countryInput.contains(e.target) && !countryDropdown.contains(e.target)) {
                 countryDropdown.classList.remove('show');
+                selectedCountryIndex = -1;
             }
         });
         
@@ -1673,14 +1772,18 @@
         async function fetchCitySuggestions(query) {
             try {
                 const countryCode = getCountryCode(countrySelect.value);
-                let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&featuretype=city`;
+                // Request address details for better structured data
+                let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&featuretype=city&addressdetails=1`;
                 
                 if (countryCode) {
                     url += `&countrycodes=${countryCode}`;
                 }
                 
                 const response = await fetch(url, {
-                    headers: { 'Accept-Language': '{{ lang }}' }
+                    headers: { 
+                        'Accept-Language': '{{ lang }}',
+                        'User-Agent': 'CineStream/1.0' // Required by Nominatim
+                    }
                 });
                 
                 const results = await response.json();
@@ -1694,28 +1797,59 @@
         function displayCitySuggestions(results) {
             if (results.length === 0) {
                 citySuggestions.classList.remove('show');
+                selectedSuggestionIndex = -1;
                 return;
             }
             
             citySuggestions.innerHTML = '';
-            results.forEach(result => {
+            selectedSuggestionIndex = -1; // Reset selection when new suggestions are shown
+            results.forEach((result, index) => {
                 const div = document.createElement('div');
                 div.className = 'suggestion-item';
                 
-                // Extract city, state, and country from display_name
-                // Format is typically: "City, State/Province, Country" or "City, Country"
-                const parts = result.display_name.split(', ');
-                const cityName = parts[0];
+                // Extract city, state, and country from Nominatim API response
+                // Prefer structured address object over parsing display_name
+                let cityName = '';
                 let stateName = '';
-                let countryName = parts[parts.length - 1];
+                let countryName = '';
                 
-                // If there are 3+ parts, the middle ones are likely state/province
-                if (parts.length >= 3) {
-                    // Try to identify state (usually second-to-last before country)
-                    // But could be multiple parts like "New York, NY, USA"
-                    const potentialState = parts.slice(1, -1).join(', ');
-                    stateName = potentialState;
+                if (result.address) {
+                    // Use structured address data (more reliable)
+                    cityName = result.address.city || 
+                              result.address.town || 
+                              result.address.village || 
+                              result.address.municipality ||
+                              result.address.county ||
+                              '';
+                    
+                    // State/province can be in different fields
+                    stateName = result.address.state || 
+                               result.address.province || 
+                               result.address.region ||
+                               result.address.state_district ||
+                               '';
+                    
+                    countryName = result.address.country || '';
                 }
+                
+                // Fallback to parsing display_name if address object is incomplete
+                if (!cityName || !countryName) {
+                    const parts = result.display_name.split(', ');
+                    if (!cityName) {
+                        cityName = parts[0];
+                    }
+                    if (!countryName) {
+                        countryName = parts[parts.length - 1];
+                    }
+                    if (!stateName && parts.length >= 3) {
+                        stateName = parts.slice(1, -1).join(', ');
+                    }
+                }
+                
+                // Clean up extracted values
+                cityName = cityName.trim();
+                stateName = stateName.trim();
+                countryName = countryName.trim();
                 
                 // Build display text
                 let displayText = cityName;
@@ -1732,27 +1866,149 @@
                 div.dataset.state = stateName;
                 div.dataset.country = countryName;
                 
-                div.addEventListener('click', () => {
+                // Function to select this suggestion (used by both click and keyboard)
+                const selectSuggestion = () => {
+                    // Set city name
                     cityInput.value = cityName;
                     
                     // Try to match and select the country
-                    const matchedCountry = countries.find(c => 
-                        c.toLowerCase() === countryName.toLowerCase() ||
-                        countryName.toLowerCase().includes(c.toLowerCase())
-                    );
-                    if (matchedCountry) {
-                        countrySelect.value = matchedCountry;
+                    // First, normalize country name (remove common suffixes, handle abbreviations)
+                    const normalizeCountryName = (name) => {
+                        return name.toLowerCase()
+                            .replace(/\s+/g, ' ')
+                            .trim();
+                    };
+                    
+                    const countryLower = normalizeCountryName(countryName);
+                    
+                    // Common country name mappings (API might return different names)
+                    const countryMappings = {
+                        'usa': 'United States',
+                        'us': 'United States',
+                        'united states of america': 'United States',
+                        'united states': 'United States',
+                        'uk': 'United Kingdom',
+                        'united kingdom': 'United Kingdom',
+                        'united kingdom of great britain and northern ireland': 'United Kingdom',
+                        'russian federation': 'Russia',
+                        'russia': 'Russia',
+                        'czechia': 'Czech Republic',
+                        'czech republic': 'Czech Republic',
+                        'myanmar': 'Myanmar',
+                        'burma': 'Myanmar',
+                        'east timor': 'Timor-Leste',
+                        'timor-leste': 'Timor-Leste',
+                        'swaziland': 'Eswatini',
+                        'eswatini': 'Eswatini',
+                        'macedonia': 'North Macedonia',
+                        'north macedonia': 'North Macedonia',
+                        'côte d\'ivoire': 'Ivory Coast',
+                        'cote d\'ivoire': 'Ivory Coast',
+                        'ivory coast': 'Ivory Coast',
+                        'south korea': 'South Korea',
+                        'republic of korea': 'South Korea',
+                        'north korea': 'North Korea',
+                        'democratic people\'s republic of korea': 'North Korea',
+                        'dprk': 'North Korea'
+                    };
+                    
+                    // Check mappings first
+                    let matchedCountry = null;
+                    if (countryMappings[countryLower]) {
+                        matchedCountry = countryMappings[countryLower];
+                    } else {
+                        // Try exact match
+                        matchedCountry = countries.find(c => {
+                            const cLower = normalizeCountryName(c);
+                            return cLower === countryLower;
+                        });
+                        
+                        // Try contains match (either direction)
+                        if (!matchedCountry) {
+                            matchedCountry = countries.find(c => {
+                                const cLower = normalizeCountryName(c);
+                                return countryLower.includes(cLower) || cLower.includes(countryLower);
+                            });
+                        }
+                        
+                        // Try word-based matching for multi-word countries
+                        if (!matchedCountry) {
+                            const countryWords = countryLower.split(/\s+/).filter(w => w.length > 2);
+                            matchedCountry = countries.find(c => {
+                                const cLower = normalizeCountryName(c);
+                                const cWords = cLower.split(/\s+/);
+                                // Check if significant words match
+                                return countryWords.some(word => cWords.includes(word)) ||
+                                       cWords.some(word => countryWords.includes(word));
+                            });
+                        }
                     }
                     
-                    // Store state for later use
-                    if (stateName) {
+                    // Always set the country - try to match first, then use the country name from API
+                    if (matchedCountry) {
+                        // Update both the hidden select and visible input with matched country
+                        countrySelect.value = matchedCountry;
+                        countryInput.value = matchedCountry;
+                        console.log(`✓ Country matched: "${countryName}" -> "${matchedCountry}"`);
+                    } else {
+                        // If no match found, try to find the closest match or set as-is
+                        // First, try to find by first word (e.g., "United" for "United States")
+                        const firstWord = countryLower.split(/\s+/)[0];
+                        const partialMatch = countries.find(c => {
+                            const cLower = normalizeCountryName(c);
+                            return cLower.startsWith(firstWord) || firstWord.length > 3 && cLower.includes(firstWord);
+                        });
+                        
+                        if (partialMatch) {
+                            countrySelect.value = partialMatch;
+                            countryInput.value = partialMatch;
+                            console.log(`✓ Country partially matched: "${countryName}" -> "${partialMatch}"`);
+                        } else {
+                            // Set the country name as-is in the input (user can verify/correct)
+                            countryInput.value = countryName;
+                            // Try to find similar countries for user reference
+                            const similar = countries.filter(c => {
+                                const cLower = normalizeCountryName(c);
+                                return cLower.includes(countryLower.substring(0, 3)) || 
+                                       countryLower.includes(cLower.substring(0, 3));
+                            }).slice(0, 3);
+                            
+                            console.warn(`⚠ Could not match country "${countryName}" to country list`);
+                            if (similar.length > 0) {
+                                console.log(`   Similar countries found: ${similar.join(', ')}`);
+                                // Auto-select the first similar country if very close match
+                                if (similar.length === 1 || countryLower.length <= 5) {
+                                    countrySelect.value = similar[0];
+                                    countryInput.value = similar[0];
+                                    console.log(`   Auto-selected closest match: "${similar[0]}"`);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Ensure country is always set (fallback to countryName if nothing else worked)
+                    if (!countryInput.value || countryInput.value.trim() === '') {
+                        countryInput.value = countryName;
+                        console.log(`   Set country to API value: "${countryName}"`);
+                    }
+                    
+                    // Store state for later use (always check if stateName is not empty)
+                    if (stateName && stateName.length > 0) {
                         cityInput.dataset.state = stateName;
+                        console.log(`✓ State stored: "${stateName}"`);
                     } else {
                         delete cityInput.dataset.state;
                     }
                     
+                    // Log summary for debugging
+                    console.log(`Selected location: City="${cityName}", State="${stateName || '(none)'}", Country="${matchedCountry || countryName}"`);
+                    
+                    // Close suggestions
                     citySuggestions.classList.remove('show');
-                });
+                    selectedSuggestionIndex = -1;
+                };
+                
+                div.addEventListener('click', selectSuggestion);
                 
                 citySuggestions.appendChild(div);
             });
@@ -1852,17 +2108,169 @@
             
             showLoadingSkeleton();
             
-            // Trigger scraping if needed
+            // First, check if data is already available before triggering a scrape
+            const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
+            try {
+                const params = new URLSearchParams({city_name: locationId});
+                if (formatFilter.value) params.append('format', formatFilter.value);
+                if (languageFilter.value) params.append('language', languageFilter.value);
+                
+                const existingDataResponse = await fetch(`/api/showtimes?${params}`);
+                const existingShowtimes = await existingDataResponse.json();
+                
+                // If we have showtimes available, display them immediately (no need to scrape)
+                if (existingShowtimes && Array.isArray(existingShowtimes) && existingShowtimes.length > 0) {
+                    hideLoadingOverlay(); // Stop animation
+                    showtimes = applyFilters(existingShowtimes);
+                    renderShowtimes();
+                    return; // Data is available, no need to trigger scrape
+                }
+            } catch (e) {
+                // If checking existing data fails, continue to scrape
+                console.log('Could not check existing data, proceeding with scrape...');
+            }
+            
+            // Data not available or check failed - trigger scraping
             await fetchShowtimes(city, country, state);
         });
         
-        // Also trigger search on Enter key in city input
-        cityInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                citySuggestions.classList.remove('show');
-                searchBtn.click();
+        // Keyboard navigation for city and country suggestions
+        let selectedSuggestionIndex = -1;
+        let selectedCountryIndex = -1;
+        
+        cityInput.addEventListener('keydown', (e) => {
+            const suggestions = citySuggestions.querySelectorAll('.suggestion-item');
+            
+            if (!citySuggestions.classList.contains('show') || suggestions.length === 0) {
+                // If suggestions are not visible, handle Enter key to search
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    citySuggestions.classList.remove('show');
+                    searchBtn.click();
+                }
+                return;
+            }
+            
+            switch (e.key) {
+                case 'ArrowDown':
+                    e.preventDefault();
+                    selectedSuggestionIndex = (selectedSuggestionIndex + 1) % suggestions.length;
+                    updateSuggestionSelection(suggestions);
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    selectedSuggestionIndex = selectedSuggestionIndex <= 0 
+                        ? suggestions.length - 1 
+                        : selectedSuggestionIndex - 1;
+                    updateSuggestionSelection(suggestions);
+                    break;
+                case 'Enter':
+                    e.preventDefault();
+                    if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < suggestions.length) {
+                        // Get the selected suggestion's data
+                        const selectedItem = suggestions[selectedSuggestionIndex];
+                        const cityName = selectedItem.dataset.city;
+                        const stateName = selectedItem.dataset.state || '';
+                        const countryName = selectedItem.dataset.country;
+                        
+                        // Set city name
+                        cityInput.value = cityName;
+                        
+                        // Use the same country matching logic as click handler
+                        const normalizeCountryName = (name) => {
+                            return name.toLowerCase()
+                                .replace(/\s+/g, ' ')
+                                .trim();
+                        };
+                        
+                        const countryLower = normalizeCountryName(countryName);
+                        
+                        // Common country name mappings
+                        const countryMappings = {
+                            'usa': 'United States',
+                            'us': 'United States',
+                            'united states of america': 'United States',
+                            'uk': 'United Kingdom',
+                            'united kingdom of great britain and northern ireland': 'United Kingdom',
+                            'russian federation': 'Russia',
+                            'czechia': 'Czech Republic',
+                            'myanmar': 'Myanmar',
+                            'burma': 'Myanmar',
+                            'east timor': 'Timor-Leste',
+                            'swaziland': 'Eswatini',
+                            'macedonia': 'North Macedonia',
+                            'north macedonia': 'North Macedonia',
+                            'côte d\'ivoire': 'Ivory Coast',
+                            'ivory coast': 'Ivory Coast'
+                        };
+                        
+                        let matchedCountry = null;
+                        if (countryMappings[countryLower]) {
+                            matchedCountry = countryMappings[countryLower];
+                        } else {
+                            matchedCountry = countries.find(c => {
+                                const cLower = normalizeCountryName(c);
+                                return cLower === countryLower;
+                            });
+                            
+                            if (!matchedCountry) {
+                                matchedCountry = countries.find(c => {
+                                    const cLower = normalizeCountryName(c);
+                                    return countryLower.includes(cLower) || cLower.includes(countryLower);
+                                });
+                            }
+                            
+                            if (!matchedCountry) {
+                                const countryWords = countryLower.split(/\s+/).filter(w => w.length > 2);
+                                matchedCountry = countries.find(c => {
+                                    const cLower = normalizeCountryName(c);
+                                    const cWords = cLower.split(/\s+/);
+                                    return countryWords.some(word => cWords.includes(word)) ||
+                                           cWords.some(word => countryWords.includes(word));
+                                });
+                            }
+                        }
+                        
+                        if (matchedCountry) {
+                            countrySelect.value = matchedCountry;
+                            countryInput.value = matchedCountry;
+                        } else {
+                            countryInput.value = countryName;
+                            console.warn(`Could not match country "${countryName}" to country list`);
+                        }
+                        
+                        // Store state
+                        if (stateName) {
+                            cityInput.dataset.state = stateName;
+                        } else {
+                            delete cityInput.dataset.state;
+                        }
+                        
+                        citySuggestions.classList.remove('show');
+                        selectedSuggestionIndex = -1;
+                    } else {
+                        citySuggestions.classList.remove('show');
+                        searchBtn.click();
+                    }
+                    break;
+                case 'Escape':
+                    e.preventDefault();
+                    citySuggestions.classList.remove('show');
+                    selectedSuggestionIndex = -1;
+                    break;
             }
         });
+        
+        function updateSuggestionSelection(suggestions) {
+            suggestions.forEach((item, index) => {
+                if (index === selectedSuggestionIndex) {
+                    item.classList.add('selected');
+                    item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                } else {
+                    item.classList.remove('selected');
+                }
+            });
+        }
         
         // Clear state when city input changes manually
         cityInput.addEventListener('input', (e) => {
@@ -1894,27 +2302,35 @@
                     return;
                 }
                 
-                // If we get showtimes directly, render them immediately
+                // If we get showtimes directly, render them immediately (stop animation)
                 if (data.showtimes && Array.isArray(data.showtimes) && data.showtimes.length > 0) {
+                    hideLoadingOverlay(); // Stop animation immediately
                     showtimes = applyFilters(data.showtimes);
                     renderShowtimes();
                     return;
                 }
                 
-                // Check if response contains showtimes directly
+                // Check if response contains showtimes (even if empty array)
                 if (data.showtimes && Array.isArray(data.showtimes)) {
-                    // Use showtimes from response immediately!
+                    // Use showtimes from response immediately! (stop animation)
+                    hideLoadingOverlay(); // Stop animation
                     showtimes = applyFilters(data.showtimes);
                     renderShowtimes();
+                    return;
                 } else if (data.status === 'success' || data.status === 'fresh') {
                     // Fallback: fetch showtimes separately (shouldn't happen with new API)
                     const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
+                    hideLoadingOverlay(); // Stop animation before loading
                     await loadShowtimes(locationId);
                 } else if (data.status === 'error') {
+                    // Error occurred - stop animation and show error
+                    hideLoadingOverlay();
                     showErrorState(data.message || 'An error occurred', () => fetchShowtimes(city, country, state));
                 }
             } catch (e) {
                 console.error('Scrape error:', e);
+                // Stop animation on error
+                hideLoadingOverlay();
                 showErrorState('Error connecting to server. Please check your internet connection.', () => fetchShowtimes(city, country, state));
             }
         }
@@ -1928,30 +2344,99 @@
                     const statusResponse = await fetch(`/api/scrape/status/${encodeURIComponent(locationId)}`);
                     const statusData = await statusResponse.json();
                     
-                    // Update UI with current status (dots will be animated)
-                    const statusMessage = statusData.processing_by === 'on-demand' 
-                        ? 'Scraping showtimes' 
-                        : (statusData.processing_by === 'daily-refresh' 
-                            ? 'Daily refresh in progress' 
-                            : 'Processing');
-                    showLoadingState(statusMessage);
+                    // FIRST: Check if showtimes are available (even during daily refresh)
+                    // Always try to load data first - if it exists, show it immediately
+                    let dataLoaded = false;
+                    try {
+                        const params = new URLSearchParams({city_name: locationId});
+                        if (formatFilter.value) params.append('format', formatFilter.value);
+                        if (languageFilter.value) params.append('language', languageFilter.value);
+                        
+                        const testResponse = await fetch(`/api/showtimes?${params}`);
+                        const testShowtimes = await testResponse.json();
+                        
+                        // If we got showtimes (even if daily refresh is running), display them immediately
+                        // Also stop animation if we get an empty array (data is ready, just no showtimes)
+                        if (testShowtimes && Array.isArray(testShowtimes)) {
+                            clearInterval(pollingInterval);
+                            pollingInterval = null;
+                            hideLoadingOverlay(); // Stop animation immediately
+                            if (testShowtimes.length > 0) {
+                                showtimes = applyFilters(testShowtimes);
+                                renderShowtimes(); // Display available data
+                            } else {
+                                // Data is ready but no showtimes found
+                                showEmptyState('{{ translations.no_showtimes or "No showtimes found" }}', '🎬');
+                            }
+                            dataLoaded = true;
+                            return; // Exit, don't continue polling
+                        }
+                    } catch (e) {
+                        // If loading fails, continue to check status
+                        console.log('Checking status...');
+                    }
                     
-                    if (statusData.ready || statusData.status === 'fresh') {
-                        // Data is ready! Stop polling and load showtimes
+                    // If data was loaded, we already returned above
+                    // Now check status for fresh/ready data
+                    if (statusData.status === 'fresh' || statusData.ready) {
+                        // Data is ready! Stop polling and load showtimes immediately
                         clearInterval(pollingInterval);
                         pollingInterval = null;
-                        showLoadingState('Loading showtimes');
+                        hideLoadingOverlay(); // Stop animation before loading
                         await loadShowtimes(locationId);
-                    } else if (statusData.status === 'stale' || statusData.status === 'error') {
+                        return; // Exit early, don't continue polling
+                    }
+                    
+                    // Only show loading state if we're still waiting (no data available yet)
+                    if (!dataLoaded) {
+                        // Update UI with current status (dots will be animated)
+                        const statusMessage = statusData.processing_by === 'on-demand' 
+                            ? 'Scraping showtimes' 
+                            : (statusData.processing_by === 'daily-refresh' 
+                                ? 'Daily refresh in progress' 
+                                : 'Processing');
+                        showLoadingState(statusMessage);
+                    }
+                    
+                    if (statusData.status === 'stale' || statusData.status === 'error') {
                         // Scraping failed, stop polling
                         clearInterval(pollingInterval);
                         pollingInterval = null;
-                        showEmptyState('{{ translations.no_showtimes or "No showtimes found" }}', '🎬');
+                        hideLoadingOverlay();
+                        const errorMsg = statusData.message || (statusData.status === 'error' 
+                            ? 'An error occurred while fetching showtimes. Please check your API key configuration.' 
+                            : '{{ translations.no_showtimes or "No showtimes found" }}');
+                        if (statusData.status === 'error') {
+                            showErrorState(errorMsg, () => {
+                                const city = cityInput.value.trim();
+                                const country = countrySelect.value;
+                                const state = cityInput.dataset.state || '';
+                                if (city && country) {
+                                    fetchShowtimes(city, country, state);
+                                }
+                            });
+                        } else {
+                            showEmptyState(errorMsg, '🎬');
+                        }
                     }
                     // Otherwise keep polling (status is 'processing')
                 } catch (e) {
                     console.error('Polling error:', e);
-                    // Continue polling on error (network issues, etc.)
+                    // After too many errors, stop polling and show error
+                    if (pollCount > 30) { // 30 polls = 60 seconds
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
+                        hideLoadingOverlay();
+                        showErrorState('Request timed out. Please try again.', () => {
+                            const city = cityInput.value.trim();
+                            const country = countrySelect.value;
+                            const state = cityInput.dataset.state || '';
+                            if (city && country) {
+                                fetchShowtimes(city, country, state);
+                            }
+                        });
+                    }
+                    // Otherwise continue polling on error (network issues, etc.)
                 }
             }, 2000); // Poll every 2 seconds
         }
@@ -1964,9 +2449,13 @@
             try {
                 const response = await fetch(`/api/showtimes?${params}`);
                 showtimes = await response.json();
+                // Stop animation and render results
+                hideLoadingOverlay();
                 renderShowtimes();
             } catch (e) {
                 console.error('Error loading showtimes:', e);
+                // Stop animation on error
+                hideLoadingOverlay();
                 showErrorState('Error loading showtimes. Please try again.', () => loadShowtimes(locationId));
             }
         }
@@ -2050,7 +2539,9 @@
             
             overlay.innerHTML = `
                 <div class="loading-overlay-content">
-                    <div class="spinner-glow" style="display: flex; align-items: center; justify-content: center; font-size: 24px; color: var(--accent); text-shadow: 0 0 10px rgba(52, 152, 219, 0.8);">🎬</div>
+                    <div class="spinner-glow">
+                        <span style="font-size: 24px; color: var(--accent); text-shadow: 0 0 10px rgba(52, 152, 219, 0.8);">🎬</span>
+                    </div>
                     <p class="loading-text">${message}<span class="loading-dots"></span></p>
                     <p>Please wait while we fetch the latest showtimes...</p>
                 </div>

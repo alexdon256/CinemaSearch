@@ -2317,12 +2317,19 @@ EOF
 configure_nginx_localhost() {
     log_info "Configuring Nginx for localhost access..."
     
-    # Auto-detect application
-    local APP_NAME
-    APP_NAME=$(detect_app_name)
-    if [[ -z "$APP_NAME" ]]; then
-        log_warning "No application found, skipping localhost configuration"
-        return
+    # Prefer cinestream app for localhost, otherwise use first available app
+    local APP_NAME=""
+    if [[ -d "$WWW_ROOT/cinestream" ]] && [[ -f "$WWW_ROOT/cinestream/.deploy_config" ]]; then
+        APP_NAME="cinestream"
+        log_info "Using 'cinestream' app for localhost (preferred)"
+    else
+        # Fallback to first available app
+        APP_NAME=$(detect_app_name)
+        if [[ -z "$APP_NAME" ]]; then
+            log_warning "No application found, skipping localhost configuration"
+            return
+        fi
+        log_info "Using first available app '$APP_NAME' for localhost"
     fi
     
     local APP_DIR="$WWW_ROOT/$APP_NAME"
@@ -2341,14 +2348,43 @@ configure_nginx_localhost() {
     
     # Disable default Nginx welcome page if it exists
     log_info "Disabling default Nginx welcome page..."
+    
+    # Remove default site from sites-enabled
     if [[ -f "/etc/nginx/sites-enabled/default" ]]; then
         rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
         log_info "Removed /etc/nginx/sites-enabled/default"
     fi
+    
+    # Disable default.conf in conf.d
     if [[ -f "/etc/nginx/conf.d/default.conf" ]]; then
-        # Rename instead of delete to preserve it
         mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.disabled 2>/dev/null || true
         log_info "Disabled /etc/nginx/conf.d/default.conf"
+    fi
+    
+    # Check and remove any other default_server blocks that might conflict
+    # Remove default_server from any other configs in conf.d (except localhost.conf)
+    for conf_file in /etc/nginx/conf.d/*.conf; do
+        if [[ -f "$conf_file" ]] && [[ "$conf_file" != "$LOCALHOST_CONF" ]]; then
+            # Remove default_server from listen directives in other configs
+            if grep -q "listen.*default_server" "$conf_file" 2>/dev/null; then
+                log_info "Removing default_server from $conf_file to avoid conflicts"
+                sed -i 's/ listen \([0-9]*\) default_server;/ listen \1;/g' "$conf_file" 2>/dev/null || true
+                sed -i 's/ listen \[::\]:\([0-9]*\) default_server;/ listen [::]:\1;/g' "$conf_file" 2>/dev/null || true
+            fi
+        fi
+    done
+    
+    # Also check sites-enabled
+    if [[ -d "/etc/nginx/sites-enabled" ]]; then
+        for conf_file in /etc/nginx/sites-enabled/*; do
+            if [[ -f "$conf_file" ]]; then
+                if grep -q "listen.*default_server" "$conf_file" 2>/dev/null; then
+                    log_info "Removing default_server from $conf_file to avoid conflicts"
+                    sed -i 's/ listen \([0-9]*\) default_server;/ listen \1;/g' "$conf_file" 2>/dev/null || true
+                    sed -i 's/ listen \[::\]:\([0-9]*\) default_server;/ listen [::]:\1;/g' "$conf_file" 2>/dev/null || true
+                fi
+            fi
+        done
     fi
     
     # Create upstream block
@@ -2469,12 +2505,32 @@ EOF
     
     log_success "Localhost configuration created: $LOCALHOST_CONF"
     
-    # Test and reload Nginx
-    if nginx -t 2>/dev/null; then
-        systemctl reload nginx.service 2>/dev/null || true
-        log_success "Nginx reloaded - application now accessible at http://localhost"
+    # Test Nginx configuration
+    log_info "Testing Nginx configuration..."
+    if nginx -t 2>&1; then
+        log_success "Nginx configuration test passed"
+        
+        # Force reload Nginx to apply changes
+        log_info "Reloading Nginx to apply localhost configuration..."
+        if systemctl reload nginx.service 2>&1; then
+            log_success "Nginx reloaded successfully"
+            log_info "Application is now accessible at http://localhost"
+            log_info "If you still see the welcome page, try:"
+            log_info "  1. Clear your browser cache"
+            log_info "  2. Restart Nginx: sudo systemctl restart nginx"
+            log_info "  3. Check configuration: sudo nginx -t"
+        else
+            log_warning "Nginx reload failed, trying restart..."
+            if systemctl restart nginx.service 2>&1; then
+                log_success "Nginx restarted - application should be accessible at http://localhost"
+            else
+                log_error "Failed to reload/restart Nginx. Check logs: journalctl -u nginx.service"
+            fi
+        fi
     else
-        log_warning "Nginx configuration test failed, but localhost config created"
+        log_error "Nginx configuration test failed!"
+        log_error "Please check the configuration manually: sudo nginx -t"
+        log_error "Configuration file: $LOCALHOST_CONF"
     fi
 }
 
@@ -3491,6 +3547,10 @@ main() {
         install-ssl)
             install_ssl "${2:-}"
             ;;
+        fix-localhost)
+            log_info "Fixing localhost configuration..."
+            configure_nginx_localhost
+            ;;
         *)
             echo "CineStream Master Deployment Script v21.0"
             echo ""
@@ -3513,6 +3573,8 @@ main() {
             echo "                                Example: $0 set-domain movies.example.com cinestream"
             echo "  install-ssl <domain>          Install SSL certificate for a domain"
             echo "                                Example: $0 install-ssl movies.example.com"
+            echo "  fix-localhost                 Fix localhost configuration (remove welcome page)"
+            echo "                                Makes http://localhost serve the application"
             exit 1
             ;;
     esac
