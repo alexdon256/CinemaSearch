@@ -1989,13 +1989,12 @@ configure_firewall() {
         # Allow established and related connections
         firewall-cmd --permanent --add-service=ssh 2>/dev/null || true
         
-        # Allow HTTP and HTTPS
+        # Allow HTTP and HTTPS (from anywhere - internet access)
         firewall-cmd --permanent --add-service=http 2>/dev/null || true
         firewall-cmd --permanent --add-service=https 2>/dev/null || true
         
-        # Rate limiting: Limit connections per IP
-        firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="0.0.0.0/0" port port="80" protocol="tcp" limit value=25/m accept' 2>/dev/null || true
-        firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="0.0.0.0/0" port port="443" protocol="tcp" limit value=25/m accept' 2>/dev/null || true
+        # Note: Rate limiting removed for HTTP/HTTPS to allow full internet access
+        # Nginx rate limiting will handle request throttling instead
         
         # Block common attack ports
         firewall-cmd --permanent --remove-service=dhcpv6-client 2>/dev/null || true
@@ -2346,23 +2345,74 @@ configure_nginx_localhost() {
     local UPSTREAM_NAME="${APP_NAME}_backend"
     local LOCALHOST_CONF="/etc/nginx/conf.d/localhost.conf"
     
+    # Check if SSL is configured (domain set and SSL certificate exists)
+    local SSL_ENABLED=false
+    local DOMAIN_NAME="${DOMAIN_NAME:-}"
+    if [[ -n "$DOMAIN_NAME" ]]; then
+        # Check if SSL certificate exists for the domain
+        if [[ -f "/etc/letsencrypt/live/${DOMAIN_NAME}/fullchain.pem" ]] || \
+           [[ -f "/etc/nginx/conf.d/${APP_NAME}.conf" ]] && \
+           grep -q "ssl_certificate" "/etc/nginx/conf.d/${APP_NAME}.conf" 2>/dev/null; then
+            SSL_ENABLED=true
+            log_info "SSL detected for domain '$DOMAIN_NAME' - localhost will redirect to HTTPS"
+        fi
+    fi
+    
     # Disable default Nginx welcome page if it exists
     log_info "Disabling default Nginx welcome page..."
+    
+    local disabled_count=0
     
     # Remove default site from sites-enabled
     if [[ -f "/etc/nginx/sites-enabled/default" ]]; then
         rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
         log_info "Removed /etc/nginx/sites-enabled/default"
+        disabled_count=$((disabled_count + 1))
     fi
     
-    # Disable default.conf in conf.d
+    # Disable default.conf in conf.d (rename to .disabled)
     if [[ -f "/etc/nginx/conf.d/default.conf" ]]; then
         mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.disabled 2>/dev/null || true
         log_info "Disabled /etc/nginx/conf.d/default.conf"
+        disabled_count=$((disabled_count + 1))
+    fi
+    
+    # Also check for any other files that might serve the default page
+    # Look for server blocks with root pointing to /usr/share/nginx/html (default welcome page location)
+    for conf_file in /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null; do
+        if [[ -f "$conf_file" ]] && [[ "$conf_file" != "$LOCALHOST_CONF" ]]; then
+            # Check if this config serves the default welcome page
+            if grep -q "root.*/usr/share/nginx/html" "$conf_file" 2>/dev/null || \
+               grep -q "root.*/var/www/html" "$conf_file" 2>/dev/null; then
+                # Check if it's a default_server or might catch requests
+                if grep -q "listen.*80.*default_server\|server_name.*_\|server_name.*default" "$conf_file" 2>/dev/null; then
+                    log_info "Found potential default welcome page config: $conf_file"
+                    log_info "Disabling it to prevent conflicts..."
+                    mv "$conf_file" "${conf_file}.disabled" 2>/dev/null || true
+                    disabled_count=$((disabled_count + 1))
+                fi
+            fi
+        fi
+    done
+    
+    if [[ $disabled_count -eq 0 ]]; then
+        log_info "No default Nginx welcome page configurations found"
+    else
+        log_success "Disabled $disabled_count default Nginx configuration(s)"
+    fi
+    
+    # Also check for any other default configurations
+    if [[ -f "/etc/nginx/nginx.conf" ]]; then
+        # Check if there's a default_server in the main nginx.conf
+        if grep -q "listen.*default_server" /etc/nginx/nginx.conf 2>/dev/null; then
+            log_warning "Found default_server in main nginx.conf - this may conflict"
+        fi
     fi
     
     # Check and remove any other default_server blocks that might conflict
     # Remove default_server from any other configs in conf.d (except localhost.conf)
+    log_info "Checking for conflicting default_server configurations..."
+    local conflicts_found=0
     for conf_file in /etc/nginx/conf.d/*.conf; do
         if [[ -f "$conf_file" ]] && [[ "$conf_file" != "$LOCALHOST_CONF" ]]; then
             # Remove default_server from listen directives in other configs
@@ -2370,6 +2420,7 @@ configure_nginx_localhost() {
                 log_info "Removing default_server from $conf_file to avoid conflicts"
                 sed -i 's/ listen \([0-9]*\) default_server;/ listen \1;/g' "$conf_file" 2>/dev/null || true
                 sed -i 's/ listen \[::\]:\([0-9]*\) default_server;/ listen [::]:\1;/g' "$conf_file" 2>/dev/null || true
+                conflicts_found=$((conflicts_found + 1))
             fi
         fi
     done
@@ -2382,9 +2433,16 @@ configure_nginx_localhost() {
                     log_info "Removing default_server from $conf_file to avoid conflicts"
                     sed -i 's/ listen \([0-9]*\) default_server;/ listen \1;/g' "$conf_file" 2>/dev/null || true
                     sed -i 's/ listen \[::\]:\([0-9]*\) default_server;/ listen [::]:\1;/g' "$conf_file" 2>/dev/null || true
+                    conflicts_found=$((conflicts_found + 1))
                 fi
             fi
         done
+    fi
+    
+    if [[ $conflicts_found -eq 0 ]]; then
+        log_info "No conflicting default_server configurations found"
+    else
+        log_info "Removed default_server from $conflicts_found conflicting configuration(s)"
     fi
     
     # Create upstream block
@@ -2405,12 +2463,33 @@ EOF
     cat >> "$LOCALHOST_CONF" <<EOF
 }
 
-# HTTP server for localhost (no SSL needed for local access)
+# HTTP server for localhost and IP access
 # Set as default_server to catch all requests to port 80 when no domain is specified
+# This includes: localhost, 127.0.0.1, server IP addresses, and any other requests
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
-    server_name localhost 127.0.0.1 _;
+    # Use _ as catch-all to accept any hostname/IP (localhost, 127.0.0.1, server IP, etc.)
+    server_name _;
+    
+    # Logging disabled
+    access_log off;
+    error_log /dev/null;
+EOF
+
+    # If SSL is enabled, redirect to HTTPS; otherwise serve HTTP directly
+    if [[ "$SSL_ENABLED" == "true" ]] && [[ -n "$DOMAIN_NAME" ]]; then
+        cat >> "$LOCALHOST_CONF" <<EOF
+    
+    # Redirect to HTTPS domain (SSL is configured)
+    # Redirect localhost/IP requests to the configured domain's HTTPS
+    location / {
+        return 301 https://${DOMAIN_NAME}\$request_uri;
+    }
+}
+EOF
+    else
+        cat >> "$LOCALHOST_CONF" <<EOF
     
     # Security headers
     add_header X-Frame-Options "SAMEORIGIN" always;
@@ -2420,10 +2499,6 @@ server {
     # Rate limiting
     limit_req zone=general_limit burst=20 nodelay;
     limit_conn conn_limit 10;
-    
-    # Logging disabled
-    access_log off;
-    error_log /dev/null;
     
     # Disable unnecessary HTTP methods
     if (\$request_method !~ ^(GET|HEAD|POST|OPTIONS)\$ ) {
@@ -2502,36 +2577,175 @@ server {
     }
 }
 EOF
+    fi
+EOF
     
     log_success "Localhost configuration created: $LOCALHOST_CONF"
     
+    # Verify the configuration file was created correctly
+    if [[ ! -f "$LOCALHOST_CONF" ]]; then
+        log_error "Failed to create localhost configuration file!"
+        return 1
+    fi
+    
+    # Verify default_server is set
+    if ! grep -q "listen.*default_server" "$LOCALHOST_CONF" 2>/dev/null; then
+        log_error "default_server directive not found in localhost.conf!"
+        return 1
+    fi
+    
+    log_info "Configuration file verified: default_server is set"
+    
     # Test Nginx configuration
     log_info "Testing Nginx configuration..."
-    if nginx -t 2>&1; then
+    local nginx_test_output
+    nginx_test_output=$(nginx -t 2>&1)
+    local nginx_test_status=$?
+    
+    # Verify which server block will be used for default requests
+    if [[ $nginx_test_status -eq 0 ]]; then
+        log_info "Verifying server block selection..."
+        # Show the active server blocks on port 80
+        log_info "Active server blocks on port 80:"
+        nginx -T 2>/dev/null | grep -B 1 -A 3 "listen.*80.*default_server" | head -10 || true
+        log_info ""
+        log_info "Verifying localhost.conf is the default server..."
+        if nginx -T 2>/dev/null | grep -A 5 "listen.*80.*default_server" | grep -q "localhost.conf"; then
+            log_success "localhost.conf is configured as default_server ✓"
+        else
+            log_warning "localhost.conf may not be the default server - checking..."
+            nginx -T 2>/dev/null | grep -B 2 -A 5 "default_server" | head -15 || true
+        fi
+    fi
+    
+    if [[ $nginx_test_status -eq 0 ]]; then
         log_success "Nginx configuration test passed"
         
         # Force reload Nginx to apply changes
         log_info "Reloading Nginx to apply localhost configuration..."
         if systemctl reload nginx.service 2>&1; then
             log_success "Nginx reloaded successfully"
-            log_info "Application is now accessible at http://localhost"
+            log_info ""
+            log_info "✓ Application is now accessible at:"
+            log_info "  - http://localhost (from server)"
+            log_info "  - http://127.0.0.1 (from server)"
+            log_info "  - http://<server-ip-address> (from local network)"
+            log_info "  - http://<server-ip-address> (from internet, if firewall allows)"
+            log_info ""
+            log_info "To enable full internet access, run:"
+            log_info "  sudo $0 enable-internet-access"
+            log_info ""
+            log_info ""
+            log_info "Verification: Testing that CineStream is being served..."
+            # Quick test to verify the app is accessible
+            sleep 1
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost/ 2>/dev/null | grep -q "200\|302\|301"; then
+                log_success "✓ CineStream application is responding on http://localhost"
+            else
+                log_warning "Application may not be responding yet. Check if services are running:"
+                log_info "  sudo systemctl status cinestream@*.service"
+                log_info "  sudo systemctl status nginx.service"
+            fi
+            log_info ""
             log_info "If you still see the welcome page, try:"
-            log_info "  1. Clear your browser cache"
-            log_info "  2. Restart Nginx: sudo systemctl restart nginx"
-            log_info "  3. Check configuration: sudo nginx -t"
+            log_info "  1. Hard refresh your browser (Ctrl+Shift+R or Ctrl+F5)"
+            log_info "  2. Clear your browser cache"
+            log_info "  3. Restart Nginx: sudo systemctl restart nginx"
+            log_info "  4. Check active configs: sudo nginx -T | grep -A 5 'default_server'"
+            log_info "  5. Verify app is running: sudo $0 status"
         else
             log_warning "Nginx reload failed, trying restart..."
             if systemctl restart nginx.service 2>&1; then
-                log_success "Nginx restarted - application should be accessible at http://localhost"
+                log_success "Nginx restarted - application should be accessible"
+                log_info "Try accessing: http://localhost or http://<server-ip>"
             else
                 log_error "Failed to reload/restart Nginx. Check logs: journalctl -u nginx.service"
+                return 1
             fi
         fi
     else
         log_error "Nginx configuration test failed!"
+        echo "$nginx_test_output" | while IFS= read -r line; do
+            log_error "  $line"
+        done
+        log_error ""
         log_error "Please check the configuration manually: sudo nginx -t"
         log_error "Configuration file: $LOCALHOST_CONF"
+        return 1
     fi
+}
+
+# Enable internet access for the application
+enable_internet_access() {
+    log_info "Enabling internet access for the application..."
+    
+    # 1. Configure firewall to allow HTTP/HTTPS from anywhere
+    log_info "Configuring firewall for internet access..."
+    configure_firewall
+    
+    # 2. Ensure localhost configuration accepts all IPs (already done with server_name _)
+    log_info "Verifying Nginx configuration for internet access..."
+    if [[ ! -f "/etc/nginx/conf.d/localhost.conf" ]]; then
+        log_warning "localhost.conf not found. Creating it..."
+        configure_nginx_localhost
+    else
+        # Verify server_name is set to catch-all
+        if ! grep -q "server_name _" /etc/nginx/conf.d/localhost.conf 2>/dev/null; then
+            log_warning "localhost.conf exists but server_name is not catch-all. Updating..."
+            configure_nginx_localhost
+        else
+            log_success "Nginx configuration already accepts all IPs"
+        fi
+    fi
+    
+    # 3. Check if Nginx is listening on all interfaces
+    log_info "Checking if Nginx is listening on all interfaces..."
+    if ss -tlnp | grep -q ":80.*nginx" 2>/dev/null || netstat -tlnp 2>/dev/null | grep -q ":80.*nginx"; then
+        log_success "Nginx is listening on port 80"
+    else
+        log_warning "Nginx may not be listening. Restarting..."
+        systemctl restart nginx.service 2>/dev/null || true
+    fi
+    
+    # 4. Get server IP addresses
+    log_info "Detecting server IP addresses..."
+    local ipv4_addresses
+    ipv4_addresses=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' || true)
+    local public_ip
+    public_ip=$(curl -s https://api.ipify.org 2>/dev/null || curl -s https://ifconfig.me 2>/dev/null || echo "Unable to detect")
+    
+    log_info ""
+    log_success "Internet access configuration complete!"
+    log_info ""
+    log_info "Your application should now be accessible from the internet."
+    log_info ""
+    log_info "Server IP addresses:"
+    if [[ -n "$ipv4_addresses" ]]; then
+        echo "$ipv4_addresses" | while read -r ip; do
+            log_info "  - http://$ip"
+        done
+    else
+        log_info "  - (No IPv4 addresses found)"
+    fi
+    log_info ""
+    log_info "Public IP address: $public_ip"
+    log_info ""
+    log_info "IMPORTANT: If your server is behind a router/NAT, you need to:"
+    log_info "  1. Configure port forwarding on your router:"
+    log_info "     - Forward external port 80 → internal port 80 (TCP)"
+    log_info "     - Forward external port 443 → internal port 443 (TCP) (if using SSL)"
+    log_info "  2. Point the external ports to this server's IP: $(echo "$ipv4_addresses" | head -1 || echo 'your-server-ip')"
+    log_info "  3. Ensure your router's firewall allows these ports"
+    log_info ""
+    log_info "To test internet access:"
+    log_info "  - From another network, try: http://$public_ip"
+    log_info "  - Or use an online tool: https://www.yougetsignal.com/tools/open-ports/"
+    log_info ""
+    log_info "Security note:"
+    log_info "  - HTTP (port 80) is open for internet access"
+    log_info "  - Consider setting up SSL/HTTPS for secure access"
+    log_info "  - Run: sudo $0 install-ssl <your-domain> (if you have a domain)"
+    log_info ""
 }
 
 # Stop all services
@@ -3551,6 +3765,9 @@ main() {
             log_info "Fixing localhost configuration..."
             configure_nginx_localhost
             ;;
+        enable-internet-access)
+            enable_internet_access
+            ;;
         *)
             echo "CineStream Master Deployment Script v21.0"
             echo ""
@@ -3575,6 +3792,8 @@ main() {
             echo "                                Example: $0 install-ssl movies.example.com"
             echo "  fix-localhost                 Fix localhost configuration (remove welcome page)"
             echo "                                Makes http://localhost serve the application"
+            echo "  enable-internet-access        Enable internet access (configure firewall, verify setup)"
+            echo "                                Makes the application accessible from the internet"
             exit 1
             ;;
     esac
