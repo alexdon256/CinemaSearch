@@ -2390,6 +2390,36 @@ configure_nginx_localhost() {
         disabled_count=$((disabled_count + 1))
     fi
     
+    # Also check for default.conf.disabled and make sure it stays disabled
+    if [[ -f "/etc/nginx/conf.d/default.conf.disabled" ]]; then
+        log_info "Confirmed /etc/nginx/conf.d/default.conf is disabled"
+    fi
+    
+    # Check main nginx.conf for any default server blocks or includes that might load default configs
+    if [[ -f "/etc/nginx/nginx.conf" ]]; then
+        # Check if there's a server block in the main config that might serve the welcome page
+        if grep -q "root.*/usr/share/nginx/html\|root.*/var/www/html" /etc/nginx/nginx.conf 2>/dev/null; then
+            log_warning "Found root directive pointing to default HTML directory in main nginx.conf"
+            log_warning "This might be serving the welcome page. Consider commenting it out."
+        fi
+        # Check if there's an include that might load default configs
+        if grep -q "include.*sites-enabled/\*" /etc/nginx/nginx.conf 2>/dev/null; then
+            log_info "Found sites-enabled include in nginx.conf - checking for default configs..."
+        fi
+    fi
+    
+    # Double-check: Remove any default_server from other configs one more time
+    log_info "Final check: Removing default_server from all other configs..."
+    for conf_file in /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null; do
+        if [[ -f "$conf_file" ]] && [[ "$conf_file" != "$LOCALHOST_CONF" ]]; then
+            if grep -q "listen.*default_server" "$conf_file" 2>/dev/null; then
+                log_warning "Found default_server in $conf_file - removing it..."
+                sed -i 's/ listen \([0-9]*\) default_server;/ listen \1;/g' "$conf_file" 2>/dev/null || true
+                sed -i 's/ listen \[::\]:\([0-9]*\) default_server;/ listen [::]:\1;/g' "$conf_file" 2>/dev/null || true
+            fi
+        fi
+    done
+    
     # Also check for any other files that might serve the default page
     # Look for server blocks with root pointing to /usr/share/nginx/html (default welcome page location)
     local conf_files=()
@@ -2647,10 +2677,11 @@ EOF
     if [[ $nginx_test_status -eq 0 ]]; then
         log_success "Nginx configuration test passed"
         
-        # Force reload Nginx to apply changes
-        log_info "Reloading Nginx to apply localhost configuration..."
-        if systemctl reload nginx.service 2>&1; then
-            log_success "Nginx reloaded successfully"
+        # Force restart Nginx to apply changes (restart is more reliable than reload)
+        log_info "Restarting Nginx to apply localhost configuration..."
+        log_info "Using restart instead of reload to ensure all changes are applied..."
+        if systemctl restart nginx.service 2>&1; then
+            log_success "Nginx restarted successfully"
             log_info ""
             log_info "✓ Application is now accessible at:"
             log_info "  - http://localhost (from server)"
@@ -2673,12 +2704,39 @@ EOF
                 log_info "  sudo systemctl status nginx.service"
             fi
             log_info ""
+            log_info ""
+            log_info "Diagnostic information:"
+            log_info "Checking which server block handles localhost requests..."
+            # Show what Nginx will actually use for localhost
+            local default_server_info
+            default_server_info=$(nginx -T 2>/dev/null | grep -B 5 -A 10 "listen.*80.*default_server" | head -20 || echo "No default_server found")
+            log_info "Default server block:"
+            echo "$default_server_info" | while IFS= read -r line; do
+                log_info "  $line"
+            done
+            log_info ""
+            log_info "Checking for any remaining default configurations..."
+            if [[ -f "/etc/nginx/conf.d/default.conf" ]]; then
+                log_warning "⚠ WARNING: /etc/nginx/conf.d/default.conf still exists!"
+                log_warning "This might be serving the welcome page. Disabling it now..."
+                mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.disabled 2>/dev/null || true
+                systemctl restart nginx.service 2>/dev/null || true
+            fi
+            if [[ -f "/etc/nginx/sites-enabled/default" ]]; then
+                log_warning "⚠ WARNING: /etc/nginx/sites-enabled/default still exists!"
+                log_warning "Removing it now..."
+                rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+                systemctl restart nginx.service 2>/dev/null || true
+            fi
+            log_info ""
             log_info "If you still see the welcome page, try:"
             log_info "  1. Hard refresh your browser (Ctrl+Shift+R or Ctrl+F5)"
-            log_info "  2. Clear your browser cache"
-            log_info "  3. Restart Nginx: sudo systemctl restart nginx"
-            log_info "  4. Check active configs: sudo nginx -T | grep -A 5 'default_server'"
-            log_info "  5. Verify app is running: sudo $0 status"
+            log_info "  2. Clear your browser cache completely"
+            log_info "  3. Try incognito/private browsing mode"
+            log_info "  4. Check what's actually being served: curl -I http://localhost"
+            log_info "  5. Verify localhost.conf exists: ls -la /etc/nginx/conf.d/localhost.conf"
+            log_info "  6. Check Nginx error logs: sudo tail -20 /var/log/nginx/error.log"
+            log_info "  7. Verify app is running: sudo $0 status"
         else
             log_warning "Nginx reload failed, trying restart..."
             if systemctl restart nginx.service 2>&1; then
@@ -2724,21 +2782,114 @@ enable_internet_access() {
         fi
     fi
     
-    # 3. Check if Nginx is listening on all interfaces
+    # 3. Check if Nginx is listening on all interfaces (0.0.0.0, not just 127.0.0.1)
     log_info "Checking if Nginx is listening on all interfaces..."
-    if ss -tlnp | grep -q ":80.*nginx" 2>/dev/null || netstat -tlnp 2>/dev/null | grep -q ":80.*nginx"; then
-        log_success "Nginx is listening on port 80"
+    local nginx_listening=false
+    if ss -tlnp 2>/dev/null | grep -q ":80.*nginx\|:80.*LISTEN"; then
+        local listen_info
+        listen_info=$(ss -tlnp 2>/dev/null | grep ":80" | head -1 || echo "")
+        if echo "$listen_info" | grep -q "0.0.0.0:80\|\\*:80"; then
+            log_success "Nginx is listening on all interfaces (0.0.0.0:80)"
+            nginx_listening=true
+        elif echo "$listen_info" | grep -q "127.0.0.1:80"; then
+            log_warning "Nginx is only listening on localhost (127.0.0.1:80)"
+            log_warning "This will prevent internet access. Checking Nginx configuration..."
+            # Check nginx.conf for listen directive
+            if grep -q "listen.*80" /etc/nginx/nginx.conf 2>/dev/null; then
+                log_info "Found listen directive in main nginx.conf"
+            fi
+            log_warning "Nginx should listen on 0.0.0.0:80, not 127.0.0.1:80"
+        else
+            log_info "Nginx listening info: $listen_info"
+        fi
+    elif netstat -tlnp 2>/dev/null | grep -q ":80.*nginx"; then
+        local listen_info
+        listen_info=$(netstat -tlnp 2>/dev/null | grep ":80" | head -1 || echo "")
+        if echo "$listen_info" | grep -q "0.0.0.0:80"; then
+            log_success "Nginx is listening on all interfaces (0.0.0.0:80)"
+            nginx_listening=true
+        else
+            log_warning "Nginx listening info: $listen_info"
+        fi
     else
-        log_warning "Nginx may not be listening. Restarting..."
+        log_warning "Nginx may not be listening on port 80. Restarting..."
         systemctl restart nginx.service 2>/dev/null || true
+        sleep 2
+        if ss -tlnp 2>/dev/null | grep -q ":80.*nginx" || netstat -tlnp 2>/dev/null | grep -q ":80.*nginx"; then
+            nginx_listening=true
+            log_success "Nginx is now listening after restart"
+        else
+            log_error "Nginx is still not listening on port 80!"
+            log_error "Check Nginx status: systemctl status nginx.service"
+        fi
     fi
     
-    # 4. Get server IP addresses
+    # 4. Verify firewall is actually allowing connections
+    log_info "Verifying firewall configuration..."
+    local firewall_status="unknown"
+    if command -v firewall-cmd &> /dev/null; then
+        if systemctl is-active --quiet firewalld 2>/dev/null; then
+            firewall_status="firewalld"
+            log_info "Checking firewalld rules..."
+            if firewall-cmd --list-services 2>/dev/null | grep -q "http"; then
+                log_success "✓ HTTP service is allowed in firewalld"
+            else
+                log_warning "HTTP service not found in firewalld. Adding it..."
+                firewall-cmd --permanent --add-service=http 2>/dev/null || true
+                firewall-cmd --reload 2>/dev/null || true
+            fi
+            if firewall-cmd --list-services 2>/dev/null | grep -q "https"; then
+                log_success "✓ HTTPS service is allowed in firewalld"
+            else
+                log_warning "HTTPS service not found in firewalld. Adding it..."
+                firewall-cmd --permanent --add-service=https 2>/dev/null || true
+                firewall-cmd --reload 2>/dev/null || true
+            fi
+            # Show current zone and services
+            log_info "Current firewalld zone: $(firewall-cmd --get-default-zone 2>/dev/null || echo 'unknown')"
+            log_info "Allowed services: $(firewall-cmd --list-services 2>/dev/null | tr '\n' ' ' || echo 'none')"
+        else
+            log_warning "firewalld is not running. Starting it..."
+            systemctl start firewalld 2>/dev/null || true
+            systemctl enable firewalld 2>/dev/null || true
+        fi
+    elif command -v ufw &> /dev/null; then
+        firewall_status="ufw"
+        if ufw status 2>/dev/null | grep -q "80/tcp.*ALLOW"; then
+            log_success "✓ Port 80 is allowed in UFW"
+        else
+            log_warning "Port 80 not found in UFW rules. Adding it..."
+            ufw allow 80/tcp 2>/dev/null || true
+        fi
+        if ufw status 2>/dev/null | grep -q "443/tcp.*ALLOW"; then
+            log_success "✓ Port 443 is allowed in UFW"
+        else
+            log_warning "Port 443 not found in UFW rules. Adding it..."
+            ufw allow 443/tcp 2>/dev/null || true
+        fi
+        log_info "UFW status:"
+        ufw status numbered 2>/dev/null | head -10 || true
+    else
+        firewall_status="iptables"
+        log_info "Using iptables. Verifying rules..."
+        if iptables -L INPUT -n 2>/dev/null | grep -q "tcp.*dpt:80.*ACCEPT"; then
+            log_success "✓ Port 80 is allowed in iptables"
+        else
+            log_warning "Port 80 rule not found in iptables. Adding it..."
+            iptables -A INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
+        fi
+    fi
+    
+    # 5. Get server IP addresses
     log_info "Detecting server IP addresses..."
     local ipv4_addresses
-    ipv4_addresses=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' || true)
+    ipv4_addresses=$(ip -4 addr show 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' || \
+                    ifconfig 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' || true)
     local public_ip
-    public_ip=$(curl -s https://api.ipify.org 2>/dev/null || curl -s https://ifconfig.me 2>/dev/null || echo "Unable to detect")
+    public_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || \
+                curl -s --max-time 5 https://ifconfig.me 2>/dev/null || \
+                curl -s --max-time 5 https://icanhazip.com 2>/dev/null || \
+                echo "Unable to detect")
     
     log_info ""
     log_success "Internet access configuration complete!"
@@ -2756,16 +2907,73 @@ enable_internet_access() {
     log_info ""
     log_info "Public IP address: $public_ip"
     log_info ""
-    log_info "IMPORTANT: If your server is behind a router/NAT, you need to:"
-    log_info "  1. Configure port forwarding on your router:"
-    log_info "     - Forward external port 80 → internal port 80 (TCP)"
-    log_info "     - Forward external port 443 → internal port 443 (TCP) (if using SSL)"
-    log_info "  2. Point the external ports to this server's IP: $(echo "$ipv4_addresses" | head -1 || echo 'your-server-ip')"
-    log_info "  3. Ensure your router's firewall allows these ports"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Internet Access Diagnostics:"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info ""
-    log_info "To test internet access:"
-    log_info "  - From another network, try: http://$public_ip"
-    log_info "  - Or use an online tool: https://www.yougetsignal.com/tools/open-ports/"
+    log_info "Firewall Status: $firewall_status"
+    log_info "Nginx Listening: $nginx_listening"
+    log_info ""
+    
+    # Test local connectivity
+    log_info "Testing local connectivity..."
+    if curl -s --max-time 3 -o /dev/null -w "%{http_code}" http://localhost/ 2>/dev/null | grep -q "[23][0-9][0-9]"; then
+        log_success "✓ Local connection to Nginx works"
+    else
+        log_warning "⚠ Local connection to Nginx failed - Nginx may not be running"
+    fi
+    
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "TROUBLESHOOTING: If internet access times out:"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info ""
+    log_info "1. CHECK ROUTER PORT FORWARDING (Most Common Issue):"
+    log_info "   If your server is behind a router/NAT, configure port forwarding:"
+    log_info "   - External Port 80 → Internal Port 80 (TCP)"
+    log_info "   - External Port 443 → Internal Port 443 (TCP)"
+    log_info "   - Internal IP: $(echo "$ipv4_addresses" | head -1 || echo 'YOUR_SERVER_LOCAL_IP')"
+    log_info ""
+    log_info "2. CHECK ROUTER FIREWALL:"
+    log_info "   Ensure your router's firewall allows incoming connections on ports 80/443"
+    log_info ""
+    log_info "3. CHECK ISP BLOCKING:"
+    log_info "   Some ISPs block incoming connections on port 80"
+    log_info "   - Try accessing from a different network"
+    log_info "   - Consider using a non-standard port (requires router config)"
+    log_info ""
+    log_info "4. VERIFY FIREWALL RULES:"
+    if [[ "$firewall_status" == "firewalld" ]]; then
+        log_info "   Run: sudo firewall-cmd --list-all"
+    elif [[ "$firewall_status" == "ufw" ]]; then
+        log_info "   Run: sudo ufw status verbose"
+    else
+        log_info "   Run: sudo iptables -L -n -v"
+    fi
+    log_info ""
+    log_info "5. TEST FROM SERVER:"
+    log_info "   Run: curl -I http://$public_ip"
+    log_info "   (This tests if the server can reach itself via public IP)"
+    log_info ""
+    log_info "6. TEST PORT ACCESSIBILITY:"
+    log_info "   Use online tools to check if port 80 is open:"
+    log_info "   - https://www.yougetsignal.com/tools/open-ports/"
+    log_info "   - https://www.portchecker.co/"
+    log_info "   Enter IP: $public_ip, Port: 80"
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info ""
+    log_info "Your server information:"
+    log_info "  - Local IP(s): $(echo "$ipv4_addresses" | tr '\n' ' ' || echo 'Not detected')"
+    log_info "  - Public IP: $public_ip"
+    log_info ""
+    log_info "Try accessing from internet:"
+    log_info "  - http://$public_ip"
+    if [[ -n "$ipv4_addresses" ]]; then
+        echo "$ipv4_addresses" | while read -r ip; do
+            log_info "  - http://$ip (from local network)"
+        done
+    fi
     log_info ""
     log_info "Security note:"
     log_info "  - HTTP (port 80) is open for internet access"
