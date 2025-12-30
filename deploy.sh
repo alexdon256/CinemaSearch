@@ -2400,11 +2400,21 @@ configure_nginx_localhost() {
         # Check if there's a server block in the main config that might serve the welcome page
         if grep -q "root.*/usr/share/nginx/html\|root.*/var/www/html" /etc/nginx/nginx.conf 2>/dev/null; then
             log_warning "Found root directive pointing to default HTML directory in main nginx.conf"
-            log_warning "This might be serving the welcome page. Consider commenting it out."
+            log_warning "This might be serving the welcome page. Checking for server blocks..."
+            # Check if there's a server block with default_server in main config
+            if grep -A 10 "server {" /etc/nginx/nginx.conf 2>/dev/null | grep -q "listen.*80.*default_server"; then
+                log_error "Found default_server in main nginx.conf! This will conflict."
+                log_error "You may need to comment out the server block in /etc/nginx/nginx.conf"
+            fi
         fi
         # Check if there's an include that might load default configs
         if grep -q "include.*sites-enabled/\*" /etc/nginx/nginx.conf 2>/dev/null; then
             log_info "Found sites-enabled include in nginx.conf - checking for default configs..."
+        fi
+        # Check include order - conf.d should be included, and localhost.conf should be in conf.d
+        if ! grep -q "include.*conf.d/\*\.conf" /etc/nginx/nginx.conf 2>/dev/null; then
+            log_warning "conf.d/*.conf not found in nginx.conf includes"
+            log_warning "localhost.conf may not be loaded. Checking nginx.conf structure..."
         fi
     fi
     
@@ -2911,17 +2921,90 @@ EOF
             done
             log_info ""
             log_info "Checking for any remaining default configurations..."
+            local found_welcome_page=false
+            
+            # Check for default.conf
             if [[ -f "/etc/nginx/conf.d/default.conf" ]]; then
                 log_warning "⚠ WARNING: /etc/nginx/conf.d/default.conf still exists!"
                 log_warning "This might be serving the welcome page. Disabling it now..."
                 mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.disabled 2>/dev/null || true
-                systemctl restart nginx.service 2>/dev/null || true
+                found_welcome_page=true
             fi
+            
+            # Check for sites-enabled/default
             if [[ -f "/etc/nginx/sites-enabled/default" ]]; then
                 log_warning "⚠ WARNING: /etc/nginx/sites-enabled/default still exists!"
                 log_warning "Removing it now..."
                 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+                found_welcome_page=true
+            fi
+            
+            # Check for any other configs serving the welcome page
+            for check_file in /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null; do
+                if [[ -f "$check_file" ]] && [[ "$check_file" != "$LOCALHOST_CONF" ]]; then
+                    if grep -q "root.*/usr/share/nginx/html\|root.*/var/www/html" "$check_file" 2>/dev/null; then
+                        if grep -q "listen.*80" "$check_file" 2>/dev/null; then
+                            log_warning "⚠ Found config serving welcome page: $check_file"
+                            log_warning "Disabling it..."
+                            mv "$check_file" "${check_file}.disabled" 2>/dev/null || true
+                            found_welcome_page=true
+                        fi
+                    fi
+                fi
+            done
+            
+            # Restart Nginx if we found and disabled welcome page configs
+            if [[ "$found_welcome_page" == "true" ]]; then
+                log_info "Restarting Nginx to apply changes..."
                 systemctl restart nginx.service 2>/dev/null || true
+                sleep 2
+                log_info "Nginx restarted. Please try accessing the site again."
+            fi
+            
+            # Verify localhost.conf is actually being used
+            log_info ""
+            log_info "Verifying localhost.conf configuration..."
+            if [[ -f "$LOCALHOST_CONF" ]]; then
+                log_success "✓ localhost.conf exists: $LOCALHOST_CONF"
+                if grep -q "listen.*80.*default_server" "$LOCALHOST_CONF" 2>/dev/null; then
+                    log_success "✓ default_server is set in localhost.conf"
+                else
+                    log_error "✗ default_server NOT found in localhost.conf!"
+                fi
+                if grep -q "server_name _" "$LOCALHOST_CONF" 2>/dev/null; then
+                    log_success "✓ server_name _ (catch-all) is set"
+                else
+                    log_error "✗ server_name _ NOT found in localhost.conf!"
+                fi
+            else
+                log_error "✗ localhost.conf does NOT exist!"
+            fi
+            
+            # Test what's actually being served
+            log_info ""
+            log_info "Testing what Nginx is actually serving..."
+            sleep 2  # Give Nginx time to restart
+            local test_response
+            test_response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/ 2>/dev/null || echo "000")
+            if [[ "$test_response" == "301" ]] || [[ "$test_response" == "302" ]]; then
+                log_success "✓ HTTP is redirecting (status: $test_response) - this is correct"
+            elif [[ "$test_response" == "200" ]]; then
+                # Check if it's serving the welcome page or the app
+                local response_body
+                response_body=$(curl -s http://localhost/ 2>/dev/null | head -20 || echo "")
+                if echo "$response_body" | grep -qi "welcome.*nginx\|nginx.*welcome"; then
+                    log_error "✗ Nginx is still serving the welcome page!"
+                    log_error "Response status: $test_response"
+                    log_error "This means another server block is taking precedence"
+                    log_info ""
+                    log_info "Checking which server block is actually handling requests..."
+                    nginx -T 2>/dev/null | grep -B 3 -A 10 "listen.*80" | head -30 || true
+                else
+                    log_success "✓ HTTP is serving content (status: $test_response)"
+                fi
+            else
+                log_warning "⚠ HTTP response status: $test_response"
+                log_warning "This might indicate an error or that Nginx isn't responding"
             fi
             log_info ""
             log_info "If you still see the welcome page, try:"
