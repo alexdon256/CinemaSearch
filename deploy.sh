@@ -315,6 +315,10 @@ init_server() {
     
     log_success "Required packages installed"
     
+    # Ensure SSH service is configured (important for remote access)
+    log_info ""
+    ensure_ssh_service
+    
     # Install MongoDB manually (from official MongoDB repository)
     log_info "Installing MongoDB..."
     install_mongodb
@@ -1966,9 +1970,56 @@ optimize_startup_shutdown() {
     log_info "  To see boot time, run: systemd-analyze"
 }
 
+# Ensure SSH service is enabled and running
+ensure_ssh_service() {
+    log_info "Ensuring SSH service is configured..."
+    
+    # Check if openssh is installed
+    if ! command -v sshd &> /dev/null && ! pacman -Q openssh &> /dev/null; then
+        log_info "Installing openssh..."
+        pacman -S --noconfirm openssh 2>/dev/null || {
+            log_error "Failed to install openssh"
+            return 1
+        }
+    fi
+    
+    # Determine SSH service name (varies by distro)
+    local ssh_service=""
+    if systemctl list-unit-files | grep -q "^sshd.service"; then
+        ssh_service="sshd.service"
+    elif systemctl list-unit-files | grep -q "^ssh.service"; then
+        ssh_service="ssh.service"
+    else
+        log_warning "SSH service not found, attempting to start sshd.service..."
+        ssh_service="sshd.service"
+    fi
+    
+    # Enable and start SSH service
+    log_info "Enabling and starting SSH service ($ssh_service)..."
+    systemctl enable "$ssh_service" 2>/dev/null || true
+    systemctl start "$ssh_service" 2>/dev/null || {
+        log_warning "Failed to start $ssh_service, trying alternative..."
+        # Try starting sshd directly
+        /usr/bin/sshd 2>/dev/null || true
+    }
+    
+    # Verify SSH is listening on port 22
+    sleep 1
+    if ss -tlnp | grep -q ":22 "; then
+        log_success "SSH service is running and listening on port 22"
+    else
+        log_warning "SSH service may not be listening on port 22"
+        log_info "Check SSH status: sudo systemctl status $ssh_service"
+        log_info "Check SSH config: sudo sshd -t"
+    fi
+}
+
 # Configure comprehensive firewall rules
 configure_firewall() {
     log_info "Configuring firewall rules..."
+    
+    # Ensure SSH service is running first
+    ensure_ssh_service
     
     # Check for firewalld (common on Arch-based systems)
     if command -v firewall-cmd &> /dev/null; then
@@ -3302,13 +3353,14 @@ abracadabra() {
     log_info "🎩✨ Abracadabra! Performing complete CineStream setup... ✨🎩"
     log_info ""
     log_info "This will run the following steps:"
-    log_info "  1. Initialize server (packages, MongoDB, Nginx)"
+    log_info "  1. Initialize server (packages, MongoDB, Nginx, SSH)"
     log_info "  2. Deploy CineStream application"
     log_info "  3. Enable auto-start on boot"
     log_info "  4. Optimize system performance"
     log_info "  5. Start all services"
     log_info "  6. Fix localhost configuration"
     log_info "  7. Enable internet access"
+    log_info "  8. Ensure SSH connectivity"
     log_info ""
     read -p "Continue with complete setup? (yes/no): " CONFIRM
     
@@ -3319,7 +3371,7 @@ abracadabra() {
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "Step 1/7: Initializing server..."
+    log_info "Step 1/8: Initializing server..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     set +e  # Temporarily disable exit on error
     init_server
@@ -3331,7 +3383,7 @@ abracadabra() {
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "Step 2/7: Deploying CineStream application..."
+    log_info "Step 2/8: Deploying CineStream application..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     set +e  # Temporarily disable exit on error
     deploy_application "cinestream"
@@ -3348,7 +3400,7 @@ abracadabra() {
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "Step 3/7: Enabling auto-start on boot..."
+    log_info "Step 3/8: Enabling auto-start on boot..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     set +e  # Temporarily disable exit on error
     enable_autostart
@@ -3360,9 +3412,10 @@ abracadabra() {
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "Step 4/7: Optimizing system performance..."
+    log_info "Step 4/8: Optimizing system performance..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "Note: System optimization may have already been done by init_server"
+    log_info "This includes: CPU governor, kernel params, Nginx workers,"
+    log_info "                service optimization, GRUB, startup/shutdown tuning"
     set +e  # Temporarily disable exit on error
     optimize_system
     local optimize_result=$?
@@ -3373,7 +3426,7 @@ abracadabra() {
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "Step 5/7: Starting all services..."
+    log_info "Step 5/8: Starting all services..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     set +e  # Temporarily disable exit on error
     start_all
@@ -3385,7 +3438,7 @@ abracadabra() {
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "Step 6/7: Fixing localhost configuration..."
+    log_info "Step 6/8: Fixing localhost configuration..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     set +e  # Temporarily disable exit on error
     configure_nginx_localhost
@@ -3397,7 +3450,7 @@ abracadabra() {
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "Step 7/7: Enabling internet access..."
+    log_info "Step 7/8: Enabling internet access..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     set +e  # Temporarily disable exit on error
     enable_internet_access
@@ -3405,6 +3458,18 @@ abracadabra() {
     set -e  # Re-enable exit on error
     if [[ $internet_result -ne 0 ]]; then
         log_warning "enable_internet_access had some issues, but continuing..."
+    fi
+    
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Step 8/8: Ensuring SSH connectivity..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    set +e  # Temporarily disable exit on error
+    ensure_ssh_service
+    local ssh_result=$?
+    set -e  # Re-enable exit on error
+    if [[ $ssh_result -ne 0 ]]; then
+        log_warning "ensure_ssh_service had some issues, but continuing..."
     fi
     
     log_info ""
@@ -4668,6 +4733,10 @@ main() {
             echo "                                fix-localhost, enable-internet-access"
             echo "  diagnose-internet              Diagnose internet access issues"
             echo "                                Shows router configuration guide (TP-Link)"
+            echo "  fix-ssh                        Fix SSH connectivity issues"
+            echo "                                Ensures SSH service is running and firewall allows it"
+            echo "  fix-ssh                        Fix SSH connectivity issues"
+            echo "                                Ensures SSH service is running and firewall allows it"
             exit 1
             ;;
     esac
