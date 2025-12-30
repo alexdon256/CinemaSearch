@@ -2774,6 +2774,87 @@ enable_internet_access() {
     log_info ""
 }
 
+# Abracadabra - Complete setup in one command
+abracadabra() {
+    log_info "🎩✨ Abracadabra! Performing complete CineStream setup... ✨🎩"
+    log_info ""
+    log_info "This will run the following steps:"
+    log_info "  1. Initialize server (packages, MongoDB, Nginx)"
+    log_info "  2. Deploy CineStream application"
+    log_info "  3. Enable auto-start on boot"
+    log_info "  4. Optimize system performance"
+    log_info "  5. Start all services"
+    log_info "  6. Fix localhost configuration"
+    log_info "  7. Enable internet access"
+    log_info ""
+    read -p "Continue with complete setup? (yes/no): " CONFIRM
+    
+    if [[ "$CONFIRM" != "yes" ]]; then
+        log_info "Abracadabra cancelled."
+        exit 0
+    fi
+    
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Step 1/7: Initializing server..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    init_server
+    
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Step 2/7: Deploying CineStream application..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    deploy_application "cinestream"
+    
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Step 3/7: Enabling auto-start on boot..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    enable_autostart
+    
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Step 4/7: Optimizing system performance..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    optimize_system
+    
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Step 5/7: Starting all services..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    start_all
+    
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Step 6/7: Fixing localhost configuration..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    configure_nginx_localhost
+    
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Step 7/7: Enabling internet access..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    enable_internet_access
+    
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_success "🎉✨ Abracadabra complete! ✨🎉"
+    log_info ""
+    log_info "Your CineStream server is now fully configured and running!"
+    log_info ""
+    log_info "Access your application:"
+    log_info "  - Local: http://localhost"
+    log_info "  - Network: http://<server-ip>"
+    log_info "  - Internet: http://<public-ip>"
+    log_info ""
+    log_info "Next steps (optional):"
+    log_info "  - Set a domain: sudo $0 set-domain yourdomain.com"
+    log_info "  - Install SSL: sudo $0 install-ssl yourdomain.com"
+    log_info ""
+    log_info "Check status: sudo $0 status"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
 # Stop all services
 stop_all() {
     log_info "Stopping all services..."
@@ -3794,6 +3875,9 @@ main() {
         enable-internet-access)
             enable_internet_access
             ;;
+        abracadabra)
+            abracadabra
+            ;;
         *)
             echo "CineStream Master Deployment Script v21.0"
             echo ""
@@ -3820,6 +3904,10 @@ main() {
             echo "                                Makes http://localhost serve the application"
             echo "  enable-internet-access        Enable internet access (configure firewall, verify setup)"
             echo "                                Makes the application accessible from the internet"
+            echo "  abracadabra                   Complete setup in one command (magic!)"
+            echo "                                Runs: init-server, deploy-app cinestream,"
+            echo "                                enable-autostart, optimize-system, start-all,"
+            echo "                                fix-localhost, enable-internet-access"
             exit 1
             ;;
     esac
