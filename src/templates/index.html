@@ -366,6 +366,48 @@
             font-size: 1.5rem;
         }
         
+        /* Full-page loading overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(5px);
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .loading-overlay.show {
+            opacity: 1;
+        }
+        
+        .loading-overlay-content {
+            text-align: center;
+            color: white;
+        }
+        
+        .loading-overlay .spinner-glow {
+            margin: 0 auto 2rem;
+        }
+        
+        .loading-overlay .loading-text {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .loading-overlay p {
+            font-size: 1rem;
+            opacity: 0.8;
+            margin-top: 0.5rem;
+        }
+        
         .empty-state {
             text-align: center;
             padding: 3rem;
@@ -1997,16 +2039,44 @@
         }
         
         function showLoadingState(message = 'Loading...') {
-            container.innerHTML = `
-                <div class="loading" style="text-align: center; padding: 5rem 2rem; min-height: 400px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+            // Create or update full-page loading overlay
+            let overlay = document.getElementById('loading-overlay');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'loading-overlay';
+                overlay.className = 'loading-overlay';
+                document.body.appendChild(overlay);
+            }
+            
+            overlay.innerHTML = `
+                <div class="loading-overlay-content">
                     <div class="spinner-glow" style="display: flex; align-items: center; justify-content: center; font-size: 24px; color: var(--accent); text-shadow: 0 0 10px rgba(52, 152, 219, 0.8);">🎬</div>
                     <p class="loading-text">${message}<span class="loading-dots"></span></p>
-                    <p style="margin-top: 1rem; opacity: 0.7; font-size: 0.95rem;">Please wait while we fetch the latest showtimes...</p>
+                    <p>Please wait while we fetch the latest showtimes...</p>
                 </div>
             `;
+            
+            // Show overlay with animation
+            setTimeout(() => {
+                overlay.classList.add('show');
+            }, 10);
+        }
+        
+        function hideLoadingOverlay() {
+            const overlay = document.getElementById('loading-overlay');
+            if (overlay) {
+                overlay.classList.remove('show');
+                // Remove overlay after animation
+                setTimeout(() => {
+                    if (overlay && !overlay.classList.contains('show')) {
+                        overlay.remove();
+                    }
+                }, 300);
+            }
         }
         
         function showEmptyState(message, icon = '🎬') {
+            hideLoadingOverlay();
             container.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-state-icon">${icon}</div>
@@ -2017,6 +2087,7 @@
         }
         
         function showErrorState(message, retryCallback = null) {
+            hideLoadingOverlay();
             const errorHtml = `
                 <div class="error-state">
                     <div class="error-icon">⚠️</div>
@@ -2036,6 +2107,7 @@
         }
         
         function renderShowtimes() {
+            hideLoadingOverlay();
             if (!showtimes || showtimes.length === 0) {
                 showEmptyState('{{ translations.no_showtimes or "No showtimes found" }}', '🎬');
                 return;

@@ -2339,6 +2339,18 @@ configure_nginx_localhost() {
     local UPSTREAM_NAME="${APP_NAME}_backend"
     local LOCALHOST_CONF="/etc/nginx/conf.d/localhost.conf"
     
+    # Disable default Nginx welcome page if it exists
+    log_info "Disabling default Nginx welcome page..."
+    if [[ -f "/etc/nginx/sites-enabled/default" ]]; then
+        rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+        log_info "Removed /etc/nginx/sites-enabled/default"
+    fi
+    if [[ -f "/etc/nginx/conf.d/default.conf" ]]; then
+        # Rename instead of delete to preserve it
+        mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.disabled 2>/dev/null || true
+        log_info "Disabled /etc/nginx/conf.d/default.conf"
+    fi
+    
     # Create upstream block
     cat > "$LOCALHOST_CONF" <<EOF
 # Localhost access configuration for ${APP_NAME}
@@ -2358,10 +2370,11 @@ EOF
 }
 
 # HTTP server for localhost (no SSL needed for local access)
+# Set as default_server to catch all requests to port 80 when no domain is specified
 server {
-    listen 80;
-    listen [::]:80;
-    server_name localhost 127.0.0.1;
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name localhost 127.0.0.1 _;
     
     # Security headers
     add_header X-Frame-Options "SAMEORIGIN" always;
@@ -3213,6 +3226,13 @@ set_domain() {
     # Generate Nginx configuration
     log_info "Generating Nginx configuration..."
     
+    # Check if localhost.conf exists - if so, don't use default_server in catch-all
+    local LOCALHOST_EXISTS=false
+    if [[ -f "/etc/nginx/conf.d/localhost.conf" ]]; then
+        LOCALHOST_EXISTS=true
+        log_info "localhost.conf detected - will not set default_server in domain catch-all"
+    fi
+    
     local UPSTREAM_NAME="${APP_NAME}_backend"
     local NGINX_CONF="$NGINX_CONF_DIR/${APP_NAME}.conf"
     
@@ -3250,10 +3270,27 @@ server {
 }
 
 # Catch-all HTTP server - redirect any HTTP requests to HTTPS
+EOF
+
+    # Only add default_server if localhost.conf doesn't exist
+    if [[ "$LOCALHOST_EXISTS" == "false" ]]; then
+        cat >> "$NGINX_CONF" <<EOF
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name _;
+EOF
+    else
+        cat >> "$NGINX_CONF" <<EOF
+# Note: default_server is handled by localhost.conf
+server {
+    listen 80;
+    listen [::]:80;
+    server_name _;
+EOF
+    fi
+    
+    cat >> "$NGINX_CONF" <<EOF
     
     # Allow Let's Encrypt ACME challenge
     location /.well-known/acme-challenge/ {
