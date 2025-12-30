@@ -3020,43 +3020,91 @@ abracadabra() {
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Step 1/7: Initializing server..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    set +e  # Temporarily disable exit on error
     init_server
+    local init_result=$?
+    set -e  # Re-enable exit on error
+    if [[ $init_result -ne 0 ]]; then
+        log_warning "init_server had some issues, but continuing..."
+    fi
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Step 2/7: Deploying CineStream application..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    set +e  # Temporarily disable exit on error
     deploy_application "cinestream"
+    local deploy_result=$?
+    set -e  # Re-enable exit on error
+    if [[ $deploy_result -ne 0 ]]; then
+        # Check if app already exists
+        if [[ -d "$WWW_ROOT/cinestream" ]] && [[ -f "$WWW_ROOT/cinestream/.deploy_config" ]]; then
+            log_info "CineStream application already exists, skipping deployment"
+        else
+            log_warning "Deployment had issues, but continuing..."
+        fi
+    fi
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Step 3/7: Enabling auto-start on boot..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    set +e  # Temporarily disable exit on error
     enable_autostart
+    local autostart_result=$?
+    set -e  # Re-enable exit on error
+    if [[ $autostart_result -ne 0 ]]; then
+        log_warning "enable_autostart had some issues, but continuing..."
+    fi
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Step 4/7: Optimizing system performance..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Note: System optimization may have already been done by init_server"
+    set +e  # Temporarily disable exit on error
     optimize_system
+    local optimize_result=$?
+    set -e  # Re-enable exit on error
+    if [[ $optimize_result -ne 0 ]]; then
+        log_warning "optimize_system had some issues, but continuing..."
+    fi
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Step 5/7: Starting all services..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    set +e  # Temporarily disable exit on error
     start_all
+    local start_result=$?
+    set -e  # Re-enable exit on error
+    if [[ $start_result -ne 0 ]]; then
+        log_warning "start_all had some issues, but continuing..."
+    fi
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Step 6/7: Fixing localhost configuration..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    set +e  # Temporarily disable exit on error
     configure_nginx_localhost
+    local localhost_result=$?
+    set -e  # Re-enable exit on error
+    if [[ $localhost_result -ne 0 ]]; then
+        log_warning "configure_nginx_localhost had some issues, but continuing..."
+    fi
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Step 7/7: Enabling internet access..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    set +e  # Temporarily disable exit on error
     enable_internet_access
+    local internet_result=$?
+    set -e  # Re-enable exit on error
+    if [[ $internet_result -ne 0 ]]; then
+        log_warning "enable_internet_access had some issues, but continuing..."
+    fi
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
