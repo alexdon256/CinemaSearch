@@ -133,7 +133,9 @@ This command will:
 2. Wait for DNS propagation (1-48 hours)
 3. Install SSL certificate: `sudo ./deploy.sh install-ssl <domain>`
 
-**Note:** The first app (`cinestream`) is also accessible via `http://localhost` for local testing.
+**Note:** 
+- **Localhost access**: The first app (`cinestream`) is accessible via `http://localhost/cinestream/` for local testing. The root path (`/`) automatically redirects to `/cinestream/`.
+- **Domain access**: When a domain is configured, the application is served at the root path (e.g., `https://movies.example.com/`) with no subpath.
 
 ## Project Structure
 

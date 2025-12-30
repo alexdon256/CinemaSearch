@@ -46,7 +46,7 @@ sudo ./deploy.sh init-server
   - Initializes database (if API key is configured)
   - Creates systemd services for 20 worker processes (ports 8001-8020)
   - Starts all application processes
-  - Configures localhost access via Nginx
+  - Configures localhost access via Nginx at `/cinestream` subpath
   - Configures firewall (ports 80 and 443)
 - Starts MongoDB and Nginx services
 - Sets up auto-start configuration
@@ -151,6 +151,13 @@ sudo systemctl status nginx.service
 - Both IPv4 and IPv6 are supported
 - Full URL paths and query parameters are preserved in redirects
 
+**Application Access:**
+- **Localhost/IP access**: The CineStream application is accessible at the `/cinestream` subpath
+  - Access via: `http://localhost/cinestream/` or `http://<server-ip>/cinestream/`
+  - The root path (`/`) automatically redirects to `/cinestream/` for localhost
+- **Domain access**: The application is served at the root path (no subpath)
+  - Access via: `https://your-domain.com/` (e.g., `https://movies.example.com/`)
+
 **Test the redirect:**
 ```bash
 # Should redirect to HTTPS
@@ -158,6 +165,10 @@ curl -I http://movies.example.com
 
 # Should also redirect (if accessing by IP)
 curl -I http://YOUR_SERVER_IP
+
+# Access the application
+curl http://localhost/cinestream/          # Localhost with subpath
+curl https://movies.example.com/           # Domain at root (no subpath)
 ```
 
 ---
@@ -304,12 +315,13 @@ sudo ./deploy.sh status
 
 # 2. Test local access
 curl http://localhost:8001
+curl http://localhost/cinestream/  # Access via Nginx at /cinestream subpath
 
 # 3. Test HTTP redirect (if domain is configured)
 curl -I http://movies.example.com  # Should return 301 redirect to HTTPS
 
 # 4. Test HTTPS (after SSL is installed)
-curl https://movies.example.com
+curl https://movies.example.com/  # Access via domain at root (no subpath)
 
 # 5. Check MongoDB connection
 /opt/mongodb/bin/mongosh movie_db --eval "db.stats()"

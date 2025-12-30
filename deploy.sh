@@ -2634,10 +2634,44 @@ server {
         return 404;
     }
     
-    # API endpoints
-    location /api/ {
+    # CineStream application at /cinestream subpath
+    location /cinestream/ {
+        limit_req zone=general_limit burst=20 nodelay;
+        limit_conn conn_limit 10;
+        
+        # Strip /cinestream prefix before proxying to backend
+        rewrite ^/cinestream(.*)$ \$1 break;
+        
+        proxy_pass http://${UPSTREAM_NAME}_localhost;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$server_name;
+        
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_intercept_errors off;
+    }
+    
+    # Redirect /cinestream (without trailing slash) to /cinestream/
+    location = /cinestream {
+        return 301 \$scheme://\$host/cinestream/;
+    }
+    
+    # API endpoints under /cinestream
+    location /cinestream/api/ {
         limit_req zone=api_limit burst=10 nodelay;
         limit_conn conn_limit_per_ip 5;
+        
+        # Strip /cinestream prefix before proxying to backend
+        rewrite ^/cinestream(.*)$ \$1 break;
         
         proxy_pass http://${UPSTREAM_NAME}_localhost;
         proxy_set_header Host \$host;
@@ -2654,33 +2688,11 @@ server {
         proxy_intercept_errors off;
     }
     
-    # Main site
-    location / {
-        limit_req zone=general_limit burst=20 nodelay;
-        limit_conn conn_limit 10;
+    # Static files under /cinestream
+    location /cinestream/static/ {
+        # Strip /cinestream prefix before proxying to backend
+        rewrite ^/cinestream(.*)$ \$1 break;
         
-        proxy_pass http://${UPSTREAM_NAME}_localhost;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Forwarded-Host \$server_name;
-        
-        # WebSocket support
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        
-        # Timeouts
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-        
-        proxy_intercept_errors off;
-    }
-    
-    # Static files
-    location /static/ {
         proxy_pass http://${UPSTREAM_NAME}_localhost;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -2691,6 +2703,11 @@ server {
         add_header Cache-Control "public, immutable";
         
         proxy_intercept_errors off;
+    }
+    
+    # Root location - redirect to /cinestream
+    location = / {
+        return 301 \$scheme://\$host/cinestream/;
     }
 }
 EOF
@@ -2773,10 +2790,44 @@ server {
         return 404;
     }
     
-    # API endpoints
-    location /api/ {
+    # CineStream application at /cinestream subpath
+    location /cinestream/ {
+        limit_req zone=general_limit burst=20 nodelay;
+        limit_conn conn_limit 10;
+        
+        # Strip /cinestream prefix before proxying to backend
+        rewrite ^/cinestream(.*)$ \$1 break;
+        
+        proxy_pass http://${UPSTREAM_NAME}_localhost;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$server_name;
+        
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_intercept_errors off;
+    }
+    
+    # Redirect /cinestream (without trailing slash) to /cinestream/
+    location = /cinestream {
+        return 301 \$scheme://\$host/cinestream/;
+    }
+    
+    # API endpoints under /cinestream
+    location /cinestream/api/ {
         limit_req zone=api_limit burst=10 nodelay;
         limit_conn conn_limit_per_ip 5;
+        
+        # Strip /cinestream prefix before proxying to backend
+        rewrite ^/cinestream(.*)$ \$1 break;
         
         proxy_pass http://${UPSTREAM_NAME}_localhost;
         proxy_set_header Host \$host;
@@ -2793,33 +2844,11 @@ server {
         proxy_intercept_errors off;
     }
     
-    # Main site
-    location / {
-        limit_req zone=general_limit burst=20 nodelay;
-        limit_conn conn_limit 10;
+    # Static files under /cinestream
+    location /cinestream/static/ {
+        # Strip /cinestream prefix before proxying to backend
+        rewrite ^/cinestream(.*)$ \$1 break;
         
-        proxy_pass http://${UPSTREAM_NAME}_localhost;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Forwarded-Host \$server_name;
-        
-        # WebSocket support
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        
-        # Timeouts
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-        
-        proxy_intercept_errors off;
-    }
-    
-    # Static files
-    location /static/ {
         proxy_pass http://${UPSTREAM_NAME}_localhost;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -2830,6 +2859,11 @@ server {
         add_header Cache-Control "public, immutable";
         
         proxy_intercept_errors off;
+    }
+    
+    # Root location - redirect to /cinestream
+    location = / {
+        return 301 \$scheme://\$host/cinestream/;
     }
 }
 EOF
@@ -3380,9 +3414,11 @@ abracadabra() {
     log_info "Your CineStream server is now fully configured and running!"
     log_info ""
     log_info "Access your application:"
-    log_info "  - Local: http://localhost"
-    log_info "  - Network: http://<server-ip>"
-    log_info "  - Internet: http://<public-ip>"
+    log_info "  - Local: http://localhost/cinestream/ (redirects to HTTPS if SSL is configured)"
+    log_info "  - Network: http://<server-ip>/cinestream/ (redirects to HTTPS if SSL is configured)"
+    log_info "  - Internet: http://<public-ip>/cinestream/ (redirects to HTTPS if SSL is configured)"
+    log_info "  - HTTPS: https://<server-ip>/cinestream/ (if self-signed SSL is used)"
+    log_info "  - HTTPS: https://<your-domain>/ (if domain SSL is used - no subpath)"
     log_info ""
     log_info "Next steps (optional):"
     log_info "  - Set a domain: sudo $0 set-domain yourdomain.com"
@@ -3566,7 +3602,7 @@ diagnose_internet_access() {
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info ""
     log_info "After configuring port forwarding, test access:"
-    log_info "  - From internet: http://$public_ip"
+    log_info "  - From internet: http://$public_ip/cinestream/"
     log_info "  - Should show your CineStream application"
     log_info ""
 }
@@ -4445,7 +4481,15 @@ server {
         return 404;
     }
     
-    # Rate limiting for API endpoints
+    # Redirect /cinestream subpath to root (domain serves at root, not subpath)
+    location = /cinestream {
+        return 301 \$scheme://\$host/;
+    }
+    location = /cinestream/ {
+        return 301 \$scheme://\$host/;
+    }
+    
+    # API endpoints
     location /api/ {
         limit_req zone=api_limit burst=10 nodelay;
         limit_conn conn_limit_per_ip 5;
@@ -4462,11 +4506,10 @@ server {
         proxy_send_timeout 30s;
         proxy_read_timeout 30s;
         
-        # Pass through error responses from backend
         proxy_intercept_errors off;
     }
     
-    # Proxy settings for main site
+    # Main site
     location / {
         limit_req zone=general_limit burst=20 nodelay;
         limit_conn conn_limit 10;
@@ -4478,21 +4521,19 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header X-Forwarded-Host \$server_name;
         
-        # WebSocket support (if needed in future)
+        # WebSocket support
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         
-        # Timeouts
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
         
-        # Pass through error responses from backend
         proxy_intercept_errors off;
     }
     
-    # Static files - proxy to Flask so it can handle 404s properly
+    # Static files
     location /static/ {
         proxy_pass http://${UPSTREAM_NAME};
         proxy_set_header Host \$host;
@@ -4500,11 +4541,9 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         
-        # Cache static files
         proxy_cache_valid 200 30d;
         add_header Cache-Control "public, immutable";
         
-        # Pass through error responses from backend (including 404s)
         proxy_intercept_errors off;
     }
 }
