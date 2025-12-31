@@ -1317,6 +1317,13 @@ main() {
             check_root
             enable_autostart
             ;;
+        reconfigure-nginx)
+            check_root
+            configure_nginx "${2:-${APP_NAME}}"
+            ;;
+        test-backend)
+            test_backend "${2:-${APP_NAME}}"
+            ;;
         *)
             echo "CineStream Deployment Script"
             echo ""
@@ -1331,6 +1338,8 @@ main() {
             echo "  start-all               Start all services"
             echo "  stop-all                Stop all services"
             echo "  enable-autostart        Enable autostart for all services"
+            echo "  reconfigure-nginx       Reconfigure Nginx for application"
+            echo "  test-backend            Test backend workers and Nginx config"
             echo ""
             exit 1
             ;;
