@@ -1359,23 +1359,43 @@ test_backend() {
     echo "=== Test Requests ==="
     echo "Testing direct backend:"
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://127.0.0.1:${START_PORT}/" 2>/dev/null || echo "000")
+    HTTP_BODY=$(curl -s --connect-timeout 2 "http://127.0.0.1:${START_PORT}/" 2>/dev/null | head -c 100)
     if [[ "$HTTP_CODE" =~ ^[23] ]]; then
         echo -e "  http://localhost:${START_PORT}/ → ${GREEN}${HTTP_CODE}${NC}"
+        echo "  Response preview: ${HTTP_BODY:0:50}..."
     else
         echo -e "  http://localhost:${START_PORT}/ → ${RED}${HTTP_CODE}${NC}"
+        if [[ "$HTTP_CODE" == "000" ]]; then
+            echo "  ${RED}Connection failed - worker may not be running${NC}"
+        else
+            echo "  Response preview: ${HTTP_BODY:0:50}..."
+        fi
     fi
     
     echo "Testing via Nginx:"
     NGINX_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://localhost/${app_name}/" 2>/dev/null || echo "000")
+    NGINX_BODY=$(curl -s --connect-timeout 2 "http://localhost/${app_name}/" 2>/dev/null | head -c 100)
     if [[ "$NGINX_CODE" =~ ^[23] ]]; then
         echo -e "  http://localhost/${app_name}/ → ${GREEN}${NGINX_CODE}${NC}"
     else
         echo -e "  http://localhost/${app_name}/ → ${RED}${NGINX_CODE}${NC}"
+        echo "  Response preview: ${NGINX_BODY:0:50}..."
         echo ""
         log_warn "Nginx is returning ${NGINX_CODE}. Possible issues:"
-        log_warn "  1. Nginx config not reloaded - run: sudo systemctl reload nginx"
-        log_warn "  2. Config needs regeneration - run: sudo ./deploy.sh reconfigure-nginx"
-        log_warn "  3. Check Nginx error logs: sudo tail -f /var/log/nginx/error.log"
+        if [[ "$NGINX_CODE" == "404" ]]; then
+            log_warn "  404 means Nginx found the location but backend returned 404"
+            log_warn "  - Check if workers are running: sudo systemctl status ${app_name}@${START_PORT}.service"
+            log_warn "  - Test backend directly: curl http://localhost:${START_PORT}/"
+            log_warn "  - Check Nginx access log: sudo tail -f /var/log/nginx/access.log"
+        elif [[ "$NGINX_CODE" == "502" ]] || [[ "$NGINX_CODE" == "503" ]]; then
+            log_warn "  ${NGINX_CODE} means Nginx can't connect to backend"
+            log_warn "  - Workers may not be running"
+            log_warn "  - Check upstream connectivity"
+        else
+            log_warn "  1. Nginx config not reloaded - run: sudo systemctl reload nginx"
+            log_warn "  2. Config needs regeneration - run: sudo ./deploy.sh reconfigure-nginx"
+        fi
+        log_warn "  3. Check Nginx error logs: sudo journalctl -u nginx.service -n 50"
     fi
 }
 
@@ -1466,6 +1486,22 @@ main() {
                 fi
             else
                 log_error "Config file was not created!"
+            fi
+            
+            # Check what Nginx actually sees
+            echo ""
+            log_step "Verifying Nginx can see the config..."
+            if nginx -T 2>/dev/null | grep -q "location /${app_name}/"; then
+                log_info "✓ Nginx can see the location block"
+            else
+                log_warn "✗ Nginx cannot see the location block"
+                log_warn "Checking for conflicts..."
+                echo ""
+                echo "All server blocks listening on port 80:"
+                nginx -T 2>/dev/null | grep -B 3 "listen 80" | head -30
+                echo ""
+                echo "Checking main nginx.conf for includes:"
+                grep -E "include|conf.d" /etc/nginx/nginx.conf | head -10
             fi
             ;;
         test-backend)
