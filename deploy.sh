@@ -734,6 +734,27 @@ configure_nginx() {
     
     source "${app_dir}/.deploy_config"
     
+    # Ensure nginx.conf includes conf.d directory
+    if ! grep -qE "include.*conf\.d|include.*conf.d" /etc/nginx/nginx.conf; then
+        log_info "Adding conf.d include to nginx.conf..."
+        # Create backup
+        cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup.$(date +%Y%m%d_%H%M%S)
+        
+        # Try to find the http block and add include inside it
+        # Look for the http { line and add include after the first line inside the block
+        if grep -q "^[[:space:]]*http[[:space:]]*{" /etc/nginx/nginx.conf; then
+            # Add include after http { on the next line
+            sed -i '/^[[:space:]]*http[[:space:]]*{/a\    include /etc/nginx/conf.d/*.conf;' /etc/nginx/nginx.conf
+        elif grep -q "^http[[:space:]]*{" /etc/nginx/nginx.conf; then
+            sed -i '/^http[[:space:]]*{/a\    include /etc/nginx/conf.d/*.conf;' /etc/nginx/nginx.conf
+        else
+            # If http block not found at start of line, try to find it and add after
+            # Find line with "http" and add include after it
+            sed -i '/http[[:space:]]*{/a\    include /etc/nginx/conf.d/*.conf;' /etc/nginx/nginx.conf
+        fi
+        log_info "Added conf.d include to nginx.conf"
+    fi
+    
     # Create upstream configuration
     local upstream_block=""
     for port in $(seq ${START_PORT} ${END_PORT}); do
