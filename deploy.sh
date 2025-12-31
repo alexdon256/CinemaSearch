@@ -2427,7 +2427,25 @@ server {
     listen [::]:80 default_server;
     server_name _;  # Responds to any IP or hostname
     
-    # Main application
+    # CineStream subpath (case-insensitive)
+    location ~* ^/cinestream(/.*)?$ {
+        proxy_pass http://cinestream_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+        
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+    
+    # Main application (root path)
     location / {
         proxy_pass http://cinestream_backend;
         proxy_http_version 1.1;
@@ -2524,11 +2542,15 @@ EOF
             log_info ""
             log_success "✓ CineStream is now accessible at:"
             log_info "  - http://localhost/ (from server)"
+            log_info "  - http://localhost/cinestream (from server)"
             log_info "  - http://127.0.0.1/ (from server)"
+            log_info "  - http://127.0.0.1/cinestream (from server)"
             if [[ -n "$server_ip" ]] && [[ "$server_ip" != "<your-server-ip>" ]]; then
                 log_info "  - http://$server_ip/ (from local network)"
+                log_info "  - http://$server_ip/cinestream (from local network)"
             else
                 log_info "  - http://<your-server-ip>/ (from local network)"
+                log_info "  - http://<your-server-ip>/cinestream (from local network)"
                 log_info "    Find your IP: ip addr show | grep inet"
             fi
             log_info ""

@@ -54,7 +54,25 @@ server {
     listen [::]:80 default_server;
     server_name _;  # Responds to any IP or hostname
     
-    # Main application
+    # CineStream subpath (case-insensitive)
+    location ~* ^/cinestream(/.*)?$ {
+        proxy_pass http://cinestream_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+        
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+    
+    # Main application (root path)
     location / {
         proxy_pass http://cinestream_backend;
         proxy_http_version 1.1;
@@ -109,8 +127,11 @@ This will:
 
 ✓ CineStream is now accessible at:
   - http://localhost/
+  - http://localhost/cinestream
   - http://127.0.0.1/
+  - http://127.0.0.1/cinestream
   - http://<your-server-ip>/
+  - http://<your-server-ip>/cinestream
 
 To enable internet access: sudo ./deploy.sh enable-internet-access
 ```
@@ -121,10 +142,13 @@ After deployment, you can access CineStream from:
 
 1. **On the server itself:**
    - `http://localhost/`
+   - `http://localhost/cinestream`
    - `http://127.0.0.1/`
+   - `http://127.0.0.1/cinestream`
 
 2. **From other devices on your local network:**
    - `http://192.168.x.x/` (your server's IP address)
+   - `http://192.168.x.x/cinestream`
    - Find your server IP: `ip addr show` or `hostname -I`
 
 3. **Enable internet access** (requires firewall configuration):
