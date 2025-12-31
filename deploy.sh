@@ -1326,14 +1326,37 @@ test_backend() {
     fi
     
     echo ""
+    echo "=== Nginx Config Details ==="
+    if [[ -f "/etc/nginx/conf.d/${app_name}.conf" ]]; then
+        echo "Location blocks in config:"
+        grep -n "location" "/etc/nginx/conf.d/${app_name}.conf" || echo "  No location blocks found"
+        echo ""
+        echo "Upstream servers:"
+        grep -A 20 "upstream ${app_name}_backend" "/etc/nginx/conf.d/${app_name}.conf" | grep "server" || echo "  No upstream servers found"
+    fi
+    
+    echo ""
     echo "=== Test Requests ==="
     echo "Testing direct backend:"
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://127.0.0.1:${START_PORT}/" 2>/dev/null || echo "000")
-    echo "  http://localhost:${START_PORT}/ → ${HTTP_CODE}"
+    if [[ "$HTTP_CODE" =~ ^[23] ]]; then
+        echo -e "  http://localhost:${START_PORT}/ → ${GREEN}${HTTP_CODE}${NC}"
+    else
+        echo -e "  http://localhost:${START_PORT}/ → ${RED}${HTTP_CODE}${NC}"
+    fi
     
     echo "Testing via Nginx:"
     NGINX_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://localhost/${app_name}/" 2>/dev/null || echo "000")
-    echo "  http://localhost/${app_name}/ → ${NGINX_CODE}"
+    if [[ "$NGINX_CODE" =~ ^[23] ]]; then
+        echo -e "  http://localhost/${app_name}/ → ${GREEN}${NGINX_CODE}${NC}"
+    else
+        echo -e "  http://localhost/${app_name}/ → ${RED}${NGINX_CODE}${NC}"
+        echo ""
+        log_warn "Nginx is returning ${NGINX_CODE}. Possible issues:"
+        log_warn "  1. Nginx config not reloaded - run: sudo systemctl reload nginx"
+        log_warn "  2. Config needs regeneration - run: sudo ./deploy.sh reconfigure-nginx"
+        log_warn "  3. Check Nginx error logs: sudo tail -f /var/log/nginx/error.log"
+    fi
 }
 
 # Start all services
