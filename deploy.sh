@@ -1670,7 +1670,13 @@ check_load_distribution() {
     
     for port in $(seq ${START_PORT} ${END_PORT}); do
         # Check worker logs for HTTP requests (GET/POST)
-        local log_entries=$(sudo journalctl -u ${app_name}@${port}.service --since "10 minutes ago" --no-pager 2>/dev/null | grep -cE "GET|POST" || echo "0")
+        local log_entries=$(sudo journalctl -u ${app_name}@${port}.service --since "10 minutes ago" --no-pager 2>/dev/null | grep -cE "GET|POST" 2>/dev/null || echo "0")
+        # Strip whitespace and ensure it's a number
+        log_entries=$(echo "$log_entries" | tr -d '[:space:]')
+        # Default to 0 if empty or not a number
+        if [[ -z "$log_entries" ]] || ! [[ "$log_entries" =~ ^[0-9]+$ ]]; then
+            log_entries=0
+        fi
         if [[ "$log_entries" -gt 0 ]]; then
             port_counts[$port]=$log_entries
             total_requests=$((total_requests + log_entries))
