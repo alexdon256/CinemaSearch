@@ -1475,7 +1475,7 @@ IO_EOF
     log_info "  - CPU governor: Automatic scaling (ondemand/schedutil - turbo when needed, power saving when idle)"
     log_info "  - Memory overcommit: Optimized"
     log_info "  - Nginx workers: Optimized"
-    log_info "  - Unnecessary services: Disabled (see details above)"
+    log_info "  - Services: All services kept enabled (Bluetooth, NetworkManager, etc.)"
     log_info "  - GRUB: Boot menu disabled (direct boot)"
     log_info "  - Startup/Shutdown: Optimized for faster boot times"
     log_info ""
@@ -1652,176 +1652,176 @@ optimize_nginx_workers() {
 # Disable unnecessary services for server performance
 # DISABLED: This function has been disabled - all services are kept enabled
 # disable_unnecessary_services() {
-    log_info "Disabling unnecessary services for server performance..."
-    
-    # List of services to disable (safe for headless server, but keep audio/network/bluetooth for multimedia)
-    local services_to_disable=(
-        # Desktop environment services
-        # Note: Bluetooth is KEPT ENABLED for keyboard/mouse support
-        "cups.service"              # Printing service
-        "cups-browsed.service"       # Printer discovery
-        
-        # Power management (prevent sleep/suspend)
-        "sleep.target"
-        "suspend.target"
-        "hibernate.target"
-        "hybrid-sleep.target"
-        
-        # Desktop services (keep minimal for multimedia)
-        "accounts-daemon.service"    # User account management (desktop)
-        "colord.service"            # Color management (desktop)
-        "ModemManager.service"      # Modem management (not needed)
-        "polkit.service"            # PolicyKit (desktop)
-        "upower.service"           # Power management (desktop)
-        
-        # Other unnecessary services
-        "fstrim.timer"              # SSD trim (can be run manually)
-    )
-    
-    # Note: Audio services (PulseAudio, ALSA) are KEPT ENABLED for video playback
-    # Note: Network services (NetworkManager, Avahi) are KEPT ENABLED for WiFi and network connectivity
-    
-    local disabled_count=0
-    local skipped_count=0
-    
-    for service in "${services_to_disable[@]}"; do
-        # Check if service exists
-        if systemctl list-unit-files | grep -q "^${service}"; then
-            # Check if service is already disabled/masked
-            local status
-            status=$(systemctl is-enabled "$service" 2>/dev/null || echo "not-found")
-            
-            if [[ "$status" != "masked" ]] && [[ "$status" != "disabled" ]]; then
-                # Stop the service first
-                systemctl stop "$service" 2>/dev/null || true
-                
-                # Disable and mask the service
-                systemctl disable "$service" 2>/dev/null || true
-                systemctl mask "$service" 2>/dev/null || true
-                
-                log_info "  Disabled: $service"
-                ((disabled_count++))
-            else
-                log_info "  Already disabled: $service"
-                ((skipped_count++))
-            fi
-        else
-            log_info "  Not found: $service (skipped)"
-            ((skipped_count++))
-        fi
-    done
-    
-    # Keep NetworkManager enabled for WiFi support (needed for multimedia use)
-    if systemctl list-unit-files | grep -q "^NetworkManager.service"; then
-        local nm_status
-        nm_status=$(systemctl is-active NetworkManager.service 2>/dev/null || echo "inactive")
-        
-        if [[ "$nm_status" != "active" ]]; then
-            log_info "  Enabling NetworkManager for WiFi support..."
-            systemctl unmask NetworkManager.service 2>/dev/null || true
-            systemctl enable NetworkManager.service 2>/dev/null || true
-            systemctl start NetworkManager.service 2>/dev/null || true
-        else
-            log_info "  NetworkManager is active (needed for WiFi)"
-        fi
-    fi
-    
-    # Keep Bluetooth enabled for keyboard/mouse support
-    if systemctl list-unit-files | grep -q "^bluetooth.service"; then
-        local bt_status
-        bt_status=$(systemctl is-active bluetooth.service 2>/dev/null || echo "inactive")
-        
-        if [[ "$bt_status" != "active" ]]; then
-            log_info "  Enabling Bluetooth for keyboard/mouse support..."
-            systemctl unmask bluetooth.service 2>/dev/null || true
-            systemctl unmask bluetooth.target 2>/dev/null || true
-            systemctl enable bluetooth.service 2>/dev/null || true
-            systemctl start bluetooth.service 2>/dev/null || true
-        else
-            log_info "  Bluetooth is active (needed for keyboard/mouse)"
-        fi
-    fi
-    
-    # Keep audio services enabled for video playback
-    if systemctl list-unit-files | grep -q "^pulseaudio.service"; then
-        local pa_status
-        pa_status=$(systemctl is-active pulseaudio.service 2>/dev/null || echo "inactive")
-        
-        if [[ "$pa_status" != "active" ]]; then
-            log_info "  Enabling PulseAudio for audio support..."
-            systemctl unmask pulseaudio.service 2>/dev/null || true
-            systemctl --user enable pulseaudio.service 2>/dev/null || true
-            systemctl --user start pulseaudio.service 2>/dev/null || true
-        else
-            log_info "  PulseAudio is active (needed for audio)"
-        fi
-    fi
-    
-    # Keep rtkit-daemon for real-time audio processing
-    if systemctl list-unit-files | grep -q "^rtkit-daemon.service"; then
-        local rtkit_status
-        rtkit_status=$(systemctl is-active rtkit-daemon.service 2>/dev/null || echo "inactive")
-        
-        if [[ "$rtkit_status" != "active" ]]; then
-            log_info "  Enabling rtkit-daemon for audio processing..."
-            systemctl unmask rtkit-daemon.service 2>/dev/null || true
-            systemctl enable rtkit-daemon.service 2>/dev/null || true
-            systemctl start rtkit-daemon.service 2>/dev/null || true
-        fi
-    fi
-    
-    # Disable unnecessary timers
-    local timers_to_disable=(
-        "fstrim.timer"              # SSD trim (can be run manually)
-        "systemd-tmpfiles-clean.timer"  # Temp file cleanup (optional)
-    )
-    
-    for timer in "${timers_to_disable[@]}"; do
-        if systemctl list-unit-files | grep -q "^${timer}"; then
-            local timer_status
-            timer_status=$(systemctl is-enabled "$timer" 2>/dev/null || echo "not-found")
-            
-            if [[ "$timer_status" == "enabled" ]]; then
-                systemctl stop "$timer" 2>/dev/null || true
-                systemctl disable "$timer" 2>/dev/null || true
-                log_info "  Disabled timer: $timer"
-                ((disabled_count++))
-            fi
-        fi
-    done
-    
-    # Reload systemd
-    systemctl daemon-reload 2>/dev/null || true
-    
-    # Keep geoclue enabled for geolocation support (needed for app city/country detection)
-    if systemctl list-unit-files | grep -q "^geoclue.service"; then
-        local geoclue_status
-        geoclue_status=$(systemctl is-active geoclue.service 2>/dev/null || echo "inactive")
-        
-        if [[ "$geoclue_status" != "active" ]]; then
-            log_info "  Enabling geoclue for geolocation support..."
-            systemctl unmask geoclue.service 2>/dev/null || true
-            systemctl enable geoclue.service 2>/dev/null || true
-            systemctl start geoclue.service 2>/dev/null || true
-        else
-            log_info "  geoclue is active (needed for geolocation)"
-        fi
-    fi
-    
-    log_success "Service optimization complete: $disabled_count services disabled, $skipped_count skipped/not found"
-    log_info ""
-    log_info "Services kept enabled for multimedia, geolocation, and input devices:"
-    log_info "  - NetworkManager (WiFi and network connectivity)"
-    log_info "  - Bluetooth (keyboard/mouse support)"
-    log_info "  - PulseAudio (audio playback)"
-    log_info "  - rtkit-daemon (real-time audio processing)"
-    log_info "  - Avahi (network discovery)"
-    log_info "  - geoclue (geolocation support for city/country detection)"
-    
-    # Show summary of what's still running
-    log_info ""
-    log_info "Active services summary:"
-    systemctl list-units --type=service --state=running | grep -E "(mongodb|nginx|cinestream|ssh|NetworkManager|pulseaudio|rtkit)" | head -15 || true
+#     log_info "Disabling unnecessary services for server performance..."
+#     
+#     # List of services to disable (safe for headless server, but keep audio/network/bluetooth for multimedia)
+#     local services_to_disable=(
+#         # Desktop environment services
+#         # Note: Bluetooth is KEPT ENABLED for keyboard/mouse support
+#         "cups.service"              # Printing service
+#         "cups-browsed.service"       # Printer discovery
+#         
+#         # Power management (prevent sleep/suspend)
+#         "sleep.target"
+#         "suspend.target"
+#         "hibernate.target"
+#         "hybrid-sleep.target"
+#         
+#         # Desktop services (keep minimal for multimedia)
+#         "accounts-daemon.service"    # User account management (desktop)
+#         "colord.service"            # Color management (desktop)
+#         "ModemManager.service"      # Modem management (not needed)
+#         "polkit.service"            # PolicyKit (desktop)
+#         "upower.service"           # Power management (desktop)
+#         
+#         # Other unnecessary services
+#         "fstrim.timer"              # SSD trim (can be run manually)
+#     )
+#     
+#     # Note: Audio services (PulseAudio, ALSA) are KEPT ENABLED for video playback
+#     # Note: Network services (NetworkManager, Avahi) are KEPT ENABLED for WiFi and network connectivity
+#     
+#     local disabled_count=0
+#     local skipped_count=0
+#     
+#     for service in "${services_to_disable[@]}"; do
+#         # Check if service exists
+#         if systemctl list-unit-files | grep -q "^${service}"; then
+#             # Check if service is already disabled/masked
+#             local status
+#             status=$(systemctl is-enabled "$service" 2>/dev/null || echo "not-found")
+#             
+#             if [[ "$status" != "masked" ]] && [[ "$status" != "disabled" ]]; then
+#                 # Stop the service first
+#                 systemctl stop "$service" 2>/dev/null || true
+#                 
+#                 # Disable and mask the service
+#                 systemctl disable "$service" 2>/dev/null || true
+#                 systemctl mask "$service" 2>/dev/null || true
+#                 
+#                 log_info "  Disabled: $service"
+#                 ((disabled_count++))
+#             else
+#                 log_info "  Already disabled: $service"
+#                 ((skipped_count++))
+#             fi
+#         else
+#             log_info "  Not found: $service (skipped)"
+#             ((skipped_count++))
+#         fi
+#     done
+#     
+#     # Keep NetworkManager enabled for WiFi support (needed for multimedia use)
+#     if systemctl list-unit-files | grep -q "^NetworkManager.service"; then
+#         local nm_status
+#         nm_status=$(systemctl is-active NetworkManager.service 2>/dev/null || echo "inactive")
+#         
+#         if [[ "$nm_status" != "active" ]]; then
+#             log_info "  Enabling NetworkManager for WiFi support..."
+#             systemctl unmask NetworkManager.service 2>/dev/null || true
+#             systemctl enable NetworkManager.service 2>/dev/null || true
+#             systemctl start NetworkManager.service 2>/dev/null || true
+#         else
+#             log_info "  NetworkManager is active (needed for WiFi)"
+#         fi
+#     fi
+#     
+#     # Keep Bluetooth enabled for keyboard/mouse support
+#     if systemctl list-unit-files | grep -q "^bluetooth.service"; then
+#         local bt_status
+#         bt_status=$(systemctl is-active bluetooth.service 2>/dev/null || echo "inactive")
+#         
+#         if [[ "$bt_status" != "active" ]]; then
+#             log_info "  Enabling Bluetooth for keyboard/mouse support..."
+#             systemctl unmask bluetooth.service 2>/dev/null || true
+#             systemctl unmask bluetooth.target 2>/dev/null || true
+#             systemctl enable bluetooth.service 2>/dev/null || true
+#             systemctl start bluetooth.service 2>/dev/null || true
+#         else
+#             log_info "  Bluetooth is active (needed for keyboard/mouse)"
+#         fi
+#     fi
+#     
+#     # Keep audio services enabled for video playback
+#     if systemctl list-unit-files | grep -q "^pulseaudio.service"; then
+#         local pa_status
+#         pa_status=$(systemctl is-active pulseaudio.service 2>/dev/null || echo "inactive")
+#         
+#         if [[ "$pa_status" != "active" ]]; then
+#             log_info "  Enabling PulseAudio for audio support..."
+#             systemctl unmask pulseaudio.service 2>/dev/null || true
+#             systemctl --user enable pulseaudio.service 2>/dev/null || true
+#             systemctl --user start pulseaudio.service 2>/dev/null || true
+#         else
+#             log_info "  PulseAudio is active (needed for audio)"
+#         fi
+#     fi
+#     
+#     # Keep rtkit-daemon for real-time audio processing
+#     if systemctl list-unit-files | grep -q "^rtkit-daemon.service"; then
+#         local rtkit_status
+#         rtkit_status=$(systemctl is-active rtkit-daemon.service 2>/dev/null || echo "inactive")
+#         
+#         if [[ "$rtkit_status" != "active" ]]; then
+#             log_info "  Enabling rtkit-daemon for audio processing..."
+#             systemctl unmask rtkit-daemon.service 2>/dev/null || true
+#             systemctl enable rtkit-daemon.service 2>/dev/null || true
+#             systemctl start rtkit-daemon.service 2>/dev/null || true
+#         fi
+#     fi
+#     
+#     # Disable unnecessary timers
+#     local timers_to_disable=(
+#         "fstrim.timer"              # SSD trim (can be run manually)
+#         "systemd-tmpfiles-clean.timer"  # Temp file cleanup (optional)
+#     )
+#     
+#     for timer in "${timers_to_disable[@]}"; do
+#         if systemctl list-unit-files | grep -q "^${timer}"; then
+#             local timer_status
+#             timer_status=$(systemctl is-enabled "$timer" 2>/dev/null || echo "not-found")
+#             
+#             if [[ "$timer_status" == "enabled" ]]; then
+#                 systemctl stop "$timer" 2>/dev/null || true
+#                 systemctl disable "$timer" 2>/dev/null || true
+#                 log_info "  Disabled timer: $timer"
+#                 ((disabled_count++))
+#             fi
+#         fi
+#     done
+#     
+#     # Reload systemd
+#     systemctl daemon-reload 2>/dev/null || true
+#     
+#     # Keep geoclue enabled for geolocation support (needed for app city/country detection)
+#     if systemctl list-unit-files | grep -q "^geoclue.service"; then
+#         local geoclue_status
+#         geoclue_status=$(systemctl is-active geoclue.service 2>/dev/null || echo "inactive")
+#         
+#         if [[ "$geoclue_status" != "active" ]]; then
+#             log_info "  Enabling geoclue for geolocation support..."
+#             systemctl unmask geoclue.service 2>/dev/null || true
+#             systemctl enable geoclue.service 2>/dev/null || true
+#             systemctl start geoclue.service 2>/dev/null || true
+#         else
+#             log_info "  geoclue is active (needed for geolocation)"
+#         fi
+#     fi
+#     
+#     log_success "Service optimization complete: $disabled_count services disabled, $skipped_count skipped/not found"
+#     log_info ""
+#     log_info "Services kept enabled for multimedia, geolocation, and input devices:"
+#     log_info "  - NetworkManager (WiFi and network connectivity)"
+#     log_info "  - Bluetooth (keyboard/mouse support)"
+#     log_info "  - PulseAudio (audio playback)"
+#     log_info "  - rtkit-daemon (real-time audio processing)"
+#     log_info "  - Avahi (network discovery)"
+#     log_info "  - geoclue (geolocation support for city/country detection)"
+#     
+#     # Show summary of what's still running
+#     log_info ""
+#     log_info "Active services summary:"
+#     systemctl list-units --type=service --state=running | grep -E "(mongodb|nginx|cinestream|ssh|NetworkManager|pulseaudio|rtkit)" | head -15 || true
 # }
 
 # Configure GRUB to skip boot menu (direct boot)
@@ -3294,7 +3294,7 @@ abracadabra() {
     log_info "  5. Start all services"
     log_info "  6. Fix localhost configuration"
     log_info "  7. Enable internet access"
-    log_info "  8. Ensure SSH connectivity"
+    log_info "  8. Verify SSH connectivity"
     log_info ""
     read -p "Continue with complete setup? (yes/no): " CONFIRM
     
@@ -3396,14 +3396,14 @@ abracadabra() {
     
     log_info ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "Step 8/8: Ensuring SSH connectivity..."
+    log_info "Step 8/8: Verifying SSH connectivity..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    set +e  # Temporarily disable exit on error
-    ensure_ssh_service
-    local ssh_result=$?
-    set -e  # Re-enable exit on error
-    if [[ $ssh_result -ne 0 ]]; then
-        log_warning "ensure_ssh_service had some issues, but continuing..."
+    # SSH is already configured in Step 1 (init_server), just verify it's running
+    if systemctl is-active --quiet sshd.service 2>/dev/null || systemctl is-active --quiet ssh.service 2>/dev/null; then
+        log_success "SSH service is running"
+    else
+        log_warning "SSH service is not running, ensuring it's enabled..."
+        ensure_ssh_service
     fi
     
     log_info ""
