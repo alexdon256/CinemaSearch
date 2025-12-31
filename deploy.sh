@@ -759,9 +759,8 @@ server {
     
     # Serve application at /${app_name}/ subpath
     location /${app_name}/ {
-        # Strip /${app_name}/ prefix before proxying to backend
-        rewrite ^/${app_name}/(.*) /\$1 break;
-        proxy_pass http://${app_name}_backend;
+        # Use proxy_pass with trailing slash to automatically strip /${app_name}/ prefix
+        proxy_pass http://${app_name}_backend/;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -860,9 +859,8 @@ server {
     
     # Serve application at /${app_name}/ subpath
     location /${app_name}/ {
-        # Strip /${app_name}/ prefix before proxying to backend
-        rewrite ^/${app_name}/(.*) /\$1 break;
-        proxy_pass http://${app_name}_backend;
+        # Use proxy_pass with trailing slash to automatically strip /${app_name}/ prefix
+        proxy_pass http://${app_name}_backend/;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
