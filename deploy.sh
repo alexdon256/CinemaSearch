@@ -1257,6 +1257,85 @@ show_status() {
     firewall-cmd --list-services 2>/dev/null | grep -q https && echo -e "HTTPS: ${GREEN}allowed${NC}" || echo -e "HTTPS: ${RED}blocked${NC}"
 }
 
+# Test backend connectivity
+test_backend() {
+    local app_name="${1:-${APP_NAME}}"
+    local app_dir="/var/www/${app_name}"
+    
+    if [[ ! -d "$app_dir" ]] || [[ ! -f "${app_dir}/.deploy_config" ]]; then
+        log_error "Application ${app_name} not found at ${app_dir}"
+        return 1
+    fi
+    
+    source "${app_dir}/.deploy_config"
+    
+    log_step "Testing backend for ${app_name}..."
+    
+    echo ""
+    echo "=== Backend Workers ==="
+    local running=0
+    local total=0
+    for port in $(seq ${START_PORT} ${END_PORT}); do
+        ((total++))
+        if systemctl is-active --quiet "${app_name}@${port}.service" 2>/dev/null; then
+            ((running++))
+            echo -e "Port ${port}: ${GREEN}running${NC}"
+            
+            # Test HTTP connection
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://127.0.0.1:${port}/" 2>/dev/null || echo "000")
+            if echo "$HTTP_CODE" | grep -qE "200|301|302"; then
+                echo "  → HTTP test: ${GREEN}OK${NC} (${HTTP_CODE})"
+            else
+                echo "  → HTTP test: ${RED}FAILED${NC} (${HTTP_CODE})"
+            fi
+        else
+            echo -e "Port ${port}: ${RED}stopped${NC}"
+        fi
+    done
+    
+    echo ""
+    echo "Summary: ${running}/${total} workers running"
+    
+    if [[ $running -eq 0 ]]; then
+        log_error "No workers are running! Start them with: sudo ./deploy.sh start-all"
+        return 1
+    fi
+    
+    echo ""
+    echo "=== Nginx Configuration ==="
+    if [[ -f "/etc/nginx/conf.d/${app_name}.conf" ]]; then
+        echo -e "Config file: ${GREEN}exists${NC}"
+        
+        # Check if upstream is configured
+        if grep -q "upstream ${app_name}_backend" "/etc/nginx/conf.d/${app_name}.conf"; then
+            echo -e "Upstream backend: ${GREEN}configured${NC}"
+        else
+            echo -e "Upstream backend: ${RED}missing${NC}"
+        fi
+        
+        # Check if location block exists
+        if grep -q "location /${app_name}/" "/etc/nginx/conf.d/${app_name}.conf"; then
+            echo -e "Location block: ${GREEN}configured${NC}"
+        else
+            echo -e "Location block: ${RED}missing${NC}"
+        fi
+    else
+        echo -e "Config file: ${RED}missing${NC}"
+        log_error "Nginx config not found! Reconfigure with: sudo ./deploy.sh reconfigure-nginx"
+        return 1
+    fi
+    
+    echo ""
+    echo "=== Test Requests ==="
+    echo "Testing direct backend:"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://127.0.0.1:${START_PORT}/" 2>/dev/null || echo "000")
+    echo "  http://localhost:${START_PORT}/ → ${HTTP_CODE}"
+    
+    echo "Testing via Nginx:"
+    NGINX_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://localhost/${app_name}/" 2>/dev/null || echo "000")
+    echo "  http://localhost/${app_name}/ → ${NGINX_CODE}"
+}
+
 # Start all services
 start_all() {
     log_step "Starting all services..."
