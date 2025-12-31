@@ -3019,6 +3019,34 @@ EOF
         return 1
     fi
     
+    # Ensure conf.d/*.conf is included in nginx.conf so localhost.conf is loaded
+    local NGINX_MAIN_CONF="/etc/nginx/nginx.conf"
+    if [[ -f "$NGINX_MAIN_CONF" ]]; then
+        if ! grep -q "include.*conf.d/\*.conf\|include.*conf.d/.*\.conf" "$NGINX_MAIN_CONF" 2>/dev/null; then
+            log_info "Adding include for conf.d/*.conf to nginx.conf..."
+            # Add include directive in http block (after security.conf include if it exists)
+            if grep -q "include.*conf.d/security.conf" "$NGINX_MAIN_CONF" 2>/dev/null; then
+                # Add after security.conf include
+                sed -i '/include.*conf.d\/security.conf/a\
+    include /etc/nginx/conf.d/*.conf;
+' "$NGINX_MAIN_CONF" 2>/dev/null || {
+                    # Alternative: add after http { line
+                    sed -i '/^http {/a\
+    include /etc/nginx/conf.d/*.conf;
+' "$NGINX_MAIN_CONF" 2>/dev/null || true
+                }
+            else
+                # Add after http { line
+                sed -i '/^http {/a\
+    include /etc/nginx/conf.d/*.conf;
+' "$NGINX_MAIN_CONF" 2>/dev/null || true
+            fi
+            log_success "Added include for conf.d/*.conf to nginx.conf"
+        else
+            log_info "conf.d/*.conf is already included in nginx.conf"
+        fi
+    fi
+    
     # Verify default_server is set
     if ! grep -q "listen.*default_server" "$LOCALHOST_CONF" 2>/dev/null; then
         log_error "default_server directive not found in localhost.conf!"
