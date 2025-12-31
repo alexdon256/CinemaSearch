@@ -1650,11 +1650,10 @@ optimize_nginx_workers() {
 disable_unnecessary_services() {
     log_info "Disabling unnecessary services for server performance..."
     
-    # List of services to disable (safe for headless server, but keep audio/network for multimedia)
+    # List of services to disable (safe for headless server, but keep audio/network/bluetooth for multimedia)
     local services_to_disable=(
         # Desktop environment services
-        "bluetooth.service"
-        "bluetooth.target"
+        # Note: Bluetooth is KEPT ENABLED for keyboard/mouse support
         "cups.service"              # Printing service
         "cups-browsed.service"       # Printer discovery
         
@@ -1720,6 +1719,22 @@ disable_unnecessary_services() {
             systemctl start NetworkManager.service 2>/dev/null || true
         else
             log_info "  NetworkManager is active (needed for WiFi)"
+        fi
+    fi
+    
+    # Keep Bluetooth enabled for keyboard/mouse support
+    if systemctl list-unit-files | grep -q "^bluetooth.service"; then
+        local bt_status
+        bt_status=$(systemctl is-active bluetooth.service 2>/dev/null || echo "inactive")
+        
+        if [[ "$bt_status" != "active" ]]; then
+            log_info "  Enabling Bluetooth for keyboard/mouse support..."
+            systemctl unmask bluetooth.service 2>/dev/null || true
+            systemctl unmask bluetooth.target 2>/dev/null || true
+            systemctl enable bluetooth.service 2>/dev/null || true
+            systemctl start bluetooth.service 2>/dev/null || true
+        else
+            log_info "  Bluetooth is active (needed for keyboard/mouse)"
         fi
     fi
     
@@ -1791,8 +1806,9 @@ disable_unnecessary_services() {
     
     log_success "Service optimization complete: $disabled_count services disabled, $skipped_count skipped/not found"
     log_info ""
-    log_info "Services kept enabled for multimedia and geolocation:"
+    log_info "Services kept enabled for multimedia, geolocation, and input devices:"
     log_info "  - NetworkManager (WiFi and network connectivity)"
+    log_info "  - Bluetooth (keyboard/mouse support)"
     log_info "  - PulseAudio (audio playback)"
     log_info "  - rtkit-daemon (real-time audio processing)"
     log_info "  - Avahi (network discovery)"
