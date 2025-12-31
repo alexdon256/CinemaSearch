@@ -2399,7 +2399,10 @@ configure_nginx_localhost() {
     # Check if SSL is configured (domain set and SSL certificate exists)
     local SSL_ENABLED=false
     local DOMAIN_NAME="${DOMAIN_NAME:-}"
+    
+    # Debug: Log domain status
     if [[ -n "$DOMAIN_NAME" ]]; then
+        log_info "Domain configured: '$DOMAIN_NAME' - /cinestream will be blocked via IP/localhost"
         # Check if SSL certificate exists for the domain
         local ssl_cert_exists=false
         local ssl_config_exists=false
@@ -2420,6 +2423,8 @@ configure_nginx_localhost() {
             SSL_ENABLED=true
             log_info "SSL detected for domain '$DOMAIN_NAME' - localhost will redirect to HTTPS"
         fi
+    else
+        log_info "No domain configured - /cinestream will be accessible via IP/localhost"
     fi
     
     # Disable default Nginx welcome page if it exists
@@ -2609,10 +2614,11 @@ server {
     error_log /dev/null;
 EOF
 
-    # Always redirect HTTP to HTTPS (port 443)
-    # If domain is configured, redirect to domain's HTTPS; otherwise redirect to same host on HTTPS
-    if [[ -n "$DOMAIN_NAME" ]] && [[ "$SSL_ENABLED" == "true" ]]; then
-        cat >> "$LOCALHOST_CONF" <<EOF
+    # HTTP server behavior depends on domain configuration
+    if [[ -n "$DOMAIN_NAME" ]]; then
+        # Domain is configured - redirect to domain (HTTPS if SSL enabled, otherwise HTTP)
+        if [[ "$SSL_ENABLED" == "true" ]]; then
+            cat >> "$LOCALHOST_CONF" <<EOF
     
     # Redirect to HTTPS domain (SSL is configured)
     location / {
@@ -2620,13 +2626,115 @@ EOF
     }
 }
 EOF
+        else
+            cat >> "$LOCALHOST_CONF" <<EOF
+    
+    # Redirect to HTTP domain (SSL not yet configured)
+    location / {
+        return 301 http://${DOMAIN_NAME}\$request_uri;
+    }
+}
+EOF
+        fi
     else
-        # Redirect to HTTPS on same host (will need SSL certificate)
+        # No domain configured - serve application directly on HTTP
         cat >> "$LOCALHOST_CONF" <<EOF
     
-    # Redirect all HTTP requests to HTTPS (port 443)
-    location / {
-        return 301 https://\$host\$request_uri;
+    # Rate limiting
+    limit_req zone=general_limit burst=20 nodelay;
+    limit_conn conn_limit 10;
+    
+    # Disable unnecessary HTTP methods
+    if (\$request_method !~ ^(GET|HEAD|POST|OPTIONS)\$ ) {
+        return 405;
+    }
+    
+    # Block common attack patterns
+    location ~* \.(env|git|svn|htaccess|htpasswd|ini|log|sh|sql|conf)\$ {
+        deny all;
+        return 404;
+    }
+    
+    # Block access to hidden files
+    location ~ /\. {
+        deny all;
+        return 404;
+    }
+    
+    # CineStream application at /cinestream subpath
+    location /cinestream/ {
+        limit_req zone=general_limit burst=20 nodelay;
+        limit_conn conn_limit 10;
+        
+        # Strip /cinestream prefix before proxying to backend
+        rewrite ^/cinestream(.*)$ \$1 break;
+        
+        proxy_pass http://${UPSTREAM_NAME}_localhost;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$server_name;
+        
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_intercept_errors off;
+    }
+    
+    # Redirect /cinestream (without trailing slash) to /cinestream/
+    location = /cinestream {
+        return 301 \$scheme://\$host/cinestream/;
+    }
+    
+    # API endpoints under /cinestream
+    location /cinestream/api/ {
+        limit_req zone=api_limit burst=10 nodelay;
+        limit_conn conn_limit_per_ip 5;
+        
+        # Strip /cinestream prefix before proxying to backend
+        rewrite ^/cinestream(.*)$ \$1 break;
+        
+        proxy_pass http://${UPSTREAM_NAME}_localhost;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$server_name;
+        
+        # Timeouts
+        proxy_connect_timeout 30s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 30s;
+        
+        proxy_intercept_errors off;
+    }
+    
+    # Static files under /cinestream
+    location /cinestream/static/ {
+        # Strip /cinestream prefix before proxying to backend
+        rewrite ^/cinestream(.*)$ \$1 break;
+        
+        proxy_pass http://${UPSTREAM_NAME}_localhost;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        
+        proxy_cache_valid 200 30d;
+        add_header Cache-Control "public, immutable";
+        
+        proxy_intercept_errors off;
+    }
+    
+    # Root location - redirect to /cinestream
+    location = / {
+        return 301 \$scheme://\$host/cinestream/;
     }
 }
 EOF
