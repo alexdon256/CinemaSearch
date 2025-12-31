@@ -2427,159 +2427,46 @@ configure_nginx_localhost() {
         log_info "No domain configured - /cinestream will be accessible via IP/localhost"
     fi
     
-    # Disable default Nginx welcome page if it exists
-    log_info "Disabling default Nginx welcome page..."
+    # Disable default Nginx welcome page - consolidated single pass
+    log_info "Disabling default Nginx welcome page configurations..."
     
     local disabled_count=0
-    
-    # Remove default site from sites-enabled
-    if [[ -f "/etc/nginx/sites-enabled/default" ]]; then
-        rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-        log_info "Removed /etc/nginx/sites-enabled/default"
-        disabled_count=$((disabled_count + 1))
-    fi
-    
-    # Disable default.conf in conf.d (rename to .disabled)
-    if [[ -f "/etc/nginx/conf.d/default.conf" ]]; then
-        mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.disabled 2>/dev/null || true
-        log_info "Disabled /etc/nginx/conf.d/default.conf"
-        disabled_count=$((disabled_count + 1))
-    fi
-    
-    # Also check for default.conf.disabled and make sure it stays disabled
-    if [[ -f "/etc/nginx/conf.d/default.conf.disabled" ]]; then
-        log_info "Confirmed /etc/nginx/conf.d/default.conf is disabled"
-    fi
-    
-    # Check main nginx.conf for any default server blocks or includes that might load default configs
-    if [[ -f "/etc/nginx/nginx.conf" ]]; then
-        # Check if there's a server block in the main config that might serve the welcome page
-        if grep -q "root.*/usr/share/nginx/html\|root.*/var/www/html" /etc/nginx/nginx.conf 2>/dev/null; then
-            log_warning "Found root directive pointing to default HTML directory in main nginx.conf"
-            log_warning "This might be serving the welcome page. Checking for server blocks..."
-            # Check if there's a server block with default_server in main config
-            if grep -A 10 "server {" /etc/nginx/nginx.conf 2>/dev/null | grep -q "listen.*80.*default_server"; then
-                log_error "Found default_server in main nginx.conf! This will conflict."
-                log_error "You may need to comment out the server block in /etc/nginx/nginx.conf"
-            fi
-        fi
-        # Check if there's an include that might load default configs
-        if grep -q "include.*sites-enabled/\*" /etc/nginx/nginx.conf 2>/dev/null; then
-            log_info "Found sites-enabled include in nginx.conf - checking for default configs..."
-        fi
-        # Check include order - conf.d should be included, and localhost.conf should be in conf.d
-        if ! grep -q "include.*conf.d/\*\.conf" /etc/nginx/nginx.conf 2>/dev/null; then
-            log_warning "conf.d/*.conf not found in nginx.conf includes"
-            log_warning "localhost.conf may not be loaded. Checking nginx.conf structure..."
-        fi
-    fi
-    
-    # Double-check: Remove any default_server from other configs one more time
-    log_info "Final check: Removing default_server from all other configs..."
-    local final_check_files=()
-    # Collect conf.d files
-    if [[ -d "/etc/nginx/conf.d" ]]; then
-        for conf_file in /etc/nginx/conf.d/*.conf; do
-            [[ -f "$conf_file" ]] && final_check_files+=("$conf_file")
-        done
-    fi
-    # Collect sites-enabled files
-    if [[ -d "/etc/nginx/sites-enabled" ]]; then
-        for conf_file in /etc/nginx/sites-enabled/*; do
-            [[ -f "$conf_file" ]] && final_check_files+=("$conf_file")
-        done
-    fi
-    
-    for conf_file in "${final_check_files[@]}"; do
-        if [[ "$conf_file" != "$LOCALHOST_CONF" ]]; then
-            if grep -q "listen.*default_server" "$conf_file" 2>/dev/null; then
-                log_warning "Found default_server in $conf_file - removing it..."
-                sed -i 's/ listen \([0-9]*\) default_server;/ listen \1;/g' "$conf_file" 2>/dev/null || true
-                sed -i 's/ listen \[::\]:\([0-9]*\) default_server;/ listen [::]:\1;/g' "$conf_file" 2>/dev/null || true
-            fi
-        fi
-    done
-    
-    # Also check for any other files that might serve the default page
-    # Look for server blocks with root pointing to /usr/share/nginx/html (default welcome page location)
-    local conf_files=()
-    # Collect conf.d files
-    if [[ -d "/etc/nginx/conf.d" ]]; then
-        for conf_file in /etc/nginx/conf.d/*.conf; do
-            [[ -f "$conf_file" ]] && conf_files+=("$conf_file")
-        done
-    fi
-    # Collect sites-enabled files
-    if [[ -d "/etc/nginx/sites-enabled" ]]; then
-        for conf_file in /etc/nginx/sites-enabled/*; do
-            [[ -f "$conf_file" ]] && conf_files+=("$conf_file")
-        done
-    fi
-    
-    for conf_file in "${conf_files[@]}"; do
-        if [[ "$conf_file" != "$LOCALHOST_CONF" ]]; then
-            # Check if this config serves the default welcome page
-            if grep -q "root.*/usr/share/nginx/html" "$conf_file" 2>/dev/null || \
-               grep -q "root.*/var/www/html" "$conf_file" 2>/dev/null; then
-                # Check if it's a default_server or might catch requests
-                if grep -q "listen.*80.*default_server\|server_name.*_\|server_name.*default" "$conf_file" 2>/dev/null; then
-                    log_info "Found potential default welcome page config: $conf_file"
-                    log_info "Disabling it to prevent conflicts..."
-                    mv "$conf_file" "${conf_file}.disabled" 2>/dev/null || true
-                    disabled_count=$((disabled_count + 1))
-                fi
-            fi
-        fi
-    done
-    
-    if [[ $disabled_count -eq 0 ]]; then
-        log_info "No default Nginx welcome page configurations found"
-    else
-        log_success "Disabled $disabled_count default Nginx configuration(s)"
-    fi
-    
-    # Also check for any other default configurations
-    if [[ -f "/etc/nginx/nginx.conf" ]]; then
-        # Check if there's a default_server in the main nginx.conf
-        if grep -q "listen.*default_server" /etc/nginx/nginx.conf 2>/dev/null; then
-            log_warning "Found default_server in main nginx.conf - this may conflict"
-        fi
-    fi
-    
-    # Check and remove any other default_server blocks that might conflict
-    # Remove default_server from any other configs in conf.d (except localhost.conf)
-    log_info "Checking for conflicting default_server configurations..."
     local conflicts_found=0
-    for conf_file in /etc/nginx/conf.d/*.conf; do
-        if [[ -f "$conf_file" ]] && [[ "$conf_file" != "$LOCALHOST_CONF" ]]; then
-            # Remove default_server from listen directives in other configs
-            if grep -q "listen.*default_server" "$conf_file" 2>/dev/null; then
-                log_info "Removing default_server from $conf_file to avoid conflicts"
-                sed -i 's/ listen \([0-9]*\) default_server;/ listen \1;/g' "$conf_file" 2>/dev/null || true
-                sed -i 's/ listen \[::\]:\([0-9]*\) default_server;/ listen [::]:\1;/g' "$conf_file" 2>/dev/null || true
-                conflicts_found=$((conflicts_found + 1))
+    
+    # Collect all config files to check
+    local all_configs=()
+    [[ -d "/etc/nginx/conf.d" ]] && for f in /etc/nginx/conf.d/*.conf; do [[ -f "$f" ]] && all_configs+=("$f"); done
+    [[ -d "/etc/nginx/sites-enabled" ]] && for f in /etc/nginx/sites-enabled/*; do [[ -f "$f" ]] && all_configs+=("$f"); done
+    
+    # Process each config file
+    for conf_file in "${all_configs[@]}"; do
+        # Skip localhost.conf (we're creating it)
+        [[ "$conf_file" == "$LOCALHOST_CONF" ]] && continue
+        
+        # Remove default_server from other configs
+        if grep -q "listen.*default_server" "$conf_file" 2>/dev/null; then
+            sed -i 's/ listen \([0-9]*\) default_server;/ listen \1;/g' "$conf_file" 2>/dev/null || true
+            sed -i 's/ listen \[::\]:\([0-9]*\) default_server;/ listen [::]:\1;/g' "$conf_file" 2>/dev/null || true
+            conflicts_found=$((conflicts_found + 1))
+        fi
+        
+        # Disable configs serving welcome page
+        if grep -q "root.*/usr/share/nginx/html\|root.*/var/www/html" "$conf_file" 2>/dev/null; then
+            if grep -q "listen.*80" "$conf_file" 2>/dev/null; then
+                mv "$conf_file" "${conf_file}.disabled" 2>/dev/null || true
+                disabled_count=$((disabled_count + 1))
             fi
         fi
     done
     
-    # Also check sites-enabled
-    if [[ -d "/etc/nginx/sites-enabled" ]]; then
-        for conf_file in /etc/nginx/sites-enabled/*; do
-            if [[ -f "$conf_file" ]]; then
-                if grep -q "listen.*default_server" "$conf_file" 2>/dev/null; then
-                    log_info "Removing default_server from $conf_file to avoid conflicts"
-                    sed -i 's/ listen \([0-9]*\) default_server;/ listen \1;/g' "$conf_file" 2>/dev/null || true
-                    sed -i 's/ listen \[::\]:\([0-9]*\) default_server;/ listen [::]:\1;/g' "$conf_file" 2>/dev/null || true
-                    conflicts_found=$((conflicts_found + 1))
-                fi
-            fi
-        done
-    fi
+    # Remove default site symlinks/files
+    [[ -f "/etc/nginx/sites-enabled/default" ]] && rm -f /etc/nginx/sites-enabled/default 2>/dev/null && disabled_count=$((disabled_count + 1))
+    [[ -f "/etc/nginx/conf.d/default.conf" ]] && mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.disabled 2>/dev/null && disabled_count=$((disabled_count + 1))
     
-    if [[ $conflicts_found -eq 0 ]]; then
-        log_info "No conflicting default_server configurations found"
+    if [[ $disabled_count -gt 0 ]] || [[ $conflicts_found -gt 0 ]]; then
+        log_success "Disabled $disabled_count welcome page config(s), removed $conflicts_found default_server conflict(s)"
     else
-        log_info "Removed default_server from $conflicts_found conflicting configuration(s)"
+        log_info "No default welcome page configurations found"
     fi
     
     # Create upstream block
@@ -2661,12 +2548,13 @@ EOF
         return 404;
     }
     
-    # CineStream application at /cinestream subpath
-    location /cinestream/ {
+    # CineStream application at /cinestream subpath (case-insensitive)
+    # Handles: /cinestream, /Cinestream, /CineStream, /CINESTREAM, etc.
+    location ~* ^/cinestream(/.*)?$ {
         limit_req zone=general_limit burst=20 nodelay;
         limit_conn conn_limit 10;
         
-        # Strip /cinestream prefix before proxying to backend
+        # Normalize and strip /cinestream prefix (case-insensitive) before proxying
         rewrite ^/cinestream(.*)$ \$1 break;
         
         proxy_pass http://${UPSTREAM_NAME}_localhost;
@@ -2684,51 +2572,6 @@ EOF
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
-        proxy_intercept_errors off;
-    }
-    
-    # Redirect /cinestream (without trailing slash) to /cinestream/
-    location = /cinestream {
-        return 301 \$scheme://\$host/cinestream/;
-    }
-    
-    # API endpoints under /cinestream
-    location /cinestream/api/ {
-        limit_req zone=api_limit burst=10 nodelay;
-        limit_conn conn_limit_per_ip 5;
-        
-        # Strip /cinestream prefix before proxying to backend
-        rewrite ^/cinestream(.*)$ \$1 break;
-        
-        proxy_pass http://${UPSTREAM_NAME}_localhost;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Forwarded-Host \$server_name;
-        
-        # Timeouts
-        proxy_connect_timeout 30s;
-        proxy_send_timeout 30s;
-        proxy_read_timeout 30s;
-        
-        proxy_intercept_errors off;
-    }
-    
-    # Static files under /cinestream
-    location /cinestream/static/ {
-        # Strip /cinestream prefix before proxying to backend
-        rewrite ^/cinestream(.*)$ \$1 break;
-        
-        proxy_pass http://${UPSTREAM_NAME}_localhost;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        
-        proxy_cache_valid 200 30d;
-        add_header Cache-Control "public, immutable";
-        
         proxy_intercept_errors off;
     }
     
@@ -2904,12 +2747,13 @@ EOF
             # Domain not configured - allow /cinestream access via IP/localhost
             cat >> "$LOCALHOST_CONF" <<EOF
     
-    # CineStream application at /cinestream subpath
-    location /cinestream/ {
+    # CineStream application at /cinestream subpath (case-insensitive)
+    # Handles: /cinestream, /Cinestream, /CineStream, /CINESTREAM, etc.
+    location ~* ^/cinestream(/.*)?$ {
         limit_req zone=general_limit burst=20 nodelay;
         limit_conn conn_limit 10;
         
-        # Strip /cinestream prefix before proxying to backend
+        # Normalize and strip /cinestream prefix (case-insensitive) before proxying
         rewrite ^/cinestream(.*)$ \$1 break;
         
         proxy_pass http://${UPSTREAM_NAME}_localhost;
@@ -2927,51 +2771,6 @@ EOF
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
-        proxy_intercept_errors off;
-    }
-    
-    # Redirect /cinestream (without trailing slash) to /cinestream/
-    location = /cinestream {
-        return 301 \$scheme://\$host/cinestream/;
-    }
-    
-    # API endpoints under /cinestream
-    location /cinestream/api/ {
-        limit_req zone=api_limit burst=10 nodelay;
-        limit_conn conn_limit_per_ip 5;
-        
-        # Strip /cinestream prefix before proxying to backend
-        rewrite ^/cinestream(.*)$ \$1 break;
-        
-        proxy_pass http://${UPSTREAM_NAME}_localhost;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Forwarded-Host \$server_name;
-        
-        # Timeouts
-        proxy_connect_timeout 30s;
-        proxy_send_timeout 30s;
-        proxy_read_timeout 30s;
-        
-        proxy_intercept_errors off;
-    }
-    
-    # Static files under /cinestream
-    location /cinestream/static/ {
-        # Strip /cinestream prefix before proxying to backend
-        rewrite ^/cinestream(.*)$ \$1 break;
-        
-        proxy_pass http://${UPSTREAM_NAME}_localhost;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        
-        proxy_cache_valid 200 30d;
-        add_header Cache-Control "public, immutable";
-        
         proxy_intercept_errors off;
     }
     
