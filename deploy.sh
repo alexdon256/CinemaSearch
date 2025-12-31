@@ -3358,13 +3358,79 @@ EOF
                     return 1
                 else
                     log_success "Nginx configuration test passed"
-                    log_info "Nginx config is valid but nginx may not have started properly"
-                    log_info "Checking nginx logs..."
-                    journalctl -u nginx.service -n 10 --no-pager 2>/dev/null | tail -10 | while IFS= read -r line; do
+                    log_info "Nginx config is valid but nginx is not listening on port 80"
+                    log_info ""
+                    log_info "Checking if any server blocks are listening on port 80..."
+                    local server_blocks_80
+                    server_blocks_80=$(nginx -T 2>/dev/null | grep -A 2 "listen.*80" | head -20 || echo "")
+                    if [[ -n "$server_blocks_80" ]]; then
+                        log_info "Server blocks found with 'listen 80':"
+                        echo "$server_blocks_80" | while IFS= read -r line; do
+                            log_info "  $line"
+                        done
+                    else
+                        log_error "No server blocks found listening on port 80!"
+                        log_error "This means nginx has no configuration to serve HTTP traffic"
+                    fi
+                    
+                    log_info ""
+                    log_info "Checking if localhost.conf is included in nginx.conf..."
+                    if grep -q "include.*conf.d/localhost.conf\|include.*conf.d/\*.conf" /etc/nginx/nginx.conf 2>/dev/null; then
+                        log_success "localhost.conf should be included (conf.d/*.conf pattern found)"
+                    else
+                        log_error "localhost.conf may not be included in nginx.conf!"
+                        log_info "Checking nginx.conf includes..."
+                        grep -i "include" /etc/nginx/nginx.conf 2>/dev/null | head -10 | while IFS= read -r line; do
+                            log_info "  $line"
+                        done
+                    fi
+                    
+                    log_info ""
+                    log_info "Checking nginx error log for binding issues..."
+                    if [[ -f /var/log/nginx/error.log ]]; then
+                        tail -20 /var/log/nginx/error.log 2>/dev/null | grep -i "bind\|listen\|80\|error" | tail -10 | while IFS= read -r line; do
+                            log_info "  $line"
+                        done
+                    else
+                        log_info "Nginx error log not found at /var/log/nginx/error.log"
+                    fi
+                    
+                    log_info ""
+                    log_info "Checking journalctl for nginx errors..."
+                    journalctl -u nginx.service -n 20 --no-pager 2>/dev/null | grep -i "error\|fail\|bind\|listen" | tail -10 | while IFS= read -r line; do
                         log_info "  $line"
                     done
+                    
                     log_info ""
-                    log_info "Try manually starting nginx: sudo systemctl start nginx"
+                    log_info "Verifying localhost.conf has listen 80 directive..."
+                    if [[ -f "$LOCALHOST_CONF" ]]; then
+                        if grep -q "listen.*80" "$LOCALHOST_CONF" 2>/dev/null; then
+                            log_success "localhost.conf contains 'listen 80' directive"
+                            log_info "Contents of listen directive:"
+                            grep "listen.*80" "$LOCALHOST_CONF" 2>/dev/null | head -5 | while IFS= read -r line; do
+                                log_info "  $line"
+                            done
+                        else
+                            log_error "localhost.conf does NOT contain 'listen 80' directive!"
+                            log_error "This is the problem - localhost.conf needs a listen 80 directive"
+                        fi
+                    else
+                        log_error "localhost.conf does not exist: $LOCALHOST_CONF"
+                    fi
+                    
+                    log_info ""
+                    log_warning "Nginx is running but not listening on port 80"
+                    log_warning "This usually means:"
+                    log_warning "  1. No server block is configured to listen on port 80"
+                    log_warning "  2. All server blocks were commented out"
+                    log_warning "  3. Port 80 is already in use by another service"
+                    log_warning "  4. localhost.conf is not being included or has no listen directive"
+                    log_info ""
+                    log_info "Try:"
+                    log_info "  1. Check what's using port 80: sudo ss -tlnp | grep :80"
+                    log_info "  2. Verify localhost.conf exists: ls -la /etc/nginx/conf.d/localhost.conf"
+                    log_info "  3. Check nginx config: sudo nginx -T | grep -A 5 'listen.*80'"
+                    log_info "  4. Check if localhost.conf is included: grep -i include /etc/nginx/nginx.conf"
                     return 1
                 fi
             fi
