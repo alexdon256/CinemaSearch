@@ -130,10 +130,17 @@ install_mongodb() {
                 MONGODB_BIN="/opt/mongodb/bin/mongod"
                 MONGOSH_BIN="/opt/mongodb/bin/mongosh"
             else
-                log_error "MongoDB server (mongod) not found."
-                log_error "mongodb-tools-bin only provides tools, not the server."
-                install_mongodb_manual
-                return 1
+                log_warn "MongoDB server (mongod) not found in repos."
+                log_info "Attempting to download and install MongoDB Community Edition..."
+                if download_and_install_mongodb; then
+                    MONGODB_BIN="/opt/mongodb/bin/mongod"
+                    MONGOSH_BIN="/opt/mongodb/bin/mongosh"
+                    log_info "MongoDB installed successfully at: ${MONGODB_BIN}"
+                else
+                    log_error "Automatic MongoDB installation failed."
+                    install_mongodb_manual
+                    return 1
+                fi
             fi
         fi
     fi
@@ -157,14 +164,24 @@ install_mongodb() {
     if [[ -z "$MONGODB_BIN" ]]; then
         if command -v mongod &>/dev/null; then
             MONGODB_BIN=$(command -v mongod)
+            MONGOSH_BIN=$(command -v mongosh 2>/dev/null || echo "")
         elif [[ -f /usr/bin/mongod ]]; then
             MONGODB_BIN="/usr/bin/mongod"
+            MONGOSH_BIN="/usr/bin/mongosh"
         elif [[ -f /opt/mongodb/bin/mongod ]]; then
             MONGODB_BIN="/opt/mongodb/bin/mongod"
+            MONGOSH_BIN="/opt/mongodb/bin/mongosh"
         else
-            log_error "Cannot find mongod binary"
-            install_mongodb_manual
-            return 1
+            log_warn "Cannot find mongod binary, attempting automatic installation..."
+            if download_and_install_mongodb; then
+                MONGODB_BIN="/opt/mongodb/bin/mongod"
+                MONGOSH_BIN="/opt/mongodb/bin/mongosh"
+                log_info "MongoDB installed successfully at: ${MONGODB_BIN}"
+            else
+                log_error "Automatic MongoDB installation failed."
+                install_mongodb_manual
+                return 1
+            fi
         fi
     fi
     
@@ -205,6 +222,86 @@ EOF
         log_error "  - Missing mongodb user: useradd -r -s /bin/false mongodb"
         log_error "  - Permission issues: chown -R mongodb:mongodb /var/lib/mongodb /var/log/mongodb"
         log_error "  - Missing directories: mkdir -p /var/lib/mongodb /var/log/mongodb"
+        return 1
+    fi
+}
+
+# Download and install MongoDB Community Edition automatically
+download_and_install_mongodb() {
+    log_step "Downloading MongoDB Community Edition..."
+    
+    # MongoDB version (latest stable 7.0.x)
+    MONGODB_VERSION="7.0.11"
+    MONGODB_URL="https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-${MONGODB_VERSION}.tgz"
+    TEMP_DIR="/tmp/mongodb-install"
+    
+    # Create temp directory
+    mkdir -p "${TEMP_DIR}"
+    cd "${TEMP_DIR}"
+    
+    # Check if wget or curl is available
+    if command -v wget &>/dev/null; then
+        DOWNLOAD_CMD="wget"
+    elif command -v curl &>/dev/null; then
+        DOWNLOAD_CMD="curl -L -o"
+    else
+        log_error "Neither wget nor curl is available. Please install one: pacman -S wget"
+        return 1
+    fi
+    
+    # Download MongoDB
+    log_info "Downloading MongoDB ${MONGODB_VERSION}..."
+    if [[ "$DOWNLOAD_CMD" == "wget" ]]; then
+        wget -q --show-progress "${MONGODB_URL}" || {
+            log_error "Failed to download MongoDB"
+            return 1
+        }
+        ARCHIVE_FILE="mongodb-linux-x86_64-${MONGODB_VERSION}.tgz"
+    else
+        curl -L -o "mongodb-linux-x86_64-${MONGODB_VERSION}.tgz" "${MONGODB_URL}" || {
+            log_error "Failed to download MongoDB"
+            return 1
+        }
+        ARCHIVE_FILE="mongodb-linux-x86_64-${MONGODB_VERSION}.tgz"
+    fi
+    
+    # Extract
+    log_info "Extracting MongoDB..."
+    tar -xzf "${ARCHIVE_FILE}" || {
+        log_error "Failed to extract MongoDB archive"
+        return 1
+    }
+    
+    # Move to /opt/mongodb
+    log_info "Installing MongoDB to /opt/mongodb..."
+    if [[ -d "/opt/mongodb" ]]; then
+        # Backup existing installation
+        mv /opt/mongodb /opt/mongodb.backup.$(date +%Y%m%d_%H%M%S) 2>/dev/null || true
+    fi
+    
+    mv "mongodb-linux-x86_64-${MONGODB_VERSION}" /opt/mongodb || {
+        log_error "Failed to move MongoDB to /opt/mongodb"
+        return 1
+    }
+    
+    # Create symlinks for easier access
+    if [[ ! -f /usr/local/bin/mongod ]]; then
+        ln -sf /opt/mongodb/bin/mongod /usr/local/bin/mongod 2>/dev/null || true
+    fi
+    if [[ ! -f /usr/local/bin/mongosh ]] && [[ -f /opt/mongodb/bin/mongosh ]]; then
+        ln -sf /opt/mongodb/bin/mongosh /usr/local/bin/mongosh 2>/dev/null || true
+    fi
+    
+    # Cleanup
+    cd /
+    rm -rf "${TEMP_DIR}"
+    
+    # Verify installation
+    if [[ -f /opt/mongodb/bin/mongod ]]; then
+        log_info "MongoDB installed successfully to /opt/mongodb"
+        return 0
+    else
+        log_error "MongoDB installation verification failed"
         return 1
     fi
 }
@@ -260,7 +357,8 @@ install_system_packages() {
         certbot certbot-nginx \
         firewalld \
         openssh \
-        base-devel
+        base-devel \
+        wget
     
     log_info "System packages installed"
 }
