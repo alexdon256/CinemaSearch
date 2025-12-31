@@ -797,8 +797,8 @@ server {
         return 301 /${app_name}/;
     }
     
-    # Serve application at /${app_name}/ subpath
-    location /${app_name}/ {
+    # Serve application at /${app_name}/ subpath (must be before any default location /)
+    location ^~ /${app_name}/ {
         # Use proxy_pass with trailing slash to automatically strip /${app_name}/ prefix
         proxy_pass http://${app_name}_backend/;
         proxy_set_header Host \$host;
@@ -898,8 +898,8 @@ server {
         return 301 /${app_name}/;
     }
     
-    # Serve application at /${app_name}/ subpath
-    location /${app_name}/ {
+    # Serve application at /${app_name}/ subpath (must be before any default location /)
+    location ^~ /${app_name}/ {
         # Use proxy_pass with trailing slash to automatically strip /${app_name}/ prefix
         proxy_pass http://${app_name}_backend/;
         proxy_set_header Host \$host;
