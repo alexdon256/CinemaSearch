@@ -655,7 +655,18 @@ create_worker_services() {
     
     log_step "Creating systemd services for ${app_name} workers..."
     
+    if [[ ! -f "${app_dir}/.deploy_config" ]]; then
+        log_error "Configuration file not found: ${app_dir}/.deploy_config"
+        return 1
+    fi
+    
     source "${app_dir}/.deploy_config"
+    
+    # Verify required variables are set
+    if [[ -z "$START_PORT" ]] || [[ -z "$END_PORT" ]] || [[ -z "$WORKER_COUNT" ]]; then
+        log_error "Missing required configuration: START_PORT=${START_PORT}, END_PORT=${END_PORT}, WORKER_COUNT=${WORKER_COUNT}"
+        return 1
+    fi
     
     # Stop and disable any existing services for this app to prevent duplicates
     log_info "Cleaning up any existing services for ${app_name}..."
@@ -685,6 +696,8 @@ create_worker_services() {
     
     # Remove any old service files (except the template)
     rm -f /etc/systemd/system/${app_name}@[0-9]*.service 2>/dev/null || true
+    
+    log_info "Creating service template and target files..."
     
     # Create service template
     cat > /etc/systemd/system/${app_name}@.service <<EOF
@@ -734,19 +747,43 @@ ExecStart=/bin/bash -c 'for port in \$(seq ${START_PORT} ${END_PORT}); do system
 WantedBy=${app_name}.target
 EOF
     
+    log_info "Reloading systemd daemon..."
     systemctl daemon-reload
     
+    if [[ $? -ne 0 ]]; then
+        log_error "Failed to reload systemd daemon"
+        return 1
+    fi
+    
+    log_info "Service files created successfully"
+    log_info "Starting ${WORKER_COUNT} worker services (ports ${START_PORT}-${END_PORT})..."
+    
     # Start all workers
+    local started=0
     for port in $(seq ${START_PORT} ${END_PORT}); do
-        systemctl enable "${app_name}@${port}.service"
-        systemctl start "${app_name}@${port}.service"
+        if systemctl enable "${app_name}@${port}.service" 2>/dev/null; then
+            if systemctl start "${app_name}@${port}.service" 2>/dev/null; then
+                ((started++))
+            else
+                log_warn "Failed to start ${app_name}@${port}.service"
+            fi
+        else
+            log_warn "Failed to enable ${app_name}@${port}.service"
+        fi
     done
     
-    systemctl enable "${app_name}.target"
-    systemctl enable "${app_name}-startup.service"
-    systemctl start "${app_name}.target"
+    systemctl enable "${app_name}.target" 2>/dev/null || log_warn "Failed to enable ${app_name}.target"
+    systemctl enable "${app_name}-startup.service" 2>/dev/null || log_warn "Failed to enable ${app_name}-startup.service"
+    systemctl start "${app_name}.target" 2>/dev/null || log_warn "Failed to start ${app_name}.target"
     
-    log_info "Created and started ${WORKER_COUNT} worker services (ports ${START_PORT}-${END_PORT})"
+    if [[ $started -gt 0 ]]; then
+        log_info "Successfully started ${started}/${WORKER_COUNT} worker services (ports ${START_PORT}-${END_PORT})"
+    else
+        log_error "Failed to start any worker services"
+        log_error "Check service status: systemctl status ${app_name}@${START_PORT}.service"
+        log_error "Check service logs: journalctl -u ${app_name}@${START_PORT}.service"
+        return 1
+    fi
 }
 
 # Configure Nginx
