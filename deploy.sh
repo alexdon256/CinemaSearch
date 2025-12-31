@@ -103,7 +103,7 @@ install_mongodb() {
             install_mongodb_manual
             return 0
         }
-    }
+    fi
     
     # Create MongoDB directories
     mkdir -p /opt/mongodb/{data,logs}
