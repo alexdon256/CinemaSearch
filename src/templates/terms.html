@@ -155,8 +155,8 @@
 <body>
     <header>
         <nav>
-            <a href="/" class="logo">CineStream</a>
-            <a href="/" class="back-btn">← Back to Home</a>
+            <a href="{{ base_path }}" class="logo">CineStream</a>
+            <a href="{{ base_path }}" class="back-btn">← Back to Home</a>
         </nav>
     </header>
     
@@ -237,7 +237,7 @@
             <p style="opacity: 0.7;">© 2025 CineStream. All rights reserved.</p>
             <p style="margin-top: 0.5rem;">
                 <a href="/terms" style="color: var(--accent); text-decoration: none; margin: 0 1rem;">{{ translations.terms }}</a>
-                <a href="/" style="color: var(--accent); text-decoration: none; margin: 0 1rem;">Home</a>
+                <a href="{{ base_path }}" style="color: var(--accent); text-decoration: none; margin: 0 1rem;">Home</a>
             </p>
         </div>
     </footer>

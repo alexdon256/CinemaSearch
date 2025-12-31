@@ -196,6 +196,32 @@ def detect_city_from_ip():
         print(f"Geolocation error: {e}")
     return None
 
+@app.context_processor
+def inject_base_path():
+    """Inject base_path into all templates based on request host"""
+    # Check if request is coming through domain (not IP/localhost)
+    # If Host header contains a domain name (not IP or localhost), use root path
+    host = request.headers.get('Host', '').split(':')[0]  # Remove port if present
+    
+    # Check if host is an IP address (IPv4 or IPv6) or localhost
+    is_ip = False
+    if host:
+        # IPv4 address check (e.g., 192.168.1.1)
+        parts = host.split('.')
+        if len(parts) == 4 and all(part.isdigit() and 0 <= int(part) <= 255 for part in parts):
+            is_ip = True
+        # IPv6 address check (contains colons and brackets)
+        elif ':' in host or host.startswith('['):
+            is_ip = True
+        # localhost variants
+        elif host.lower() in ('localhost', '127.0.0.1', '::1', '[::1]'):
+            is_ip = True
+    
+    # Use root path for domain, /cinestream/ for IP/localhost
+    base_path = '/' if (host and not is_ip) else '/cinestream/'
+    
+    return dict(base_path=base_path)
+
 @app.before_request
 def before_request():
     """Middleware: Set language, increment counter"""

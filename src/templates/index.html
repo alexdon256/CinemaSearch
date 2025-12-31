@@ -1433,7 +1433,7 @@
 <body>
     <header>
         <nav class="container">
-            <div class="logo">CineStream</div>
+            <a href="{{ base_path }}" style="text-decoration: none; color: inherit;"><div class="logo">CineStream</div></a>
             <div class="nav-links">
                 <div class="lang-selector">
                     <a href="/set-language/en" class="lang-btn {{ 'active' if lang == 'en' else '' }}">EN</a>
@@ -1581,14 +1581,50 @@
             countryInput.value = countryName;
             
             // Find and select the country in the dropdown
-            const countryOption = Array.from(countrySelect.options).find(opt => opt.textContent.trim() === countryName);
+            // Try exact match first
+            let countryOption = Array.from(countrySelect.options).find(opt => opt.textContent.trim() === countryName);
+            
+            // If no exact match, try case-insensitive match
+            if (!countryOption) {
+                countryOption = Array.from(countrySelect.options).find(opt => 
+                    opt.textContent.trim().toLowerCase() === countryName.toLowerCase()
+                );
+            }
+            
+            // If still no match, try partial match (country name contains or is contained by option)
+            if (!countryOption) {
+                countryOption = Array.from(countrySelect.options).find(opt => {
+                    const optText = opt.textContent.trim().toLowerCase();
+                    const countryLower = countryName.toLowerCase();
+                    return optText.includes(countryLower) || countryLower.includes(optText);
+                });
+            }
+            
             if (countryOption) {
                 countrySelect.value = countryOption.value;
+            } else {
+                // If no match found, try to use the country name directly as value
+                console.warn('Could not find exact match for country:', countryName);
+                // Try to use the country name directly as value (if it matches an option value)
+                const valueMatch = Array.from(countrySelect.options).find(opt => opt.value === countryName);
+                if (valueMatch) {
+                    countrySelect.value = countryName;
+                } else {
+                    // Last resort: set the first option that contains the country name
+                    const partialMatch = Array.from(countrySelect.options).find(opt => 
+                        opt.textContent.toLowerCase().includes(countryName.toLowerCase().substring(0, 3))
+                    );
+                    if (partialMatch) {
+                        countrySelect.value = partialMatch.value;
+                    }
+                }
             }
             
             // Trigger search automatically if both city and country are detected
             setTimeout(() => {
-                if (cityInput.value && countrySelect.value) {
+                // Check both countrySelect.value and countryInput.value
+                const hasCountry = countrySelect.value || countryInput.value.trim();
+                if (cityInput.value && hasCountry) {
                     searchBtn.click();
                 }
             }, 500);
@@ -2082,7 +2118,22 @@
         // Search button click handler
         searchBtn.addEventListener('click', async () => {
             const city = cityInput.value.trim();
-            const country = countrySelect.value;
+            // Get country from select first, fallback to input if select is empty
+            let country = countrySelect.value;
+            if (!country && countryInput.value.trim()) {
+                // If select is empty but input has value, try to match it
+                const countryInputValue = countryInput.value.trim();
+                const matchedOption = Array.from(countrySelect.options).find(opt => 
+                    opt.textContent.trim() === countryInputValue || opt.value === countryInputValue
+                );
+                if (matchedOption) {
+                    country = matchedOption.value;
+                    countrySelect.value = country;
+                } else {
+                    // Use the input value directly if no match found
+                    country = countryInputValue;
+                }
+            }
             const state = cityInput.dataset.state || '';  // Get state from autocomplete if available
             
             // Hide suggestions
