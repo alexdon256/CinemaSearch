@@ -2276,6 +2276,10 @@ configure_nginx_security() {
 # This file contains http-level directives only
 # Server-level directives (if, location) are added per-server in set_domain
 
+# Fix types_hash warning - increase hash sizes for better performance
+types_hash_max_size 2048;
+types_hash_bucket_size 128;
+
 # Rate limiting zones
 limit_req_zone $binary_remote_addr zone=general_limit:10m rate=10r/s;
 limit_req_zone $binary_remote_addr zone=api_limit:10m rate=5r/s;
@@ -2316,7 +2320,7 @@ NGINX_SECURITY_EOF
 ' "$NGINX_MAIN_CONF" 2>/dev/null || true
         fi
         
-        log_success "Nginx security configuration created"
+        log_success "Nginx security configuration created (includes types_hash optimization to fix warning)"
     else
         log_warning "Nginx main config not found"
     fi
@@ -2487,11 +2491,93 @@ configure_nginx_localhost() {
         fi
     done
     
-    # Also check main nginx.conf for embedded server blocks
+    # Also check main nginx.conf for embedded server blocks and disable them
     if [[ -f "/etc/nginx/nginx.conf" ]]; then
         if grep -q "root.*/usr/share/nginx/html\|root.*/var/www/html" /etc/nginx/nginx.conf 2>/dev/null; then
-            log_warning "Found root directive in main nginx.conf - this may serve welcome page"
-            log_warning "You may need to comment out server blocks in /etc/nginx/nginx.conf manually"
+            log_warning "Found root directive in main nginx.conf - disabling welcome page server block..."
+            
+            # Backup nginx.conf
+            cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup.$(date +%Y%m%d_%H%M%S) 2>/dev/null || true
+            
+            # Comment out server blocks that serve welcome page
+            # Match server blocks with root pointing to default HTML directories
+            local nginx_conf_modified=false
+            
+            # Use a simple approach: comment out server blocks with welcome page
+            local temp_conf="/tmp/nginx.conf.$$"
+            local in_server_block=false
+            local brace_count=0
+            local server_has_welcome=false
+            
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                # Detect start of server block
+                if echo "$line" | grep -qE "^[[:space:]]*server[[:space:]]*\{"; then
+                    in_server_block=true
+                    brace_count=1
+                    server_has_welcome=false
+                    # Check if this line itself has welcome page indicator
+                    if echo "$line" | grep -q "root.*/usr/share/nginx/html\|root.*/var/www/html"; then
+                        server_has_welcome=true
+                    fi
+                    # Start commenting if it's a welcome page server
+                    if [[ "$server_has_welcome" == "true" ]]; then
+                        echo "# DISABLED BY CINESTREAM - Welcome page server block" >> "$temp_conf"
+                        echo "# DISABLED BY CINESTREAM - $line" >> "$temp_conf"
+                    else
+                        echo "$line" >> "$temp_conf"
+                    fi
+                # Process lines inside server block
+                elif [[ "$in_server_block" == "true" ]]; then
+                    # Check for welcome page root in this line
+                    if echo "$line" | grep -q "root.*/usr/share/nginx/html\|root.*/var/www/html"; then
+                        server_has_welcome=true
+                    fi
+                    
+                    # Count braces to track block nesting
+                    local open_braces=$(echo "$line" | tr -cd '{' | wc -c)
+                    local close_braces=$(echo "$line" | tr -cd '}' | wc -c)
+                    brace_count=$((brace_count + open_braces - close_braces))
+                    
+                    # Comment out if this is a welcome page server block
+                    if [[ "$server_has_welcome" == "true" ]]; then
+                        echo "# DISABLED BY CINESTREAM - $line" >> "$temp_conf"
+                    else
+                        echo "$line" >> "$temp_conf"
+                    fi
+                    
+                    # Check if we've closed the server block
+                    if [[ $brace_count -le 0 ]]; then
+                        in_server_block=false
+                        brace_count=0
+                        server_has_welcome=false
+                    fi
+                # Lines outside server blocks
+                else
+                    echo "$line" >> "$temp_conf"
+                fi
+            done < /etc/nginx/nginx.conf
+            
+            # Replace original with processed version
+            if mv "$temp_conf" /etc/nginx/nginx.conf 2>/dev/null; then
+                # Verify the change worked
+                if grep -q "# DISABLED BY CINESTREAM.*root.*/usr/share/nginx/html" /etc/nginx/nginx.conf 2>/dev/null || \
+                   ! grep -qE "^[^#]*root[[:space:]]+.*/usr/share/nginx/html" /etc/nginx/nginx.conf 2>/dev/null; then
+                    log_success "Disabled welcome page server block in nginx.conf"
+                    disabled_count=$((disabled_count + 1))
+                    nginx_conf_modified=true
+                else
+                    log_warning "Could not verify nginx.conf modification - welcome page may still be active"
+                fi
+            else
+                log_warning "Could not modify nginx.conf - check permissions"
+                rm -f "$temp_conf" 2>/dev/null || true
+            fi
+            
+            if [[ "$nginx_conf_modified" != "true" ]]; then
+                log_warning "Could not automatically disable welcome page in nginx.conf"
+                log_warning "Please manually comment out the server block in /etc/nginx/nginx.conf"
+                log_info "Look for: server { ... root /usr/share/nginx/html; ... }"
+            fi
         fi
     fi
     
