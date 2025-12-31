@@ -657,6 +657,35 @@ create_worker_services() {
     
     source "${app_dir}/.deploy_config"
     
+    # Stop and disable any existing services for this app to prevent duplicates
+    log_info "Cleaning up any existing services for ${app_name}..."
+    
+    # Stop and disable all services for this app (any port)
+    for service in /etc/systemd/system/${app_name}@*.service; do
+        if [[ -f "$service" ]]; then
+            local service_name=$(basename "$service")
+            systemctl stop "${service_name}" 2>/dev/null || true
+            systemctl disable "${service_name}" 2>/dev/null || true
+        fi
+    done
+    
+    # Also stop any running instances
+    systemctl list-units --all --type=service --no-pager | grep "${app_name}@" | awk '{print $1}' | while read service; do
+        if [[ -n "$service" ]]; then
+            systemctl stop "${service}" 2>/dev/null || true
+            systemctl disable "${service}" 2>/dev/null || true
+        fi
+    done
+    
+    # Stop and disable target and startup service
+    systemctl stop "${app_name}.target" 2>/dev/null || true
+    systemctl disable "${app_name}.target" 2>/dev/null || true
+    systemctl stop "${app_name}-startup.service" 2>/dev/null || true
+    systemctl disable "${app_name}-startup.service" 2>/dev/null || true
+    
+    # Remove any old service files (except the template)
+    rm -f /etc/systemd/system/${app_name}@[0-9]*.service 2>/dev/null || true
+    
     # Create service template
     cat > /etc/systemd/system/${app_name}@.service <<EOF
 [Unit]
@@ -1298,6 +1327,98 @@ show_status() {
     firewall-cmd --list-services 2>/dev/null | grep -q https && echo -e "HTTPS: ${GREEN}allowed${NC}" || echo -e "HTTPS: ${RED}blocked${NC}"
 }
 
+# Check for duplicate systemd services
+check_duplicates() {
+    local app_name="${1:-${APP_NAME}}"
+    
+    log_step "Checking for duplicate systemd services for ${app_name}..."
+    
+    echo ""
+    echo "=== Checking for Duplicate Services ==="
+    
+    # Get all services for this app
+    local services=$(systemctl list-units --all --type=service --no-pager | grep "${app_name}@" | awk '{print $1}')
+    
+    if [[ -z "$services" ]]; then
+        log_info "No ${app_name} services found"
+        return 0
+    fi
+    
+    echo "Found services:"
+    echo "$services" | while read service; do
+        if [[ -n "$service" ]]; then
+            local port=$(echo "$service" | sed -n 's/.*@\([0-9]*\)\.service/\1/p')
+            local status=$(systemctl is-active "$service" 2>/dev/null || echo "inactive")
+            local enabled=$(systemctl is-enabled "$service" 2>/dev/null || echo "disabled")
+            echo "  ${service}: ${status} (${enabled}) - Port: ${port}"
+        fi
+    done
+    
+    echo ""
+    echo "=== Checking for Port Conflicts ==="
+    
+    # Check for multiple services on the same port
+    local duplicates_found=false
+    local ports_seen=""
+    
+    echo "$services" | while read service; do
+        if [[ -n "$service" ]]; then
+            local port=$(echo "$service" | sed -n 's/.*@\([0-9]*\)\.service/\1/p')
+            if [[ -n "$port" ]]; then
+                # Count how many services use this port
+                local count=$(echo "$services" | grep "@${port}\.service" | wc -l)
+                if [[ $count -gt 1 ]]; then
+                    duplicates_found=true
+                    log_warn "Port ${port} has ${count} services:"
+                    echo "$services" | grep "@${port}\.service" | while read dup_service; do
+                        echo "  - ${dup_service}"
+                    done
+                fi
+            fi
+        fi
+    done
+    
+    # Also check by listing all ports and finding duplicates
+    local port_list=$(echo "$services" | sed -n 's/.*@\([0-9]*\)\.service/\1/p' | sort -n)
+    local prev_port=""
+    for port in $port_list; do
+        if [[ "$port" == "$prev_port" ]]; then
+            duplicates_found=true
+            log_warn "Duplicate port detected: ${port}"
+        fi
+        prev_port="$port"
+    done
+    
+    if [[ "$duplicates_found" == "false" ]]; then
+        log_info "No duplicate services found"
+    else
+        echo ""
+        log_warn "Duplicate services detected!"
+        log_warn "To fix, run: sudo ./deploy.sh init-server"
+        log_warn "This will clean up and recreate all services correctly"
+    fi
+    
+    echo ""
+    echo "=== Checking Service Files ==="
+    local service_files=$(ls /etc/systemd/system/${app_name}@*.service 2>/dev/null)
+    if [[ -n "$service_files" ]]; then
+        echo "Service files found:"
+        for file in $service_files; do
+            echo "  $(basename $file)"
+        done
+    else
+        echo "No service files found in /etc/systemd/system/${app_name}@*.service"
+    fi
+    
+    # Check for template service
+    if [[ -f "/etc/systemd/system/${app_name}@.service" ]]; then
+        echo ""
+        log_info "Template service found: ${app_name}@.service"
+    else
+        log_warn "Template service NOT found: ${app_name}@.service"
+    fi
+}
+
 # Test backend connectivity
 test_backend() {
     local app_name="${1:-${APP_NAME}}"
@@ -1532,6 +1653,9 @@ main() {
         test-backend)
             test_backend "${2:-${APP_NAME}}"
             ;;
+        check-duplicates)
+            check_duplicates "${2:-${APP_NAME}}"
+            ;;
         *)
             echo "CineStream Deployment Script"
             echo ""
@@ -1548,6 +1672,7 @@ main() {
             echo "  enable-autostart        Enable autostart for all services"
             echo "  reconfigure-nginx       Reconfigure Nginx for application"
             echo "  test-backend            Test backend workers and Nginx config"
+            echo "  check-duplicates        Check for duplicate systemd services"
             echo ""
             exit 1
             ;;
