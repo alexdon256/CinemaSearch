@@ -1405,9 +1405,13 @@ test_backend() {
         log_warn "Nginx is returning ${NGINX_CODE}. Possible issues:"
         if [[ "$NGINX_CODE" == "404" ]]; then
             log_warn "  404 means Nginx found the location but backend returned 404"
+            log_warn "  - This could mean the path stripping isn't working correctly"
             log_warn "  - Check if workers are running: sudo systemctl status ${app_name}@${START_PORT}.service"
             log_warn "  - Test backend directly: curl http://localhost:${START_PORT}/"
-            log_warn "  - Check Nginx access log: sudo tail -f /var/log/nginx/access.log"
+            log_warn "  - Check upstream configuration:"
+            echo "    Upstream servers in config:"
+            grep -A 25 "upstream ${app_name}_backend" "/etc/nginx/conf.d/${app_name}.conf" | grep "server" || echo "    None found"
+            log_warn "  - Check Nginx error log: sudo journalctl -u nginx.service -n 50 | grep -i error"
         elif [[ "$NGINX_CODE" == "502" ]] || [[ "$NGINX_CODE" == "503" ]]; then
             log_warn "  ${NGINX_CODE} means Nginx can't connect to backend"
             log_warn "  - Workers may not be running"
