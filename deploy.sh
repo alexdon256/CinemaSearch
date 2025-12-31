@@ -3055,8 +3055,48 @@ EOF
         # Force restart Nginx to apply changes (restart is more reliable than reload)
         log_info "Restarting Nginx to apply localhost configuration..."
         log_info "Using restart instead of reload to ensure all changes are applied..."
+        
+        # Restart nginx and check if it actually started
         if systemctl restart nginx.service 2>&1; then
-            log_success "Nginx restarted successfully"
+            # Wait a moment for nginx to start
+            sleep 2
+            
+            # Verify nginx is actually running
+            if ! systemctl is-active --quiet nginx.service 2>/dev/null; then
+                log_error "Nginx failed to start after restart!"
+                log_error "Checking nginx error logs..."
+                if [[ -f /var/log/nginx/error.log ]]; then
+                    log_error "Last 10 lines of nginx error log:"
+                    tail -10 /var/log/nginx/error.log 2>/dev/null | while IFS= read -r line; do
+                        log_error "  $line"
+                    done
+                else
+                    log_error "Nginx error log not found. Checking systemd journal..."
+                    journalctl -u nginx.service -n 20 --no-pager 2>/dev/null | tail -10 | while IFS= read -r line; do
+                        log_error "  $line"
+                    done
+                fi
+                log_error ""
+                log_error "Nginx configuration may be broken. Try:"
+                log_error "  1. Check config: sudo nginx -t"
+                log_error "  2. Restore backup: sudo cp /etc/nginx/nginx.conf.backup.* /etc/nginx/nginx.conf"
+                log_error "  3. Check status: sudo systemctl status nginx.service"
+                return 1
+            fi
+            
+            # Verify nginx is listening on port 80
+            sleep 1
+            if ! ss -tlnp 2>/dev/null | grep -q ":80.*nginx" && ! netstat -tlnp 2>/dev/null | grep -q ":80.*nginx"; then
+                log_warning "Nginx is running but not listening on port 80"
+                log_warning "This might be a configuration issue. Checking..."
+                log_info "Nginx status:"
+                systemctl status nginx.service --no-pager -l 2>/dev/null | head -20 || true
+                log_info ""
+                log_warning "Nginx may need additional configuration to listen on port 80"
+            else
+                log_success "Nginx is running and listening on port 80"
+            fi
+            
             log_info ""
             log_info "✓ Application is now accessible at:"
             log_info "  - http://localhost (from server)"
@@ -3200,10 +3240,35 @@ EOF
             # Test what's actually being served
             log_info ""
             log_info "Testing what Nginx is actually serving..."
-            sleep 2  # Give Nginx time to restart
+            
+            # First verify nginx is actually running and listening
+            if ! systemctl is-active --quiet nginx.service 2>/dev/null; then
+                log_error "Nginx is not running!"
+                log_error "Start it with: sudo systemctl start nginx"
+                log_error "Check status: sudo systemctl status nginx.service"
+                log_error "Check logs: sudo journalctl -u nginx.service -n 20"
+                return 1
+            fi
+            
+            # Check if nginx is listening on port 80
+            if ! ss -tlnp 2>/dev/null | grep -q ":80.*nginx" && ! netstat -tlnp 2>/dev/null | grep -q ":80.*nginx"; then
+                log_error "Nginx is not listening on port 80!"
+                log_error "Check Nginx status: systemctl status nginx.service"
+                log_error "Check Nginx config: sudo nginx -t"
+                log_error "Check Nginx logs: sudo journalctl -u nginx.service -n 20"
+                return 1
+            fi
+            
+            sleep 2  # Give Nginx time to be ready
             local test_response
             test_response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/ 2>/dev/null || echo "000")
-            if [[ "$test_response" == "301" ]] || [[ "$test_response" == "302" ]]; then
+            
+            if [[ "$test_response" == "000" ]]; then
+                log_warning "⚠ HTTP response status: $test_response"
+                log_warning "This might indicate an error or that Nginx isn't responding"
+                log_info "Checking nginx status..."
+                systemctl status nginx.service --no-pager -l 2>/dev/null | head -15 || true
+            elif [[ "$test_response" == "301" ]] || [[ "$test_response" == "302" ]]; then
                 log_success "✓ HTTP is redirecting (status: $test_response) - this is correct"
             elif [[ "$test_response" == "200" ]]; then
                 # Check if it's serving the welcome page or the app
