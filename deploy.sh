@@ -1492,6 +1492,89 @@ check_duplicates() {
     fi
 }
 
+# Test load balancing distribution
+test_load_balancing() {
+    local app_name="${1:-${APP_NAME}}"
+    local app_dir="/var/www/${app_name}"
+    
+    if [[ ! -d "$app_dir" ]] || [[ ! -f "${app_dir}/.deploy_config" ]]; then
+        log_error "Application ${app_name} not found at ${app_dir}"
+        return 1
+    fi
+    
+    source "${app_dir}/.deploy_config"
+    
+    log_step "Testing load balancing for ${app_name}..."
+    
+    echo ""
+    echo "=== Load Balancing Configuration ==="
+    if [[ -f "/etc/nginx/conf.d/${app_name}.conf" ]]; then
+        local lb_method=$(grep -A 2 "upstream ${app_name}_backend" "/etc/nginx/conf.d/${app_name}.conf" | grep -E "ip_hash|least_conn|fair" | head -1 | awk '{print $1}' || echo "round-robin (default)")
+        echo "Load balancing method: ${lb_method}"
+        
+        if echo "$lb_method" | grep -q "ip_hash"; then
+            echo ""
+            log_info "Using ip_hash (sticky sessions)"
+            log_info "Each client IP is assigned to the same backend worker"
+            log_info "This ensures session persistence but limits load distribution per IP"
+            echo ""
+            log_warn "Note: Requests from the same IP (e.g., localhost) will always hit the same worker"
+            log_warn "To test load distribution, make requests from different IPs or check access logs"
+        fi
+        
+        local server_count=$(grep -A 25 "upstream ${app_name}_backend" "/etc/nginx/conf.d/${app_name}.conf" | grep "server" | wc -l)
+        echo "Backend servers configured: ${server_count}"
+    fi
+    
+    echo ""
+    echo "=== Making Test Requests ==="
+    echo "Making 20 requests to see load distribution..."
+    echo ""
+    
+    local successful=0
+    local total_requests=20
+    
+    for i in $(seq 1 $total_requests); do
+        local response=$(curl -s -w "\n%{http_code}" "http://localhost/${app_name}/" 2>/dev/null)
+        local http_code=$(echo "$response" | tail -1)
+        
+        if [[ "$http_code" == "200" ]]; then
+            ((successful++))
+        fi
+        sleep 0.1
+    done
+    
+    echo ""
+    echo "=== Load Distribution Analysis ==="
+    log_info "Made ${total_requests} requests, ${successful} successful"
+    echo ""
+    echo "To see which workers handled requests, check:"
+    echo ""
+    echo "  # Nginx access logs (shows which upstream server handled each request)"
+    echo "  sudo tail -50 /var/log/nginx/access.log | grep '/${app_name}/'"
+    echo ""
+    echo "  # Individual worker logs (check which workers received requests)"
+    echo "  for port in \$(seq ${START_PORT} ${END_PORT}); do"
+    echo "    echo \"Port \$port:\";"
+    echo "    sudo journalctl -u ${app_name}@\${port}.service -n 3 --no-pager | grep -i 'GET' | tail -1;"
+    echo "  done"
+    echo ""
+    echo "=== Current Load Balancing Behavior ==="
+    if echo "$lb_method" | grep -q "ip_hash"; then
+        echo "With ip_hash (sticky sessions):"
+        echo "  ✓ All requests from localhost (127.0.0.1) go to the same worker"
+        echo "  ✓ Requests from different IPs are distributed across workers"
+        echo "  ✓ This ensures session persistence (same user = same worker)"
+        echo ""
+        echo "To test true load distribution:"
+        echo "  1. Make requests from different IPs (different clients)"
+        echo "  2. Check access logs: sudo tail -f /var/log/nginx/access.log"
+        echo "  3. Or change to round-robin by removing 'ip_hash;' from Nginx config"
+    else
+        echo "Using round-robin: Requests are distributed evenly across all workers"
+    fi
+}
+
 # Test backend connectivity
 test_backend() {
     local app_name="${1:-${APP_NAME}}"
