@@ -407,25 +407,19 @@
             position: relative;
         }
         
-        /* Ensure spinner circles are perfectly centered */
-        .loading-overlay .spinner-glow::before,
-        .loading-overlay .spinner-glow::after {
+        /* Center the movie icon inside spinner */
+        .loading-overlay .spinner-glow > * {
             position: absolute;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            margin: 0;
-        }
-        
-        /* Center the movie icon inside spinner */
-        .loading-overlay .spinner-glow > * {
-            position: relative;
             z-index: 10;
             display: flex;
             align-items: center;
             justify-content: center;
-            width: 100%;
-            height: 100%;
+            width: auto;
+            height: auto;
+            margin: 0;
         }
         
         .loading-overlay .loading-text {
@@ -586,6 +580,8 @@
             border-radius: 50%;
             animation: spin 1s linear infinite;
             box-shadow: 0 0 20px rgba(52, 152, 219, 0.6);
+            margin: 0;
+            z-index: 1;
         }
         
         .spinner-glow::after {
@@ -603,6 +599,8 @@
             border-radius: 50%;
             animation: spin 0.8s linear infinite reverse;
             box-shadow: 0 0 15px rgba(155, 89, 182, 0.6);
+            margin: 0;
+            z-index: 2;
         }
         
         @keyframes pulse {
@@ -621,19 +619,21 @@
         /* Movie icon animation in spinner center */
         @keyframes iconFloat {
             0%, 100% {
-                transform: translateY(0) rotate(0deg);
+                transform: translate(-50%, -50%) translateY(0) rotate(0deg);
             }
             50% {
-                transform: translateY(-5px) rotate(5deg);
+                transform: translate(-50%, -50%) translateY(-5px) rotate(5deg);
             }
         }
         
-        .spinner-glow::before {
-            z-index: 1;
+        .spinner-glow > * {
+            animation: iconFloat 3s ease-in-out infinite;
+            z-index: 10;
         }
         
-        .spinner-glow::after {
-            z-index: 2;
+        /* Ensure iconFloat animation preserves centering for loading overlay */
+        .loading-overlay .spinner-glow > * {
+            animation: iconFloat 3s ease-in-out infinite;
         }
         
         /* Loading text animation */
@@ -2903,4 +2903,5 @@
     </script>
 </body>
 </html>
+
 
