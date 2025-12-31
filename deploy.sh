@@ -132,14 +132,35 @@ install_mongodb() {
             else
                 log_warn "MongoDB server (mongod) not found in repos."
                 log_info "Attempting to download and install MongoDB Community Edition..."
+                
+                # Try automatic download first
                 if download_and_install_mongodb; then
                     MONGODB_BIN="/opt/mongodb/bin/mongod"
                     MONGOSH_BIN="/opt/mongodb/bin/mongosh"
                     log_info "MongoDB installed successfully at: ${MONGODB_BIN}"
                 else
-                    log_error "Automatic MongoDB installation failed."
-                    install_mongodb_manual
-                    return 1
+                    # Try alternative: use non-root user with yay if available
+                    log_warn "Automatic download failed. Trying alternative method..."
+                    if try_yay_installation; then
+                        # Check if mongod is now available
+                        if command -v mongod &>/dev/null; then
+                            MONGODB_BIN=$(command -v mongod)
+                            MONGOSH_BIN=$(command -v mongosh 2>/dev/null || echo "")
+                            log_info "MongoDB installed via yay at: ${MONGODB_BIN}"
+                        elif [[ -f /usr/bin/mongod ]]; then
+                            MONGODB_BIN="/usr/bin/mongod"
+                            MONGOSH_BIN="/usr/bin/mongosh"
+                            log_info "MongoDB installed via yay at: ${MONGODB_BIN}"
+                        else
+                            log_error "yay installation also failed."
+                            install_mongodb_manual
+                            return 1
+                        fi
+                    else
+                        log_error "All automatic installation methods failed."
+                        install_mongodb_manual
+                        return 1
+                    fi
                 fi
             fi
         fi
@@ -230,9 +251,10 @@ EOF
 download_and_install_mongodb() {
     log_step "Downloading MongoDB Community Edition..."
     
-    # MongoDB version (latest stable 7.0.x)
+    # Use latest MongoDB version (7.0.11)
     MONGODB_VERSION="7.0.11"
     MONGODB_URL="https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-${MONGODB_VERSION}.tgz"
+    ARCHIVE_FILE="mongodb-linux-x86_64-${MONGODB_VERSION}.tgz"
     TEMP_DIR="/tmp/mongodb-install"
     
     # Create temp directory
@@ -243,46 +265,96 @@ download_and_install_mongodb() {
     if command -v wget &>/dev/null; then
         DOWNLOAD_CMD="wget"
     elif command -v curl &>/dev/null; then
-        DOWNLOAD_CMD="curl -L -o"
+        DOWNLOAD_CMD="curl"
     else
         log_error "Neither wget nor curl is available. Please install one: pacman -S wget"
         return 1
     fi
     
     # Download MongoDB
-    log_info "Downloading MongoDB ${MONGODB_VERSION}..."
+    log_info "Downloading MongoDB ${MONGODB_VERSION} from ${MONGODB_URL}..."
+    
     if [[ "$DOWNLOAD_CMD" == "wget" ]]; then
-        wget -q --show-progress "${MONGODB_URL}" || {
-            log_error "Failed to download MongoDB"
+        # Capture error output
+        ERROR_OUTPUT=$(wget --timeout=30 --tries=3 -q --show-progress "${MONGODB_URL}" 2>&1)
+        WGET_EXIT=$?
+        if [[ $WGET_EXIT -ne 0 ]] || [[ ! -f "${ARCHIVE_FILE}" ]]; then
+            log_error "Failed to download MongoDB ${MONGODB_VERSION}"
+            log_error "Error: ${ERROR_OUTPUT}"
+            log_error "This could be due to:"
+            log_error "  - Network connectivity issues"
+            log_error "  - MongoDB download servers being unavailable"
+            log_error "  - Firewall blocking the connection"
+            log_error "  - Invalid URL or version"
+            cd /
+            rm -rf "${TEMP_DIR}"
             return 1
-        }
-        ARCHIVE_FILE="mongodb-linux-x86_64-${MONGODB_VERSION}.tgz"
+        fi
     else
-        curl -L -o "mongodb-linux-x86_64-${MONGODB_VERSION}.tgz" "${MONGODB_URL}" || {
-            log_error "Failed to download MongoDB"
+        # curl
+        ERROR_OUTPUT=$(curl -L --connect-timeout 30 --max-time 300 -f -o "${ARCHIVE_FILE}" "${MONGODB_URL}" 2>&1)
+        CURL_EXIT=$?
+        if [[ $CURL_EXIT -ne 0 ]] || [[ ! -f "${ARCHIVE_FILE}" ]]; then
+            log_error "Failed to download MongoDB ${MONGODB_VERSION}"
+            log_error "Error: ${ERROR_OUTPUT}"
+            log_error "This could be due to:"
+            log_error "  - Network connectivity issues"
+            log_error "  - MongoDB download servers being unavailable"
+            log_error "  - Firewall blocking the connection"
+            log_error "  - Invalid URL or version"
+            cd /
+            rm -rf "${TEMP_DIR}"
             return 1
-        }
-        ARCHIVE_FILE="mongodb-linux-x86_64-${MONGODB_VERSION}.tgz"
+        fi
+    fi
+    
+    log_info "Successfully downloaded MongoDB ${MONGODB_VERSION}"
+    
+    # Verify archive integrity
+    if [[ ! -f "${ARCHIVE_FILE}" ]] || [[ ! -s "${ARCHIVE_FILE}" ]]; then
+        log_error "Downloaded archive is missing or empty"
+        cd /
+        rm -rf "${TEMP_DIR}"
+        return 1
     fi
     
     # Extract
-    log_info "Extracting MongoDB..."
-    tar -xzf "${ARCHIVE_FILE}" || {
-        log_error "Failed to extract MongoDB archive"
+    log_info "Extracting MongoDB ${MONGODB_VERSION}..."
+    if ! tar -xzf "${ARCHIVE_FILE}" 2>/dev/null; then
+        log_error "Failed to extract MongoDB archive. Archive may be corrupted."
+        log_error "Archive file: ${ARCHIVE_FILE}"
+        log_error "File size: $(du -h "${ARCHIVE_FILE}" | cut -f1)"
+        cd /
+        rm -rf "${TEMP_DIR}"
         return 1
-    }
+    fi
+    
+    # Verify extraction
+    if [[ ! -d "mongodb-linux-x86_64-${MONGODB_VERSION}" ]]; then
+        log_error "Extraction directory not found"
+        cd /
+        rm -rf "${TEMP_DIR}"
+        return 1
+    fi
     
     # Move to /opt/mongodb
     log_info "Installing MongoDB to /opt/mongodb..."
-    if [[ -d "/opt/mongodb" ]]; then
-        # Backup existing installation
+    if [[ -d "/opt/mongodb" ]] && [[ ! -d "/opt/mongodb/bin" ]]; then
+        # Backup existing installation if it's not a valid MongoDB install
         mv /opt/mongodb /opt/mongodb.backup.$(date +%Y%m%d_%H%M%S) 2>/dev/null || true
+    elif [[ -d "/opt/mongodb" ]] && [[ -f "/opt/mongodb/bin/mongod" ]]; then
+        log_info "MongoDB already installed at /opt/mongodb, skipping installation"
+        cd /
+        rm -rf "${TEMP_DIR}"
+        return 0
     fi
     
-    mv "mongodb-linux-x86_64-${MONGODB_VERSION}" /opt/mongodb || {
+    if ! mv "mongodb-linux-x86_64-${MONGODB_VERSION}" /opt/mongodb; then
         log_error "Failed to move MongoDB to /opt/mongodb"
+        cd /
+        rm -rf "${TEMP_DIR}"
         return 1
-    }
+    fi
     
     # Create symlinks for easier access
     if [[ ! -f /usr/local/bin/mongod ]]; then
@@ -302,6 +374,42 @@ download_and_install_mongodb() {
         return 0
     else
         log_error "MongoDB installation verification failed"
+        return 1
+    fi
+}
+
+# Try to install MongoDB using yay with a non-root user
+try_yay_installation() {
+    log_info "Attempting to install MongoDB via yay (AUR)..."
+    
+    # Check if yay is available
+    if ! command -v yay &>/dev/null; then
+        log_warn "yay is not available"
+        return 1
+    fi
+    
+    # Find a non-root user to run yay
+    NON_ROOT_USER=""
+    for user in $(getent passwd | awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}'); do
+        if [[ "$user" != "root" ]] && id "$user" &>/dev/null; then
+            NON_ROOT_USER="$user"
+            break
+        fi
+    done
+    
+    if [[ -z "$NON_ROOT_USER" ]]; then
+        log_warn "No non-root user found to run yay"
+        return 1
+    fi
+    
+    log_info "Using user '${NON_ROOT_USER}' to install MongoDB via yay..."
+    
+    # Try to install mongodb-bin via yay
+    if su - "${NON_ROOT_USER}" -c "yay -S --noconfirm mongodb-bin" 2>&1; then
+        log_info "MongoDB installed successfully via yay"
+        return 0
+    else
+        log_warn "yay installation failed"
         return 1
     fi
 }
