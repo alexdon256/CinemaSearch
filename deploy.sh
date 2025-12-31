@@ -2447,16 +2447,23 @@ configure_nginx_localhost() {
         log_info "No domain configured - /cinestream will be accessible via IP/localhost"
     fi
     
-    # Disable default Nginx welcome page - consolidated single pass
+    # Disable default Nginx welcome page - aggressive cleanup
     log_info "Disabling default Nginx welcome page configurations..."
     
     local disabled_count=0
     local conflicts_found=0
     
+    # Aggressively remove/disable all default configs
+    [[ -f "/etc/nginx/sites-enabled/default" ]] && rm -f /etc/nginx/sites-enabled/default 2>/dev/null && disabled_count=$((disabled_count + 1))
+    [[ -f "/etc/nginx/sites-available/default" ]] && rm -f /etc/nginx/sites-available/default 2>/dev/null && disabled_count=$((disabled_count + 1))
+    [[ -f "/etc/nginx/conf.d/default.conf" ]] && mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.disabled 2>/dev/null && disabled_count=$((disabled_count + 1))
+    [[ -f "/etc/nginx/conf.d/default.conf.disabled" ]] && log_info "Confirmed default.conf is disabled"
+    
     # Collect all config files to check
     local all_configs=()
     [[ -d "/etc/nginx/conf.d" ]] && for f in /etc/nginx/conf.d/*.conf; do [[ -f "$f" ]] && all_configs+=("$f"); done
     [[ -d "/etc/nginx/sites-enabled" ]] && for f in /etc/nginx/sites-enabled/*; do [[ -f "$f" ]] && all_configs+=("$f"); done
+    [[ -d "/etc/nginx/sites-available" ]] && for f in /etc/nginx/sites-available/*; do [[ -f "$f" ]] && all_configs+=("$f"); done
     
     # Process each config file
     for conf_file in "${all_configs[@]}"; do
@@ -2470,23 +2477,44 @@ configure_nginx_localhost() {
             conflicts_found=$((conflicts_found + 1))
         fi
         
-        # Disable configs serving welcome page
-        if grep -q "root.*/usr/share/nginx/html\|root.*/var/www/html" "$conf_file" 2>/dev/null; then
-            if grep -q "listen.*80" "$conf_file" 2>/dev/null; then
+        # Disable ANY config serving welcome page (check for root pointing to default HTML dirs)
+        if grep -q "root.*/usr/share/nginx/html\|root.*/var/www/html\|root.*/usr/share/nginx" "$conf_file" 2>/dev/null; then
+            if grep -q "listen.*80\|server_name.*_\|server_name.*default" "$conf_file" 2>/dev/null; then
                 mv "$conf_file" "${conf_file}.disabled" 2>/dev/null || true
                 disabled_count=$((disabled_count + 1))
+                log_info "Disabled welcome page config: $conf_file"
             fi
         fi
     done
     
-    # Remove default site symlinks/files
-    [[ -f "/etc/nginx/sites-enabled/default" ]] && rm -f /etc/nginx/sites-enabled/default 2>/dev/null && disabled_count=$((disabled_count + 1))
-    [[ -f "/etc/nginx/conf.d/default.conf" ]] && mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.disabled 2>/dev/null && disabled_count=$((disabled_count + 1))
+    # Also check main nginx.conf for embedded server blocks
+    if [[ -f "/etc/nginx/nginx.conf" ]]; then
+        if grep -q "root.*/usr/share/nginx/html\|root.*/var/www/html" /etc/nginx/nginx.conf 2>/dev/null; then
+            log_warning "Found root directive in main nginx.conf - this may serve welcome page"
+            log_warning "You may need to comment out server blocks in /etc/nginx/nginx.conf manually"
+        fi
+    fi
     
     if [[ $disabled_count -gt 0 ]] || [[ $conflicts_found -gt 0 ]]; then
         log_success "Disabled $disabled_count welcome page config(s), removed $conflicts_found default_server conflict(s)"
     else
         log_info "No default welcome page configurations found"
+    fi
+    
+    # Check if backend processes are running
+    local backend_running=false
+    for ((i=0; i<PROCESS_COUNT; i++)); do
+        local port=$((START_PORT + i))
+        if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
+            backend_running=true
+            break
+        fi
+    done
+    
+    if [[ "$backend_running" == "false" ]]; then
+        log_warning "Backend processes are not running on ports ${START_PORT}-$((START_PORT + PROCESS_COUNT - 1))"
+        log_info "The application will be accessible once services are started"
+        log_info "Start services with: sudo $0 start-all"
     fi
     
     # Create upstream block
@@ -2498,10 +2526,10 @@ upstream ${UPSTREAM_NAME}_localhost {
     ip_hash;  # Sticky sessions
 EOF
     
-    # Add all backend servers
+    # Add all backend servers (with backup for when services aren't running)
     for ((i=0; i<PROCESS_COUNT; i++)); do
         local port=$((START_PORT + i))
-        echo "    server 127.0.0.1:${port};" >> "$LOCALHOST_CONF"
+        echo "    server 127.0.0.1:${port} max_fails=3 fail_timeout=30s;" >> "$LOCALHOST_CONF"
     done
     
     cat >> "$LOCALHOST_CONF" <<EOF
@@ -2569,6 +2597,7 @@ EOF
     }
     
     # Root location - serve CineStream directly at homepage
+    # Never serve welcome page - return 503 if backend is down
     location / {
         limit_req zone=general_limit burst=20 nodelay;
         limit_conn conn_limit 10;
@@ -2588,7 +2617,18 @@ EOF
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
-        proxy_intercept_errors off;
+        
+        # Return 503 if backend is unavailable (prevents welcome page fallback)
+        proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
+        proxy_intercept_errors on;
+    }
+    
+    # Custom error handling - prevent welcome page from showing
+    error_page 502 503 504 /503;
+    location = /503 {
+        internal;
+        return 503 "CineStream service is starting. Please wait a moment and refresh.";
+        add_header Content-Type text/plain;
     }
     
     # CineStream application at /cinestream subpath (case-insensitive) - also works for compatibility
@@ -2786,6 +2826,7 @@ EOF
             cat >> "$LOCALHOST_CONF" <<EOF
     
     # Root location - serve CineStream directly at homepage
+    # Never serve welcome page - return 503 if backend is down
     location / {
         limit_req zone=general_limit burst=20 nodelay;
         limit_conn conn_limit 10;
@@ -2805,7 +2846,18 @@ EOF
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
-        proxy_intercept_errors off;
+        
+        # Return 503 if backend is unavailable (prevents welcome page fallback)
+        proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
+        proxy_intercept_errors on;
+    }
+    
+    # Custom error handling - prevent welcome page from showing
+    error_page 502 503 504 /503;
+    location = /503 {
+        internal;
+        return 503 "CineStream service is starting. Please wait a moment and refresh.";
+        add_header Content-Type text/plain;
     }
     
     # CineStream application at /cinestream subpath (case-insensitive) - also works for compatibility
@@ -2905,10 +2957,45 @@ EOF
             log_info "  sudo $0 enable-internet-access"
             log_info ""
             log_info ""
-            log_info "Verification: Testing that CineStream is being served..."
-            # Quick test to verify the app is accessible
-            sleep 1
-            if curl -s -o /dev/null -w "%{http_code}" http://localhost/ 2>/dev/null | grep -q "200\|302\|301"; then
+            log_info "Verification: Testing that CineStream is being served (not welcome page)..."
+            # Wait a moment for nginx to fully restart
+            sleep 2
+            
+            # Check if welcome page is being served
+            local response_body
+            response_body=$(curl -s http://localhost/ 2>/dev/null || echo "")
+            
+            if echo "$response_body" | grep -qi "welcome.*nginx\|nginx.*welcome"; then
+                log_error "✗ Nginx is still serving the welcome page!"
+                log_error "This means another config is taking precedence over localhost.conf"
+                log_info "Checking for conflicting configs..."
+                
+                # Find all configs with default_server
+                nginx -T 2>/dev/null | grep -B 5 "listen.*80.*default_server" | head -20 || true
+                
+                log_info "Attempting to fix by removing default_server from all other configs..."
+                # More aggressive cleanup
+                for conf_file in /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* /etc/nginx/sites-available/*; do
+                    [[ -f "$conf_file" ]] && [[ "$conf_file" != "$LOCALHOST_CONF" ]] && \
+                    grep -q "listen.*default_server" "$conf_file" 2>/dev/null && \
+                    sed -i 's/ listen \([0-9]*\) default_server;/ listen \1;/g' "$conf_file" 2>/dev/null && \
+                    sed -i 's/ listen \[::\]:\([0-9]*\) default_server;/ listen [::]:\1;/g' "$conf_file" 2>/dev/null && \
+                    log_info "Removed default_server from: $conf_file"
+                done
+                
+                # Restart nginx again
+                systemctl restart nginx.service 2>/dev/null || true
+                sleep 2
+                
+                # Check again
+                response_body=$(curl -s http://localhost/ 2>/dev/null || echo "")
+                if echo "$response_body" | grep -qi "welcome.*nginx\|nginx.*welcome"; then
+                    log_error "✗ Welcome page still showing after cleanup"
+                    log_error "You may need to manually check /etc/nginx/nginx.conf for embedded server blocks"
+                else
+                    log_success "✓ Welcome page removed - CineStream should now be served"
+                fi
+            elif curl -s -o /dev/null -w "%{http_code}" http://localhost/ 2>/dev/null | grep -q "200\|302\|301"; then
                 log_success "✓ CineStream application is responding on http://localhost"
             else
                 log_warning "Application may not be responding yet. Check if services are running:"
