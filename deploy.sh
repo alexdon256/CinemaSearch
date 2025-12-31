@@ -131,36 +131,32 @@ install_mongodb() {
                 MONGOSH_BIN="/opt/mongodb/bin/mongosh"
             else
                 log_warn "MongoDB server (mongod) not found in repos."
-                log_info "Attempting to download and install MongoDB Community Edition..."
+                log_info "Installing MongoDB via yay (AUR)..."
                 
-                # Try automatic download first
-                if download_and_install_mongodb; then
-                    MONGODB_BIN="/opt/mongodb/bin/mongod"
-                    MONGOSH_BIN="/opt/mongodb/bin/mongosh"
-                    log_info "MongoDB installed successfully at: ${MONGODB_BIN}"
-                else
-                    # Try alternative: use non-root user with yay if available
-                    log_warn "Automatic download failed. Trying alternative method..."
-                    if try_yay_installation; then
-                        # Check if mongod is now available
-                        if command -v mongod &>/dev/null; then
-                            MONGODB_BIN=$(command -v mongod)
-                            MONGOSH_BIN=$(command -v mongosh 2>/dev/null || echo "")
-                            log_info "MongoDB installed via yay at: ${MONGODB_BIN}"
-                        elif [[ -f /usr/bin/mongod ]]; then
-                            MONGODB_BIN="/usr/bin/mongod"
-                            MONGOSH_BIN="/usr/bin/mongosh"
-                            log_info "MongoDB installed via yay at: ${MONGODB_BIN}"
-                        else
-                            log_error "yay installation also failed."
-                            install_mongodb_manual
-                            return 1
-                        fi
+                # Use yay to install MongoDB
+                if try_yay_installation; then
+                    # Check if mongod is now available
+                    if command -v mongod &>/dev/null; then
+                        MONGODB_BIN=$(command -v mongod)
+                        MONGOSH_BIN=$(command -v mongosh 2>/dev/null || echo "")
+                        log_info "MongoDB installed via yay at: ${MONGODB_BIN}"
+                    elif [[ -f /usr/bin/mongod ]]; then
+                        MONGODB_BIN="/usr/bin/mongod"
+                        MONGOSH_BIN="/usr/bin/mongosh"
+                        log_info "MongoDB installed via yay at: ${MONGODB_BIN}"
+                    elif [[ -f /opt/mongodb/bin/mongod ]]; then
+                        MONGODB_BIN="/opt/mongodb/bin/mongod"
+                        MONGOSH_BIN="/opt/mongodb/bin/mongosh"
+                        log_info "MongoDB installed via yay at: ${MONGODB_BIN}"
                     else
-                        log_error "All automatic installation methods failed."
+                        log_error "yay installation completed but mongod not found."
                         install_mongodb_manual
                         return 1
                     fi
+                else
+                    log_error "yay installation failed."
+                    install_mongodb_manual
+                    return 1
                 fi
             fi
         fi
@@ -403,13 +399,21 @@ try_yay_installation() {
     fi
     
     log_info "Using user '${NON_ROOT_USER}' to install MongoDB via yay..."
+    log_info "Running: yay -S mongodb-bin"
+    log_warn "Note: This may require sudo password. If it fails, install manually: yay -S mongodb-bin"
     
-    # Try to install mongodb-bin via yay
-    if su - "${NON_ROOT_USER}" -c "yay -S --noconfirm mongodb-bin" 2>&1; then
+    # Run yay -S mongodb-bin directly
+    # Provide answers to interactive prompts: N for cleanBuild, N for diffs
+    INSTALL_OUTPUT=$(printf "N\nN\n" | su - "${NON_ROOT_USER}" -c "yay -S --noconfirm mongodb-bin 2>&1")
+    INSTALL_EXIT=$?
+    
+    if [[ $INSTALL_EXIT -eq 0 ]]; then
         log_info "MongoDB installed successfully via yay"
         return 0
     else
-        log_warn "yay installation failed"
+        log_warn "yay installation failed (may need sudo password)"
+        log_warn "Install output: ${INSTALL_OUTPUT}"
+        log_warn "To install manually, run as user '${NON_ROOT_USER}': yay -S mongodb-bin"
         return 1
     fi
 }
