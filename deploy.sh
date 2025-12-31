@@ -880,7 +880,7 @@ configure_nginx() {
         cat > /etc/nginx/conf.d/${app_name}.conf <<EOF
 # Upstream backend for ${app_name}
 upstream ${app_name}_backend {
-    ip_hash;  # Sticky sessions
+    # Round-robin load balancing (default - distributes requests evenly)
 ${upstream_block}}
 
 # HTTP server for localhost/IP access
@@ -1008,7 +1008,7 @@ set_domain() {
     cat > /etc/nginx/conf.d/${app_name}.conf <<EOF
 # Upstream backend for ${app_name}
 upstream ${app_name}_backend {
-    ip_hash;  # Sticky sessions
+    # Round-robin load balancing (default - distributes requests evenly)
 ${upstream_block}}
 
 # HTTP server - redirect to HTTPS
