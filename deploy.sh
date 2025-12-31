@@ -3253,10 +3253,88 @@ EOF
             # Check if nginx is listening on port 80
             if ! ss -tlnp 2>/dev/null | grep -q ":80.*nginx" && ! netstat -tlnp 2>/dev/null | grep -q ":80.*nginx"; then
                 log_error "Nginx is not listening on port 80!"
-                log_error "Check Nginx status: systemctl status nginx.service"
-                log_error "Check Nginx config: sudo nginx -t"
-                log_error "Check Nginx logs: sudo journalctl -u nginx.service -n 20"
-                return 1
+                log_info "Diagnosing the issue..."
+                
+                # Check nginx status
+                local nginx_status
+                nginx_status=$(systemctl status nginx.service --no-pager 2>/dev/null | head -10 || echo "")
+                if [[ -n "$nginx_status" ]]; then
+                    log_info "Nginx service status:"
+                    echo "$nginx_status" | while IFS= read -r line; do
+                        log_info "  $line"
+                    done
+                fi
+                
+                # Test nginx config
+                log_info ""
+                log_info "Testing nginx configuration..."
+                local nginx_test_output
+                nginx_test_output=$(nginx -t 2>&1)
+                local nginx_test_status=$?
+                
+                if [[ $nginx_test_status -ne 0 ]]; then
+                    log_error "Nginx configuration test FAILED!"
+                    echo "$nginx_test_output" | while IFS= read -r line; do
+                        log_error "  $line"
+                    done
+                    
+                    # Check if nginx.conf was broken by our Python script
+                    if grep -q "# DISABLED BY CINESTREAM" /etc/nginx/nginx.conf 2>/dev/null; then
+                        log_warning "nginx.conf contains our disabled comments - this may have broken the config"
+                        log_info "Attempting to restore from backup..."
+                        local latest_backup
+                        latest_backup=$(ls -t /etc/nginx/nginx.conf.backup.* 2>/dev/null | head -1)
+                        if [[ -n "$latest_backup" ]]; then
+                            if cp "$latest_backup" /etc/nginx/nginx.conf 2>/dev/null; then
+                                log_success "Restored nginx.conf from backup: $latest_backup"
+                                log_info "Testing restored config..."
+                                if nginx -t &>/dev/null; then
+                                    log_success "Restored config is valid!"
+                                    log_info "Restarting nginx..."
+                                    if systemctl restart nginx.service 2>&1; then
+                                        sleep 2
+                                        if systemctl is-active --quiet nginx.service 2>/dev/null && \
+                                           (ss -tlnp 2>/dev/null | grep -q ":80.*nginx" || netstat -tlnp 2>/dev/null | grep -q ":80.*nginx"); then
+                                            log_success "Nginx is now running and listening on port 80!"
+                                            log_info "Continuing with verification..."
+                                            # Continue with the test
+                                        else
+                                            log_error "Nginx still not listening after restore"
+                                            return 1
+                                        fi
+                                    else
+                                        log_error "Failed to restart nginx after restore"
+                                        return 1
+                                    fi
+                                else
+                                    log_error "Restored config is also invalid"
+                                    return 1
+                                fi
+                            else
+                                log_error "Failed to restore backup"
+                            fi
+                        else
+                            log_warning "No backup found to restore"
+                        fi
+                    fi
+                    
+                    log_error ""
+                    log_error "Please fix nginx configuration manually:"
+                    log_error "  1. Check config: sudo nginx -t"
+                    log_error "  2. Check logs: sudo journalctl -u nginx.service -n 20"
+                    log_error "  3. Check status: sudo systemctl status nginx.service"
+                    return 1
+                else
+                    log_success "Nginx configuration test passed"
+                    log_info "Nginx config is valid but nginx may not have started properly"
+                    log_info "Checking nginx logs..."
+                    journalctl -u nginx.service -n 10 --no-pager 2>/dev/null | tail -10 | while IFS= read -r line; do
+                        log_info "  $line"
+                    done
+                    log_info ""
+                    log_info "Try manually starting nginx: sudo systemctl start nginx"
+                    return 1
+                fi
             fi
             
             sleep 2  # Give Nginx time to be ready
