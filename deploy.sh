@@ -1439,7 +1439,8 @@ IO_EOF
     fi
     
     # 9. CPU Governor (ensure automatic scaling is enabled - ondemand/schedutil)
-    ensure_cpu_automatic_scaling
+    # DISABLED: CPU automatic scaling function removed
+    # ensure_cpu_automatic_scaling
     
     # 10. Additional kernel optimizations
     configure_additional_kernel_optimizations
@@ -1448,7 +1449,8 @@ IO_EOF
     optimize_nginx_workers
     
     # 12. Disable unnecessary services for server performance
-    disable_unnecessary_services
+    # DISABLED: Service disabling removed to preserve Bluetooth and other services
+    # disable_unnecessary_services
     
     # 13. Configure GRUB to skip boot menu
     configure_grub_boot
@@ -1483,57 +1485,58 @@ IO_EOF
 
 # Ensure CPU governor uses automatic scaling (ondemand/schedutil)
 # This allows CPU to turbo when needed but save power when idle
-ensure_cpu_automatic_scaling() {
-    log_info "Ensuring CPU automatic scaling (ondemand/schedutil) is enabled..."
-    
-    # Check if cpufreq is available
-    if [[ ! -d /sys/devices/system/cpu/cpu0/cpufreq ]]; then
-        log_info "  CPU frequency scaling not available (may be disabled in BIOS or not supported)"
-        return 0
-    fi
-    
-    # Remove any performance mode service if it exists
-    if systemctl list-unit-files | grep -q "set-cpu-performance.service"; then
-        log_info "  Removing CPU performance mode service (restoring automatic scaling)..."
-        systemctl stop set-cpu-performance.service 2>/dev/null || true
-        systemctl disable set-cpu-performance.service 2>/dev/null || true
-        systemctl mask set-cpu-performance.service 2>/dev/null || true
-        rm -f /etc/systemd/system/set-cpu-performance.service 2>/dev/null || true
-        systemctl daemon-reload 2>/dev/null || true
-        log_success "  Removed CPU performance mode service"
-    fi
-    
-    # Check current governor and set to ondemand/schedutil if it's locked to performance
-    local cpu_count
-    cpu_count=$(nproc)
-    local changed_count=0
-    
-    for ((cpu=0; cpu<cpu_count; cpu++)); do
-        if [[ -f "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_governor" ]]; then
-            local current_governor
-            current_governor=$(cat "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_governor" 2>/dev/null || echo "")
-            
-            # If locked to performance, change to ondemand or schedutil
-            if [[ "$current_governor" == "performance" ]]; then
-                local available_governors
-                available_governors=$(cat "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_available_governors" 2>/dev/null || echo "")
-                
-                # Prefer schedutil (modern), fallback to ondemand
-                if echo "$available_governors" | grep -q "schedutil"; then
-                    echo "schedutil" > "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_governor" 2>/dev/null && ((changed_count++)) || true
-                elif echo "$available_governors" | grep -q "ondemand"; then
-                    echo "ondemand" > "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_governor" 2>/dev/null && ((changed_count++)) || true
-                fi
-            fi
-        fi
-    done
-    
-    if [[ $changed_count -gt 0 ]]; then
-        log_success "  Restored automatic CPU scaling for $changed_count CPUs (turbo when needed, power saving when idle)"
-    else
-        log_info "  CPU automatic scaling already configured (no changes needed)"
-    fi
-}
+# DISABLED: CPU automatic scaling function removed
+# ensure_cpu_automatic_scaling() {
+#     log_info "Ensuring CPU automatic scaling (ondemand/schedutil) is enabled..."
+#     
+#     # Check if cpufreq is available
+#     if [[ ! -d /sys/devices/system/cpu/cpu0/cpufreq ]]; then
+#         log_info "  CPU frequency scaling not available (may be disabled in BIOS or not supported)"
+#         return 0
+#     fi
+#     
+#     # Remove any performance mode service if it exists
+#     if systemctl list-unit-files | grep -q "set-cpu-performance.service"; then
+#         log_info "  Removing CPU performance mode service (restoring automatic scaling)..."
+#         systemctl stop set-cpu-performance.service 2>/dev/null || true
+#         systemctl disable set-cpu-performance.service 2>/dev/null || true
+#         systemctl mask set-cpu-performance.service 2>/dev/null || true
+#         rm -f /etc/systemd/system/set-cpu-performance.service 2>/dev/null || true
+#         systemctl daemon-reload 2>/dev/null || true
+#         log_success "  Removed CPU performance mode service"
+#     fi
+#     
+#     # Check current governor and set to ondemand/schedutil if it's locked to performance
+#     local cpu_count
+#     cpu_count=$(nproc)
+#     local changed_count=0
+#     
+#     for ((cpu=0; cpu<cpu_count; cpu++)); do
+#         if [[ -f "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_governor" ]]; then
+#             local current_governor
+#             current_governor=$(cat "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_governor" 2>/dev/null || echo "")
+#             
+#             # If locked to performance, change to ondemand or schedutil
+#             if [[ "$current_governor" == "performance" ]]; then
+#                 local available_governors
+#                 available_governors=$(cat "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_available_governors" 2>/dev/null || echo "")
+#                 
+#                 # Prefer schedutil (modern), fallback to ondemand
+#                 if echo "$available_governors" | grep -q "schedutil"; then
+#                     echo "schedutil" > "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_governor" 2>/dev/null && ((changed_count++)) || true
+#                 elif echo "$available_governors" | grep -q "ondemand"; then
+#                     echo "ondemand" > "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_governor" 2>/dev/null && ((changed_count++)) || true
+#                 fi
+#             fi
+#         fi
+#     done
+#     
+#     if [[ $changed_count -gt 0 ]]; then
+#         log_success "  Restored automatic CPU scaling for $changed_count CPUs (turbo when needed, power saving when idle)"
+#     else
+#         log_info "  CPU automatic scaling already configured (no changes needed)"
+#     fi
+# }
 
 # Configure additional kernel optimizations
 configure_additional_kernel_optimizations() {
@@ -1647,7 +1650,8 @@ optimize_nginx_workers() {
 }
 
 # Disable unnecessary services for server performance
-disable_unnecessary_services() {
+# DISABLED: This function has been disabled - all services are kept enabled
+# disable_unnecessary_services() {
     log_info "Disabling unnecessary services for server performance..."
     
     # List of services to disable (safe for headless server, but keep audio/network/bluetooth for multimedia)
@@ -1818,7 +1822,7 @@ disable_unnecessary_services() {
     log_info ""
     log_info "Active services summary:"
     systemctl list-units --type=service --state=running | grep -E "(mongodb|nginx|cinestream|ssh|NetworkManager|pulseaudio|rtkit)" | head -15 || true
-}
+# }
 
 # Configure GRUB to skip boot menu (direct boot)
 configure_grub_boot() {
@@ -1967,7 +1971,7 @@ optimize_startup_shutdown() {
     fi
     
     # 4. Disable unnecessary systemd services that slow down boot
-    # (Already handled in disable_unnecessary_services, but ensure critical ones are optimized)
+    # (Service disabling has been removed - all services are kept enabled)
     
     # 5. Optimize filesystem mount options for faster boot (already done in optimize_system with noatime)
     
@@ -2564,7 +2568,30 @@ EOF
         return 404;
     }
     
-    # CineStream application at /cinestream subpath (case-insensitive)
+    # Root location - serve CineStream directly at homepage
+    location / {
+        limit_req zone=general_limit burst=20 nodelay;
+        limit_conn conn_limit 10;
+        
+        proxy_pass http://${UPSTREAM_NAME}_localhost;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$server_name;
+        
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_intercept_errors off;
+    }
+    
+    # CineStream application at /cinestream subpath (case-insensitive) - also works for compatibility
     # Handles: /cinestream, /Cinestream, /CineStream, /CINESTREAM, etc.
     location ~* ^/cinestream(/.*)?$ {
         limit_req zone=general_limit burst=20 nodelay;
@@ -2589,11 +2616,6 @@ EOF
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
         proxy_intercept_errors off;
-    }
-    
-    # Root location - redirect to /cinestream
-    location = / {
-        return 301 \$scheme://\$host/cinestream/;
     }
 }
 EOF
@@ -2763,7 +2785,30 @@ EOF
             # Domain not configured - allow /cinestream access via IP/localhost
             cat >> "$LOCALHOST_CONF" <<EOF
     
-    # CineStream application at /cinestream subpath (case-insensitive)
+    # Root location - serve CineStream directly at homepage
+    location / {
+        limit_req zone=general_limit burst=20 nodelay;
+        limit_conn conn_limit 10;
+        
+        proxy_pass http://${UPSTREAM_NAME}_localhost;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$server_name;
+        
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_intercept_errors off;
+    }
+    
+    # CineStream application at /cinestream subpath (case-insensitive) - also works for compatibility
     # Handles: /cinestream, /Cinestream, /CineStream, /CINESTREAM, etc.
     location ~* ^/cinestream(/.*)?$ {
         limit_req zone=general_limit burst=20 nodelay;
@@ -2788,11 +2833,6 @@ EOF
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
         proxy_intercept_errors off;
-    }
-    
-    # Root location - redirect to /cinestream
-    location = / {
-        return 301 \$scheme://\$host/cinestream/;
     }
 EOF
         fi
