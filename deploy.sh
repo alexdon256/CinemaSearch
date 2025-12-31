@@ -1752,6 +1752,9 @@ main() {
         check-duplicates)
             check_duplicates "${2:-${APP_NAME}}"
             ;;
+        test-load-balancing)
+            test_load_balancing "${2:-${APP_NAME}}"
+            ;;
         *)
             echo "CineStream Deployment Script"
             echo ""
@@ -1769,6 +1772,7 @@ main() {
             echo "  reconfigure-nginx       Reconfigure Nginx for application"
             echo "  test-backend            Test backend workers and Nginx config"
             echo "  check-duplicates        Check for duplicate systemd services"
+            echo "  test-load-balancing     Test load balancing distribution"
             echo ""
             exit 1
             ;;
