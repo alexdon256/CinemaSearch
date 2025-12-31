@@ -2408,8 +2408,26 @@
                         const testShowtimes = await testResponse.json();
                         
                         // If we got showtimes (even if daily refresh is running), display them immediately
-                        // Also stop animation if we get an empty array (data is ready, just no showtimes)
+                        // BUT: Check status first - if status is 'error', show error instead of empty state
                         if (testShowtimes && Array.isArray(testShowtimes)) {
+                            // Check status to see if there was an error BEFORE checking showtimes
+                            if (statusData.status === 'error') {
+                                clearInterval(pollingInterval);
+                                pollingInterval = null;
+                                hideLoadingOverlay();
+                                const errorMsg = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
+                                showErrorState(errorMsg, () => {
+                                    const city = cityInput.value.trim();
+                                    const country = countrySelect.value;
+                                    const state = cityInput.dataset.state || '';
+                                    if (city && country) {
+                                        fetchShowtimes(city, country, state);
+                                    }
+                                });
+                                dataLoaded = true;
+                                return;
+                            }
+                            
                             clearInterval(pollingInterval);
                             pollingInterval = null;
                             hideLoadingOverlay(); // Stop animation immediately
@@ -2417,7 +2435,7 @@
                                 showtimes = applyFilters(testShowtimes);
                                 renderShowtimes(); // Display available data
                             } else {
-                                // Data is ready but no showtimes found
+                                // Data is ready but no showtimes found (only if not error status)
                                 showEmptyState('{{ translations.no_showtimes or "No showtimes found" }}', '🎬');
                             }
                             dataLoaded = true;
@@ -2455,10 +2473,10 @@
                         clearInterval(pollingInterval);
                         pollingInterval = null;
                         hideLoadingOverlay();
-                        const errorMsg = statusData.message || (statusData.status === 'error' 
-                            ? 'An error occurred while fetching showtimes. Please check your API key configuration.' 
-                            : '{{ translations.no_showtimes or "No showtimes found" }}');
+                        
+                        // Always show error state for 'error' status, never show "no showtimes"
                         if (statusData.status === 'error') {
+                            const errorMsg = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
                             showErrorState(errorMsg, () => {
                                 const city = cityInput.value.trim();
                                 const country = countrySelect.value;
@@ -2468,6 +2486,8 @@
                                 }
                             });
                         } else {
+                            // Only show "no showtimes" for 'stale' status (not error)
+                            const errorMsg = statusData.message || '{{ translations.no_showtimes or "No showtimes found" }}';
                             showEmptyState(errorMsg, '🎬');
                         }
                     }

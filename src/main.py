@@ -343,13 +343,19 @@ def api_scrape_status(city_name):
         lock_info = get_lock_info(db, city_name)
         is_processing = lock_info is not None or (status == 'processing')
         
+        # Get error message if status is error
+        error_message = None
+        if status == 'error':
+            error_message = city.get('error_message', 'An error occurred while fetching showtimes. Please check your API key configuration.')
+        
         return jsonify({
             'status': status,
             'last_updated': last_updated_iso,
             'lock_source': lock_source,
             'ready': status == 'fresh',
             'processing': is_processing,
-            'processing_by': lock_source if status == 'processing' or is_processing else None
+            'processing_by': lock_source if status == 'processing' or is_processing else None,
+            'message': error_message
         })
     except Exception as e:
         print(f"Error getting scrape status: {e}")
@@ -609,9 +615,47 @@ def api_scrape():
             release_lock(db, location_id)
             return jsonify({'status': 'error', 'message': result.get('error', 'Unknown error')}), 500
             
+    except ValueError as e:
+        # Handle specific errors like missing API key
+        error_message = str(e)
+        if 'ANTHROPIC_API_KEY' in error_message:
+            error_message = 'Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.'
+        
+        # Safety check: location_id should always be defined here, but check just in case
+        if 'location_id' in locals():
+            # Mark location as error status
+            db.locations.update_one(
+                {'city_name': location_id},
+                {
+                    '$set': {
+                        'status': 'error',
+                        'error_message': error_message,
+                        'last_updated': datetime.now(timezone.utc)
+                    }
+                },
+                upsert=True
+            )
+            release_lock(db, location_id)
+        
+        import traceback
+        print(f"Scraping error: {traceback.format_exc()}")
+        return jsonify({'status': 'error', 'message': error_message}), 500
     except Exception as e:
         # Safety check: location_id should always be defined here, but check just in case
         if 'location_id' in locals():
+            # Mark location as error status
+            error_message = str(e)
+            db.locations.update_one(
+                {'city_name': location_id},
+                {
+                    '$set': {
+                        'status': 'error',
+                        'error_message': error_message,
+                        'last_updated': datetime.now(timezone.utc)
+                    }
+                },
+                upsert=True
+            )
             release_lock(db, location_id)
         import traceback
         print(f"Scraping error: {traceback.format_exc()}")
