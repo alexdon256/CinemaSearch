@@ -150,24 +150,70 @@ After deployment, you can access CineStream from:
 
 ### Troubleshooting
 
-If nginx isn't working:
+**If you cannot access the website from another machine on your local network:**
+
+1. **Check if firewall is configured:**
+   ```bash
+   # For firewalld (Arch/CachyOS)
+   sudo firewall-cmd --list-all
+   
+   # Should show http and https services allowed
+   # If not, run:
+   sudo ./deploy.sh enable-internet-access
+   ```
+
+2. **Check if nginx is listening on all interfaces (not just localhost):**
+   ```bash
+   sudo ss -tlnp | grep :80
+   # Should show: 0.0.0.0:80 or *:80 (not 127.0.0.1:80)
+   ```
+
+3. **Check nginx status:**
+   ```bash
+   sudo systemctl status nginx
+   ```
+
+4. **Test nginx configuration:**
+   ```bash
+   sudo nginx -t
+   ```
+
+5. **Check nginx error log:**
+   ```bash
+   sudo tail -20 /var/log/nginx/error.log
+   ```
+
+6. **Find your server's IP address:**
+   ```bash
+   ip addr show | grep "inet " | grep -v 127.0.0.1
+   # Or:
+   hostname -I
+   ```
+
+7. **Test from the server itself:**
+   ```bash
+   curl http://localhost
+   curl http://127.0.0.1
+   ```
+
+8. **Test from another machine:**
+   ```bash
+   # Replace with your server's IP
+   curl http://192.168.x.x
+   ```
+
+**If firewall is blocking access:**
+
+The `fix-localhost` command now automatically configures the firewall. If you still have issues, run:
 
 ```bash
-# Check nginx status
-sudo systemctl status nginx
-
-# Test nginx configuration
-sudo nginx -t
-
-# Check if nginx is listening on port 80
-sudo ss -tlnp | grep :80
-
-# Check nginx error log
-sudo tail -20 /var/log/nginx/error.log
-
-# Restart nginx
-sudo systemctl restart nginx
+sudo ./deploy.sh enable-internet-access
 ```
+
+This will:
+- Configure firewall to allow HTTP/HTTPS
+- Verify nginx is listening on all interfaces
+- Check that the configuration accepts all IPs
 
 ### Domain Configuration (Optional)
 

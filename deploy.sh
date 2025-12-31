@@ -2462,6 +2462,10 @@ EOF
     rm -f /etc/nginx/conf.d/default.conf 2>/dev/null || true
     mv /etc/nginx/conf.d/localhost.conf /etc/nginx/conf.d/localhost.conf.disabled 2>/dev/null || true
     
+    # Configure firewall for local network access
+    log_info "Configuring firewall to allow HTTP access from local network..."
+    configure_firewall
+    
     # Test and restart nginx
     log_info "Testing nginx configuration..."
     if nginx -t 2>&1; then
@@ -2470,15 +2474,65 @@ EOF
         systemctl restart nginx.service
         sleep 2
         
-        if systemctl is-active --quiet nginx.service && (ss -tlnp 2>/dev/null | grep -q ":80.*nginx"); then
-            log_success "Nginx is running and listening on port 80"
+        if systemctl is-active --quiet nginx.service; then
+            # Check if nginx is listening on all interfaces (0.0.0.0) or just localhost
+            local listen_info
+            listen_info=$(ss -tlnp 2>/dev/null | grep ":80" | head -1 || echo "")
+            
+            if echo "$listen_info" | grep -q "0.0.0.0:80\|\\*:80"; then
+                log_success "Nginx is running and listening on all interfaces (0.0.0.0:80)"
+            elif echo "$listen_info" | grep -q "127.0.0.1:80"; then
+                log_warning "Nginx is only listening on localhost (127.0.0.1:80)"
+                log_warning "This will prevent access from other machines!"
+                log_info "Checking nginx configuration..."
+            elif echo "$listen_info" | grep -q ":80"; then
+                log_success "Nginx is listening on port 80"
+            else
+                log_warning "Nginx may not be listening on port 80"
+            fi
+            
+            # Verify firewall allows HTTP
+            log_info "Verifying firewall allows HTTP (port 80)..."
+            if command -v firewall-cmd &> /dev/null && systemctl is-active --quiet firewalld 2>/dev/null; then
+                if firewall-cmd --list-services 2>/dev/null | grep -q "http"; then
+                    log_success "✓ Firewalld allows HTTP service"
+                else
+                    log_warning "HTTP not allowed in firewalld. Adding it..."
+                    firewall-cmd --permanent --add-service=http 2>/dev/null || true
+                    firewall-cmd --reload 2>/dev/null || true
+                    log_success "HTTP service added to firewalld"
+                fi
+            elif command -v ufw &> /dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+                if ufw status 2>/dev/null | grep -q "80/tcp"; then
+                    log_success "✓ UFW allows port 80"
+                else
+                    log_warning "Port 80 not allowed in UFW. Adding it..."
+                    ufw allow 80/tcp 2>/dev/null || true
+                    log_success "Port 80 added to UFW"
+                fi
+            else
+                log_info "No active firewall detected (or using iptables directly)"
+            fi
+            
+            # Get server IP for display
+            local server_ip
+            server_ip=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -1 || echo "")
+            if [[ -z "$server_ip" ]]; then
+                server_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "<your-server-ip>")
+            fi
+            
             log_info ""
             log_success "✓ CineStream is now accessible at:"
-            log_info "  - http://localhost/"
-            log_info "  - http://127.0.0.1/"
-            log_info "  - http://<your-server-ip>/"
+            log_info "  - http://localhost/ (from server)"
+            log_info "  - http://127.0.0.1/ (from server)"
+            if [[ -n "$server_ip" ]] && [[ "$server_ip" != "<your-server-ip>" ]]; then
+                log_info "  - http://$server_ip/ (from local network)"
+            else
+                log_info "  - http://<your-server-ip>/ (from local network)"
+                log_info "    Find your IP: ip addr show | grep inet"
+            fi
             log_info ""
-            log_info "To enable internet access: sudo ./deploy.sh enable-internet-access"
+            log_info "To enable full internet access: sudo ./deploy.sh enable-internet-access"
         else
             log_warning "Nginx started but may not be listening on port 80"
             log_info "Check: sudo systemctl status nginx && sudo ss -tlnp | grep :80"
@@ -2498,18 +2552,28 @@ enable_internet_access() {
     log_info "Configuring firewall for internet access..."
     configure_firewall
     
-    # 2. Ensure localhost configuration accepts all IPs (already done with server_name _)
+    # 2. Ensure nginx configuration accepts all IPs (already done with server_name _)
     log_info "Verifying Nginx configuration for internet access..."
-    if [[ ! -f "/etc/nginx/conf.d/localhost.conf" ]]; then
-        log_warning "localhost.conf not found. Creating it..."
+    if [[ ! -f "/etc/nginx/conf.d/cinestream.conf" ]] && [[ ! -f "/etc/nginx/conf.d/localhost.conf" ]]; then
+        log_warning "Nginx config not found. Creating it..."
         configure_nginx_localhost
     else
-        # Verify server_name is set to catch-all
-        if ! grep -q "server_name _" /etc/nginx/conf.d/localhost.conf 2>/dev/null; then
-            log_warning "localhost.conf exists but server_name is not catch-all. Updating..."
-            configure_nginx_localhost
-        else
-            log_success "Nginx configuration already accepts all IPs"
+        # Check cinestream.conf (new) or localhost.conf (old)
+        local nginx_conf=""
+        if [[ -f "/etc/nginx/conf.d/cinestream.conf" ]]; then
+            nginx_conf="/etc/nginx/conf.d/cinestream.conf"
+        elif [[ -f "/etc/nginx/conf.d/localhost.conf" ]]; then
+            nginx_conf="/etc/nginx/conf.d/localhost.conf"
+        fi
+        
+        if [[ -n "$nginx_conf" ]]; then
+            # Verify server_name is set to catch-all
+            if ! grep -q "server_name _" "$nginx_conf" 2>/dev/null; then
+                log_warning "Nginx config exists but server_name is not catch-all. Updating..."
+                configure_nginx_localhost
+            else
+                log_success "Nginx configuration already accepts all IPs"
+            fi
         fi
     fi
     
