@@ -737,7 +737,7 @@ configure_nginx() {
     # Create upstream configuration
     local upstream_block=""
     for port in $(seq ${START_PORT} ${END_PORT}); do
-        upstream_block="${upstream_block}    server 127.0.0.1:${port};\n"
+        upstream_block="${upstream_block}    server 127.0.0.1:${port};"$'\n'
     done
     
     # Check if domain is configured
@@ -836,7 +836,7 @@ set_domain() {
     # Create upstream block
     local upstream_block=""
     for port in $(seq ${START_PORT} ${END_PORT}); do
-        upstream_block="${upstream_block}    server 127.0.0.1:${port};\n"
+        upstream_block="${upstream_block}    server 127.0.0.1:${port};"$'\n'
     done
     
     # Update Nginx configuration
@@ -1441,7 +1441,32 @@ main() {
             ;;
         reconfigure-nginx)
             check_root
-            configure_nginx "${2:-${APP_NAME}}"
+            local app_name="${2:-${APP_NAME}}"
+            local app_dir="/var/www/${app_name}"
+            
+            if [[ ! -d "$app_dir" ]] || [[ ! -f "${app_dir}/.deploy_config" ]]; then
+                log_error "Application ${app_name} not found at ${app_dir}"
+                exit 1
+            fi
+            
+            source "${app_dir}/.deploy_config"
+            log_info "Current config: APP_NAME=${APP_NAME}, DOMAIN=${DOMAIN:-not set}, START_PORT=${START_PORT}, END_PORT=${END_PORT}"
+            
+            # Force regenerate config
+            configure_nginx "${app_name}"
+            
+            # Verify the config was created correctly
+            if [[ -f "/etc/nginx/conf.d/${app_name}.conf" ]]; then
+                if grep -q "location /${app_name}/" "/etc/nginx/conf.d/${app_name}.conf"; then
+                    log_info "Nginx config regenerated successfully with /${app_name}/ location block"
+                else
+                    log_error "Config file exists but location block is missing!"
+                    log_error "Config file content:"
+                    cat "/etc/nginx/conf.d/${app_name}.conf"
+                fi
+            else
+                log_error "Config file was not created!"
+            fi
             ;;
         test-backend)
             test_backend "${2:-${APP_NAME}}"
