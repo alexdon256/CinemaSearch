@@ -771,8 +771,17 @@ server {
 }
 EOF
     
-    # Test and reload Nginx
-    nginx -t && systemctl reload nginx.service
+    # Test and start/reload Nginx
+    if nginx -t; then
+        if systemctl is-active --quiet nginx.service; then
+            systemctl reload nginx.service
+        else
+            systemctl start nginx.service
+        fi
+    else
+        log_error "Nginx configuration test failed"
+        return 1
+    fi
     
     log_info "Nginx configured for ${app_name}"
 }
@@ -889,8 +898,17 @@ server {
 }
 EOF
     
-    # Test and reload Nginx
-    nginx -t && systemctl reload nginx.service
+    # Test and start/reload Nginx
+    if nginx -t; then
+        if systemctl is-active --quiet nginx.service; then
+            systemctl reload nginx.service
+        else
+            systemctl start nginx.service
+        fi
+    else
+        log_error "Nginx configuration test failed"
+        return 1
+    fi
     
     log_info "Domain ${domain} configured for ${app_name}"
     log_warn "SSL certificate not yet installed. Run: $0 install-ssl ${domain} ${app_name}"
@@ -947,8 +965,17 @@ install_ssl() {
         sed -i "s|# ssl_certificate|ssl_certificate|g" /etc/nginx/conf.d/${app_name}.conf
         sed -i "s|/etc/letsencrypt/live/\${domain}/|/etc/letsencrypt/live/${domain}/|g" /etc/nginx/conf.d/${app_name}.conf
         
-        # Test and reload Nginx
-        nginx -t && systemctl reload nginx.service
+    # Test and start/reload Nginx
+    if nginx -t; then
+        if systemctl is-active --quiet nginx.service; then
+            systemctl reload nginx.service
+        else
+            systemctl start nginx.service
+        fi
+    else
+        log_error "Nginx configuration test failed"
+        return 1
+    fi
         
         log_info "SSL certificate installed and configured"
         log_info "HTTPS is now available at https://${domain}"
@@ -1102,8 +1129,17 @@ uninit_server() {
     rm -f /etc/nginx/conf.d/${APP_NAME}.conf
     rm -f /etc/nginx/conf.d/*.conf  # Remove all app configs
     
-    # Test and reload Nginx
-    nginx -t && systemctl reload nginx.service 2>/dev/null || true
+    # Test and start/reload Nginx
+    if nginx -t; then
+        if systemctl is-active --quiet nginx.service; then
+            systemctl reload nginx.service
+        else
+            systemctl start nginx.service
+        fi
+    else
+        log_error "Nginx configuration test failed"
+        return 1
+    fi 2>/dev/null || true
     
     # Remove application directories
     rm -rf /var/www/${APP_NAME}
@@ -1155,8 +1191,10 @@ show_status() {
     
     echo ""
     echo "=== Application Workers ==="
+    local apps_found=0
     for app_dir in /var/www/*/; do
-        if [[ -f "${app_dir}/.deploy_config" ]]; then
+        if [[ -d "$app_dir" ]] && [[ -f "${app_dir}/.deploy_config" ]]; then
+            apps_found=1
             source "${app_dir}/.deploy_config"
             local running=0
             for port in $(seq ${START_PORT} ${END_PORT}); do
@@ -1165,11 +1203,14 @@ show_status() {
                 fi
             done
             echo -e "${APP_NAME}: ${running}/${WORKER_COUNT} workers running (ports ${START_PORT}-${END_PORT})"
-            if [[ -n "$DOMAIN" ]]; then
+            if [[ -n "$DOMAIN" ]] && [[ "$DOMAIN" != "" ]]; then
                 echo "  Domain: ${DOMAIN}"
             fi
         fi
     done
+    if [[ $apps_found -eq 0 ]]; then
+        echo "No applications deployed yet"
+    fi
     
     echo ""
     echo "=== CPU Affinity ==="
