@@ -1558,13 +1558,36 @@ start_all() {
     log_step "Starting all services..."
     systemctl start mongodb.service
     systemctl start nginx.service
-    for target in /etc/systemd/system/*.target; do
-        if [[ -f "$target" ]] && grep -q "Application Target" "$target" 2>/dev/null; then
-            local target_name=$(basename "$target" .target)
-            systemctl start "${target_name}.target" 2>/dev/null || true
+    
+    # Check if services exist, if not, create them
+    local services_created=false
+    for app_dir in /var/www/*/; do
+        if [[ -d "$app_dir" ]] && [[ -f "${app_dir}/.deploy_config" ]]; then
+            source "${app_dir}/.deploy_config"
+            local app_name="${APP_NAME}"
+            
+            # Check if service template exists
+            if [[ ! -f "/etc/systemd/system/${app_name}@.service" ]]; then
+                log_warn "Services for ${app_name} don't exist. Creating them..."
+                create_worker_services "${app_name}"
+                services_created=true
+            else
+                # Services exist, try to start them
+                for target in /etc/systemd/system/${app_name}.target; do
+                    if [[ -f "$target" ]] && grep -q "Application Target" "$target" 2>/dev/null; then
+                        local target_name=$(basename "$target" .target)
+                        systemctl start "${target_name}.target" 2>/dev/null || true
+                    fi
+                done
+            fi
         fi
     done
-    log_info "All services started"
+    
+    if [[ "$services_created" == "true" ]]; then
+        log_info "Services created and started"
+    else
+        log_info "All services started"
+    fi
 }
 
 # Stop all services
