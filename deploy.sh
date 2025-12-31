@@ -752,16 +752,20 @@ server {
         return 301 /${app_name}/;
     }
     
+    # Handle /${app_name} without trailing slash - redirect to with slash
+    location = /${app_name} {
+        return 301 /${app_name}/;
+    }
+    
     # Serve application at /${app_name}/ subpath
     location /${app_name}/ {
-        proxy_pass http://${app_name}_backend/;
+        # Strip /${app_name}/ prefix before proxying to backend
+        rewrite ^/${app_name}/(.*) /\$1 break;
+        proxy_pass http://${app_name}_backend;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        
-        # Remove /${app_name} prefix from request
-        rewrite ^/${app_name}(.*) \$1 break;
     }
     
     # Allow Let's Encrypt ACME challenge
@@ -849,16 +853,20 @@ server {
         return 301 /${app_name}/;
     }
     
+    # Handle /${app_name} without trailing slash - redirect to with slash
+    location = /${app_name} {
+        return 301 /${app_name}/;
+    }
+    
     # Serve application at /${app_name}/ subpath
     location /${app_name}/ {
-        proxy_pass http://${app_name}_backend/;
+        # Strip /${app_name}/ prefix before proxying to backend
+        rewrite ^/${app_name}/(.*) /\$1 break;
+        proxy_pass http://${app_name}_backend;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        
-        # Remove /${app_name} prefix from request
-        rewrite ^/${app_name}(.*) \$1 break;
     }
     
     # Allow Let's Encrypt ACME challenge
@@ -997,20 +1005,48 @@ enable_autostart() {
     systemctl enable mongodb.service
     systemctl enable nginx.service
     
-    # Enable all application targets
-    for target in /etc/systemd/system/*.target; do
-        if [[ -f "$target" ]] && grep -q "Description.*Application Target" "$target" 2>/dev/null; then
-            local target_name=$(basename "$target" .target)
-            systemctl enable "${target_name}.target"
+    # Enable all application targets and their worker services
+    for app_dir in /var/www/*/; do
+        if [[ -d "$app_dir" ]] && [[ -f "${app_dir}/.deploy_config" ]]; then
+            source "${app_dir}/.deploy_config"
+            local target_name="${APP_NAME}"
+            
+            # Enable application target
+            if [[ -f "/etc/systemd/system/${target_name}.target" ]]; then
+                systemctl enable "${target_name}.target" 2>/dev/null || true
+            fi
+            
+            # Enable startup service
+            if [[ -f "/etc/systemd/system/${target_name}-startup.service" ]]; then
+                systemctl enable "${target_name}-startup.service" 2>/dev/null || true
+            fi
+            
+            # Enable all worker services for this app
+            log_info "Enabling autostart for ${WORKER_COUNT} ${target_name} workers (ports ${START_PORT}-${END_PORT})..."
+            for port in $(seq ${START_PORT} ${END_PORT}); do
+                systemctl enable "${target_name}@${port}.service" 2>/dev/null || true
+            done
+        fi
+    done
+    
+    # Also enable any worker services found in systemd (fallback)
+    for service in /etc/systemd/system/${APP_NAME}@*.service; do
+        if [[ -f "$service" ]]; then
+            local service_name=$(basename "$service")
+            systemctl enable "${service_name}" 2>/dev/null || true
         fi
     done
     
     # Enable master startup target
     if [[ -f /etc/systemd/system/cinestream.target ]]; then
-        systemctl enable cinestream.target
+        systemctl enable cinestream.target 2>/dev/null || true
     fi
     
-    log_info "Autostart enabled for all services"
+    log_info "Autostart enabled for all services and workers"
+    
+    # Also start all services now
+    log_step "Starting all services..."
+    start_all
 }
 
 # Initialize server
