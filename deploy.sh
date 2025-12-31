@@ -908,6 +908,43 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
     
+    # Proxy application routes that don't have /${app_name}/ prefix
+    # Language switching
+    location ^~ /set-language/ {
+        proxy_pass http://${app_name}_backend;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
+    # API endpoints
+    location ^~ /api/ {
+        proxy_pass http://${app_name}_backend;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
+    # Terms page
+    location = /terms {
+        proxy_pass http://${app_name}_backend;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
+    # Static files (movie images)
+    location ^~ /static/ {
+        proxy_pass http://${app_name}_backend;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
     # Allow Let's Encrypt ACME challenge
     location /.well-known/acme-challenge/ {
         root /var/www/html;
@@ -1010,6 +1047,43 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
     
+    # Proxy application routes that don't have /${app_name}/ prefix
+    # Language switching
+    location ^~ /set-language/ {
+        proxy_pass http://${app_name}_backend;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
+    # API endpoints
+    location ^~ /api/ {
+        proxy_pass http://${app_name}_backend;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
+    # Terms page
+    location = /terms {
+        proxy_pass http://${app_name}_backend;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
+    # Static files (movie images)
+    location ^~ /static/ {
+        proxy_pass http://${app_name}_backend;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
     # Allow Let's Encrypt ACME challenge
     location /.well-known/acme-challenge/ {
         root /var/www/html;
@@ -1031,7 +1105,7 @@ server {
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-XSS-Protection "1; mode=block" always;
     
-    # Proxy to backend
+    # Proxy all requests to backend (domain access uses root path)
     location / {
         proxy_pass http://${app_name}_backend;
         proxy_set_header Host \$host;
