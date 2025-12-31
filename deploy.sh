@@ -3253,17 +3253,40 @@ EOF
             # Check if nginx is listening on port 80
             if ! ss -tlnp 2>/dev/null | grep -q ":80.*nginx" && ! netstat -tlnp 2>/dev/null | grep -q ":80.*nginx"; then
                 log_error "Nginx is not listening on port 80!"
-                log_info "Diagnosing the issue..."
+                log_error ""
+                log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                log_error "DIAGNOSING NGINX ISSUE..."
+                log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                log_info ""
+                
+                # First, try to start nginx if it's not running
+                if ! systemctl is-active --quiet nginx.service 2>/dev/null; then
+                    log_warning "Nginx service is not running. Attempting to start..."
+                    if systemctl start nginx.service 2>&1; then
+                        sleep 2
+                        if systemctl is-active --quiet nginx.service 2>/dev/null; then
+                            log_success "Nginx started successfully!"
+                            # Check again if it's listening
+                            if ss -tlnp 2>/dev/null | grep -q ":80.*nginx" || netstat -tlnp 2>/dev/null | grep -q ":80.*nginx"; then
+                                log_success "Nginx is now listening on port 80!"
+                                # Continue with the test
+                            else
+                                log_warning "Nginx is running but still not listening on port 80"
+                            fi
+                        else
+                            log_error "Failed to start nginx service"
+                        fi
+                    else
+                        log_error "Could not start nginx service"
+                    fi
+                fi
                 
                 # Check nginx status
-                local nginx_status
-                nginx_status=$(systemctl status nginx.service --no-pager 2>/dev/null | head -10 || echo "")
-                if [[ -n "$nginx_status" ]]; then
-                    log_info "Nginx service status:"
-                    echo "$nginx_status" | while IFS= read -r line; do
-                        log_info "  $line"
-                    done
-                fi
+                log_info ""
+                log_info "Nginx service status:"
+                systemctl status nginx.service --no-pager 2>/dev/null | head -15 | while IFS= read -r line; do
+                    log_info "  $line"
+                done
                 
                 # Test nginx config
                 log_info ""
@@ -3271,6 +3294,15 @@ EOF
                 local nginx_test_output
                 nginx_test_output=$(nginx -t 2>&1)
                 local nginx_test_status=$?
+                
+                # Show the test output
+                echo "$nginx_test_output" | while IFS= read -r line; do
+                    if echo "$line" | grep -q "error\|failed\|emerg"; then
+                        log_error "  $line"
+                    else
+                        log_info "  $line"
+                    fi
+                done
                 
                 if [[ $nginx_test_status -ne 0 ]]; then
                     log_error "Nginx configuration test FAILED!"
