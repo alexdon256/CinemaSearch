@@ -1760,6 +1760,109 @@ check_load_distribution() {
     echo "  sudo tail -f /var/log/nginx/access.log | grep '/${app_name}/'"
 }
 
+# Verify all workers are running and accessible
+verify_workers() {
+    local app_name="${1:-${APP_NAME}}"
+    local app_dir="/var/www/${app_name}"
+    
+    if [[ ! -d "$app_dir" ]] || [[ ! -f "${app_dir}/.deploy_config" ]]; then
+        log_error "Application ${app_name} not found at ${app_dir}"
+        return 1
+    fi
+    
+    source "${app_dir}/.deploy_config"
+    
+    log_step "Verifying workers for ${app_name}..."
+    
+    echo ""
+    echo "=== Worker Status ==="
+    local running_count=0
+    local failed_count=0
+    
+    for port in $(seq ${START_PORT} ${END_PORT}); do
+        local service_name="${app_name}@${port}.service"
+        local status=$(systemctl is-active "$service_name" 2>/dev/null || echo "inactive")
+        
+        if [[ "$status" == "active" ]]; then
+            # Test if the worker actually responds
+            local response=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://127.0.0.1:${port}/" 2>/dev/null || echo "000")
+            if [[ "$response" == "200" ]]; then
+                echo "  Port ${port}: ✓ Running and responding (HTTP ${response})"
+                ((running_count++))
+            else
+                echo "  Port ${port}: ⚠ Running but not responding (HTTP ${response})"
+                ((failed_count++))
+            fi
+        else
+            echo "  Port ${port}: ✗ Not running (${status})"
+            ((failed_count++))
+        fi
+    done
+    
+    echo ""
+    echo "Summary: ${running_count} workers running and responding, ${failed_count} workers failed or not running"
+    
+    if [[ $failed_count -gt 0 ]]; then
+        echo ""
+        log_warn "Some workers are not running or not responding!"
+        log_info "To restart all workers: sudo systemctl restart ${app_name}.target"
+    fi
+    
+    echo ""
+    echo "=== Nginx Upstream Configuration ==="
+    if [[ -f "/etc/nginx/conf.d/${app_name}.conf" ]]; then
+        local upstream_servers=$(grep -A 25 "upstream ${app_name}_backend" "/etc/nginx/conf.d/${app_name}.conf" | grep "server" | wc -l)
+        echo "Upstream servers configured: ${upstream_servers}"
+        
+        local lb_method=$(grep -A 2 "upstream ${app_name}_backend" "/etc/nginx/conf.d/${app_name}.conf" | grep -E "ip_hash|least_conn|fair" | head -1 | awk '{print $1}' || echo "round-robin (default)")
+        echo "Load balancing method: ${lb_method}"
+        
+        if [[ "$upstream_servers" != "${WORKER_COUNT}" ]]; then
+            log_warn "Mismatch: ${upstream_servers} upstream servers configured but ${WORKER_COUNT} workers expected"
+            log_info "Regenerate Nginx config: sudo bash ./deploy.sh reconfigure-nginx"
+        fi
+    else
+        log_error "Nginx config not found: /etc/nginx/conf.d/${app_name}.conf"
+        log_info "Generate config: sudo bash ./deploy.sh reconfigure-nginx"
+    fi
+    
+    echo ""
+    echo "=== Testing Load Distribution ==="
+    log_info "Making 20 test requests to see distribution..."
+    
+    for i in {1..20}; do
+        curl -s -o /dev/null "http://localhost/${app_name}/" 2>/dev/null
+        sleep 0.1
+    done
+    
+    echo ""
+    echo "Checking which workers handled requests (last 30 seconds):"
+    local total_reqs=0
+    for port in $(seq ${START_PORT} ${END_PORT}); do
+        local req_count=$(sudo journalctl -u ${app_name}@${port}.service --since "30 seconds ago" --no-pager 2>/dev/null | grep -cE "GET|POST" || echo "0")
+        # Strip whitespace and validate
+        req_count=$(echo "$req_count" | tr -d '[:space:]')
+        if [[ -z "$req_count" ]] || ! [[ "$req_count" =~ ^[0-9]+$ ]]; then
+            req_count=0
+        fi
+        if [[ "$req_count" -gt 0 ]]; then
+            echo "  Port ${port}: ${req_count} requests"
+            total_reqs=$((total_reqs + req_count))
+        fi
+    done
+    
+    if [[ $total_reqs -eq 0 ]]; then
+        log_warn "No requests found in worker logs"
+        log_info "Make sure you're accessing the application and check again"
+    else
+        echo ""
+        echo "Total requests: ${total_reqs}"
+        if [[ $total_reqs -lt 10 ]]; then
+            log_warn "Only ${total_reqs} requests found - make more requests to see distribution"
+        fi
+    fi
+}
+
 # Test backend connectivity
 test_backend() {
     local app_name="${1:-${APP_NAME}}"
@@ -2026,6 +2129,9 @@ main() {
         check-load-distribution)
             check_load_distribution "${2:-${APP_NAME}}"
             ;;
+        verify-workers)
+            verify_workers "${2:-${APP_NAME}}"
+            ;;
         *)
             echo "CineStream Deployment Script"
             echo ""
@@ -2044,6 +2150,8 @@ main() {
             echo "  test-backend            Test backend workers and Nginx config"
             echo "  check-duplicates        Check for duplicate systemd services"
             echo "  test-load-balancing     Test load balancing distribution"
+            echo "  check-load-distribution Check actual load distribution from logs"
+            echo "  verify-workers         Verify all workers are running and accessible"
             echo ""
             exit 1
             ;;
