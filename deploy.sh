@@ -2685,80 +2685,15 @@ server {
         return 404;
     }
     
-    # CineStream application at /cinestream subpath
-    location /cinestream/ {
-        limit_req zone=general_limit burst=20 nodelay;
-        limit_conn conn_limit 10;
-        
-        # Strip /cinestream prefix before proxying to backend
-        rewrite ^/cinestream(.*)$ \$1 break;
-        
-        proxy_pass http://${UPSTREAM_NAME}_localhost;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Forwarded-Host \$server_name;
-        
-        # WebSocket support
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-        proxy_intercept_errors off;
+    # Block /cinestream access via IP/localhost when domain is configured
+    # Application should be accessed via the configured domain instead
+    location /cinestream {
+        return 404;
     }
     
-    # Redirect /cinestream (without trailing slash) to /cinestream/
-    location = /cinestream {
-        return 301 \$scheme://\$host/cinestream/;
-    }
-    
-    # API endpoints under /cinestream
-    location /cinestream/api/ {
-        limit_req zone=api_limit burst=10 nodelay;
-        limit_conn conn_limit_per_ip 5;
-        
-        # Strip /cinestream prefix before proxying to backend
-        rewrite ^/cinestream(.*)$ \$1 break;
-        
-        proxy_pass http://${UPSTREAM_NAME}_localhost;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Forwarded-Host \$server_name;
-        
-        # Timeouts
-        proxy_connect_timeout 30s;
-        proxy_send_timeout 30s;
-        proxy_read_timeout 30s;
-        
-        proxy_intercept_errors off;
-    }
-    
-    # Static files under /cinestream
-    location /cinestream/static/ {
-        # Strip /cinestream prefix before proxying to backend
-        rewrite ^/cinestream(.*)$ \$1 break;
-        
-        proxy_pass http://${UPSTREAM_NAME}_localhost;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        
-        proxy_cache_valid 200 30d;
-        add_header Cache-Control "public, immutable";
-        
-        proxy_intercept_errors off;
-    }
-    
-    # Root location - redirect to /cinestream
+    # Root location - redirect to domain
     location = / {
-        return 301 \$scheme://\$host/cinestream/;
+        return 301 https://${DOMAIN_NAME}/;
     }
 }
 EOF
@@ -2840,6 +2775,26 @@ server {
         deny all;
         return 404;
     }
+EOF
+    
+        # If domain is configured, block /cinestream access via IP/localhost
+        if [[ -n "$DOMAIN_NAME" ]]; then
+            cat >> "$LOCALHOST_CONF" <<EOF
+    
+    # Block /cinestream access via IP/localhost when domain is configured
+    # Application should be accessed via the configured domain instead
+    location /cinestream {
+        return 404;
+    }
+    
+    # Root location - redirect to domain
+    location = / {
+        return 301 https://${DOMAIN_NAME}/;
+    }
+EOF
+        else
+            # Domain not configured - allow /cinestream access via IP/localhost
+            cat >> "$LOCALHOST_CONF" <<EOF
     
     # CineStream application at /cinestream subpath
     location /cinestream/ {
@@ -2916,6 +2871,10 @@ server {
     location = / {
         return 301 \$scheme://\$host/cinestream/;
     }
+EOF
+        fi
+        
+        cat >> "$LOCALHOST_CONF" <<EOF
 }
 EOF
         log_info "HTTPS server configured with self-signed certificate"
