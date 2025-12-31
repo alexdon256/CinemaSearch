@@ -888,6 +888,12 @@ server {
     listen 80 default_server;
     server_name _ localhost 127.0.0.1;
     
+    # Use real client IP for ip_hash (important for load balancing)
+    # This ensures ip_hash uses the actual client IP, not proxy IP
+    set_real_ip_from 0.0.0.0/0;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+    
     # Redirect root to /${app_name}/ for localhost access
     location = / {
         return 301 /${app_name}/;
@@ -1094,6 +1100,11 @@ server {
 server {
     listen 443 ssl http2;
     server_name ${domain};
+    
+    # Use real client IP for ip_hash (important for load balancing)
+    set_real_ip_from 0.0.0.0/0;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
     
     # SSL configuration (placeholders - will be updated by install-ssl)
     # ssl_certificate /etc/letsencrypt/live/${domain}/fullchain.pem;
