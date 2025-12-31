@@ -85,43 +85,103 @@ install_mongodb() {
         return 0
     fi
     
-    # Try to install via yay (AUR)
-    if command -v yay &> /dev/null; then
-        log_info "Installing MongoDB via yay (mongodb-bin)..."
-        yay -S --noconfirm mongodb-bin || {
-            log_warn "yay installation failed, trying official repositories..."
-            pacman -S --needed --noconfirm mongodb-tools || {
-                log_warn "Official repo installation failed, trying manual download..."
-                install_mongodb_manual
-                return 0
-            }
-        }
+    # Note: yay cannot run as root, so we skip AUR and use official repos
+    # Try to find MongoDB server package in official repos
+    log_info "Installing MongoDB from official repositories..."
+    
+    MONGODB_BIN=""
+    MONGOSH_BIN=""
+    
+    # First check if mongod already exists
+    if command -v mongod &>/dev/null; then
+        MONGODB_BIN=$(command -v mongod)
+        MONGOSH_BIN=$(command -v mongosh 2>/dev/null || echo "")
+        log_info "MongoDB already installed at: ${MONGODB_BIN}"
+    elif [[ -f /usr/bin/mongod ]]; then
+        MONGODB_BIN="/usr/bin/mongod"
+        MONGOSH_BIN="/usr/bin/mongosh"
+        log_info "Found MongoDB at: ${MONGODB_BIN}"
+    elif [[ -f /opt/mongodb/bin/mongod ]]; then
+        MONGODB_BIN="/opt/mongodb/bin/mongod"
+        MONGOSH_BIN="/opt/mongodb/bin/mongosh"
+        log_info "Found MongoDB at: ${MONGODB_BIN}"
     else
-        log_warn "yay not available, trying official repositories..."
-        pacman -S --needed --noconfirm mongodb-tools || {
-            log_warn "Official repo installation failed, trying manual download..."
-            install_mongodb_manual
-            return 0
-        }
+        # Try to install from repos
+        if pacman -Si mongodb &>/dev/null; then
+            log_info "Installing mongodb package..."
+            pacman -S --needed --noconfirm mongodb
+            MONGODB_BIN="/usr/bin/mongod"
+            MONGOSH_BIN="/usr/bin/mongosh"
+        elif pacman -Si mongodb-bin &>/dev/null; then
+            log_info "Installing mongodb-bin package..."
+            pacman -S --needed --noconfirm mongodb-bin
+            MONGODB_BIN="/usr/bin/mongod"
+            MONGOSH_BIN="/usr/bin/mongosh"
+        else
+            # mongodb-tools-bin was already installed (tools only)
+            log_warn "MongoDB server package not found in official repos"
+            log_warn "Only mongodb-tools-bin is available (tools only, no server)"
+            
+            # Check if mongod exists after tools installation
+            if command -v mongod &>/dev/null; then
+                MONGODB_BIN=$(command -v mongod)
+                MONGOSH_BIN=$(command -v mongosh 2>/dev/null || echo "")
+            elif [[ -f /opt/mongodb/bin/mongod ]]; then
+                MONGODB_BIN="/opt/mongodb/bin/mongod"
+                MONGOSH_BIN="/opt/mongodb/bin/mongosh"
+            else
+                log_error "MongoDB server (mongod) not found."
+                log_error "mongodb-tools-bin only provides tools, not the server."
+                install_mongodb_manual
+                return 1
+            fi
+        fi
+    fi
+    
+    # Create mongodb user if it doesn't exist
+    if ! id mongodb &>/dev/null; then
+        log_info "Creating mongodb user..."
+        useradd -r -s /bin/false -d /var/lib/mongodb mongodb 2>/dev/null || true
     fi
     
     # Create MongoDB directories
+    mkdir -p /var/lib/mongodb
+    mkdir -p /var/log/mongodb
+    chown -R mongodb:mongodb /var/lib/mongodb /var/log/mongodb 2>/dev/null || true
+    
+    # Also create /opt/mongodb for compatibility
     mkdir -p /opt/mongodb/{data,logs}
     chown -R mongodb:mongodb /opt/mongodb 2>/dev/null || true
     
-    # Create systemd service if it doesn't exist
-    if [[ ! -f /etc/systemd/system/mongodb.service ]]; then
-        cat > /etc/systemd/system/mongodb.service <<EOF
+    # Detect MongoDB binary path
+    if [[ -z "$MONGODB_BIN" ]]; then
+        if command -v mongod &>/dev/null; then
+            MONGODB_BIN=$(command -v mongod)
+        elif [[ -f /usr/bin/mongod ]]; then
+            MONGODB_BIN="/usr/bin/mongod"
+        elif [[ -f /opt/mongodb/bin/mongod ]]; then
+            MONGODB_BIN="/opt/mongodb/bin/mongod"
+        else
+            log_error "Cannot find mongod binary"
+            install_mongodb_manual
+            return 1
+        fi
+    fi
+    
+    log_info "Using MongoDB binary: ${MONGODB_BIN}"
+    
+    # Create or update systemd service (update to fix path if needed)
+    cat > /etc/systemd/system/mongodb.service <<EOF
 [Unit]
 Description=MongoDB Database Server
 After=network.target
 
 [Service]
-Type=forking
+Type=simple
 User=mongodb
 Group=mongodb
 CPUAffinity=${P_CORES}
-ExecStart=/opt/mongodb/bin/mongod --dbpath=/opt/mongodb/data --logpath=/opt/mongodb/logs/mongod.log --logappend --fork
+ExecStart=${MONGODB_BIN} --dbpath=/var/lib/mongodb --logpath=/var/log/mongodb/mongod.log --logappend
 ExecStartPost=/bin/bash -c 'sleep 2 && /usr/local/bin/cinestream-set-cpu-affinity.sh mongodb || true'
 Restart=on-failure
 RestartSec=10
@@ -129,26 +189,57 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 EOF
-        systemctl daemon-reload
-    fi
+    systemctl daemon-reload
     
     # Start MongoDB
     systemctl enable mongodb.service
     systemctl start mongodb.service
     
-    log_info "MongoDB installed and started"
+    # Wait a moment and check if it started
+    sleep 2
+    if systemctl is-active --quiet mongodb.service; then
+        log_info "MongoDB installed and started successfully"
+    else
+        log_error "MongoDB failed to start. Check logs: journalctl -u mongodb.service -n 50"
+        log_error "Common issues:"
+        log_error "  - Missing mongodb user: useradd -r -s /bin/false mongodb"
+        log_error "  - Permission issues: chown -R mongodb:mongodb /var/lib/mongodb /var/log/mongodb"
+        log_error "  - Missing directories: mkdir -p /var/lib/mongodb /var/log/mongodb"
+        return 1
+    fi
 }
 
 # Manual MongoDB installation fallback
 install_mongodb_manual() {
-    log_warn "Attempting manual MongoDB installation..."
-    
-    # This is a fallback - user should install MongoDB manually
-    log_error "MongoDB installation failed. Please install MongoDB manually:"
-    log_error "  1. Download from https://www.mongodb.com/try/download/community"
-    log_error "  2. Extract to /opt/mongodb"
-    log_error "  3. Create /opt/mongodb/data and /opt/mongodb/logs directories"
-    log_error "  4. Run: sudo systemctl start mongodb.service"
+    log_error ""
+    log_error "=========================================="
+    log_error "MongoDB Server Installation Required"
+    log_error "=========================================="
+    log_error ""
+    log_error "The MongoDB server (mongod) is not installed."
+    log_error "Only mongodb-tools-bin is available in CachyOS repos (tools only)."
+    log_error ""
+    log_error "To install MongoDB server manually:"
+    log_error ""
+    log_error "Option 1: Download and install MongoDB Community Edition"
+    log_error "  1. Visit: https://www.mongodb.com/try/download/community"
+    log_error "  2. Select: Linux, x86_64, tgz"
+    log_error "  3. Download and extract:"
+    log_error "     cd /tmp"
+    log_error "     wget https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-*.tgz"
+    log_error "     tar -xzf mongodb-linux-x86_64-*.tgz"
+    log_error "     sudo mv mongodb-linux-x86_64-* /opt/mongodb"
+    log_error "  4. Create directories:"
+    log_error "     sudo mkdir -p /var/lib/mongodb /var/log/mongodb"
+    log_error "     sudo chown -R mongodb:mongodb /var/lib/mongodb /var/log/mongodb"
+    log_error "  5. Re-run: sudo ./deploy.sh init-server"
+    log_error ""
+    log_error "Option 2: Use a non-root user to install via yay (AUR)"
+    log_error "  1. Create a regular user (if not exists): useradd -m -s /bin/bash builduser"
+    log_error "  2. Install yay as that user: cd /tmp && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si"
+    log_error "  3. Install MongoDB: yay -S mongodb-bin"
+    log_error "  4. Re-run: sudo ./deploy.sh init-server"
+    log_error ""
     exit 1
 }
 
