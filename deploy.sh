@@ -1805,7 +1805,59 @@ verify_workers() {
     if [[ $failed_count -gt 0 ]]; then
         echo ""
         log_warn "Some workers are not running or not responding!"
-        log_info "To restart all workers: sudo systemctl restart ${app_name}.target"
+        echo ""
+        echo "Attempting to start all workers..."
+        for port in $(seq ${START_PORT} ${END_PORT}); do
+            local service_name="${app_name}@${port}.service"
+            local status=$(systemctl is-active "$service_name" 2>/dev/null || echo "inactive")
+            if [[ "$status" != "active" ]]; then
+                log_info "Starting ${service_name}..."
+                systemctl enable "${service_name}" 2>/dev/null || true
+                systemctl start "${service_name}" 2>/dev/null || true
+                sleep 0.5
+            fi
+        done
+        
+        echo ""
+        log_info "Waiting 2 seconds for services to start..."
+        sleep 2
+        
+        echo ""
+        echo "=== Re-checking Worker Status ==="
+        running_count=0
+        failed_count=0
+        for port in $(seq ${START_PORT} ${END_PORT}); do
+            local service_name="${app_name}@${port}.service"
+            local status=$(systemctl is-active "$service_name" 2>/dev/null || echo "inactive")
+            
+            if [[ "$status" == "active" ]]; then
+                local response=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://127.0.0.1:${port}/" 2>/dev/null || echo "000")
+                if [[ "$response" == "200" ]]; then
+                    echo "  Port ${port}: ✓ Running and responding (HTTP ${response})"
+                    ((running_count++))
+                else
+                    echo "  Port ${port}: ⚠ Running but not responding (HTTP ${response})"
+                    ((failed_count++))
+                fi
+            else
+                echo "  Port ${port}: ✗ Not running (${status})"
+                # Check why it failed
+                local error=$(systemctl status "$service_name" --no-pager -l 2>/dev/null | grep -i "error\|failed" | head -1 || echo "")
+                if [[ -n "$error" ]]; then
+                    echo "    Error: ${error}"
+                fi
+                ((failed_count++))
+            fi
+        done
+        
+        echo ""
+        echo "After restart: ${running_count} workers running, ${failed_count} workers failed"
+        
+        if [[ $failed_count -gt 0 ]]; then
+            echo ""
+            log_warn "Some workers still failed to start. Check logs:"
+            echo "  sudo journalctl -u ${app_name}@8002.service -n 20 --no-pager"
+        fi
     fi
     
     echo ""
