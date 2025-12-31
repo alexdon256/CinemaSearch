@@ -1649,6 +1649,100 @@ test_load_balancing() {
     fi
 }
 
+# Check actual load distribution from Nginx logs
+check_load_distribution() {
+    local app_name="${1:-${APP_NAME}}"
+    local app_dir="/var/www/${app_name}"
+    
+    if [[ ! -d "$app_dir" ]] || [[ ! -f "${app_dir}/.deploy_config" ]]; then
+        log_error "Application ${app_name} not found at ${app_dir}"
+        return 1
+    fi
+    
+    source "${app_dir}/.deploy_config"
+    
+    log_step "Checking load distribution for ${app_name}..."
+    
+    echo ""
+    echo "=== Worker Activity (Last 10 minutes) ==="
+    local total_requests=0
+    declare -A port_counts
+    
+    for port in $(seq ${START_PORT} ${END_PORT}); do
+        # Check worker logs for HTTP requests (GET/POST)
+        local log_entries=$(sudo journalctl -u ${app_name}@${port}.service --since "10 minutes ago" --no-pager 2>/dev/null | grep -cE "GET|POST" || echo "0")
+        if [[ "$log_entries" -gt 0 ]]; then
+            port_counts[$port]=$log_entries
+            total_requests=$((total_requests + log_entries))
+        fi
+    done
+    
+    if [[ $total_requests -eq 0 ]]; then
+        log_warn "No recent activity found in worker logs (last 10 minutes)"
+        log_info "Make some requests to the application, then run this command again"
+        echo ""
+        echo "You can make test requests with:"
+        echo "  for i in {1..20}; do curl -s http://localhost/${app_name}/ > /dev/null; done"
+    else
+        echo "Requests per worker:"
+        # Sort ports by request count (descending)
+        for port in $(seq ${START_PORT} ${END_PORT}); do
+            local count=${port_counts[$port]:-0}
+            if [[ $count -gt 0 ]]; then
+                local percentage=$((count * 100 / total_requests))
+                printf "  Port %4d: %3d requests (%2d%%)\n" "$port" "$count" "$percentage"
+            fi
+        done
+        echo ""
+        echo "Total requests across all workers: ${total_requests}"
+        
+        # Calculate distribution stats
+        local active_workers=0
+        for port in $(seq ${START_PORT} ${END_PORT}); do
+            if [[ ${port_counts[$port]:-0} -gt 0 ]]; then
+                ((active_workers++))
+            fi
+        done
+        
+        echo "Active workers: ${active_workers} out of ${WORKER_COUNT}"
+        
+        if [[ $active_workers -eq 1 ]] && echo "$lb_method" | grep -q "ip_hash"; then
+            echo ""
+            log_info "Only 1 worker is active (expected with ip_hash from single IP)"
+            log_info "This is normal - ip_hash ensures same IP always hits same worker"
+        elif [[ $active_workers -lt $WORKER_COUNT ]]; then
+            echo ""
+            log_warn "Only ${active_workers} workers received requests"
+            log_info "With ip_hash, each unique client IP gets assigned to one worker"
+        fi
+    fi
+    
+    echo ""
+    echo "=== Load Balancing Method ==="
+    if [[ -f "/etc/nginx/conf.d/${app_name}.conf" ]]; then
+        local lb_method=$(grep -A 2 "upstream ${app_name}_backend" "/etc/nginx/conf.d/${app_name}.conf" | grep -E "ip_hash|least_conn|fair" | head -1 | awk '{print $1}' || echo "round-robin (default)")
+        echo "Method: ${lb_method}"
+        
+        if echo "$lb_method" | grep -q "ip_hash"; then
+            echo ""
+            log_info "Using ip_hash (sticky sessions)"
+            log_info "Each client IP is assigned to the same backend worker"
+            log_info "To see true load distribution, make requests from different IPs"
+        fi
+    fi
+    
+    echo ""
+    echo "=== Real-time Monitoring ==="
+    echo "To watch requests in real-time:"
+    echo "  sudo journalctl -u ${app_name}@*.service -f | grep -E 'GET|POST'"
+    echo ""
+    echo "To check a specific worker:"
+    echo "  sudo journalctl -u ${app_name}@8001.service -f"
+    echo ""
+    echo "To see Nginx access logs:"
+    echo "  sudo tail -f /var/log/nginx/access.log | grep '/${app_name}/'"
+}
+
 # Test backend connectivity
 test_backend() {
     local app_name="${1:-${APP_NAME}}"
@@ -1911,6 +2005,9 @@ main() {
             ;;
         test-load-balancing)
             test_load_balancing "${2:-${APP_NAME}}"
+            ;;
+        check-load-distribution)
+            check_load_distribution "${2:-${APP_NAME}}"
             ;;
         *)
             echo "CineStream Deployment Script"
