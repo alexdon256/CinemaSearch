@@ -727,6 +727,11 @@ configure_nginx() {
     
     log_step "Configuring Nginx for ${app_name}..."
     
+    if [[ ! -d "$app_dir" ]] || [[ ! -f "${app_dir}/.deploy_config" ]]; then
+        log_error "Application ${app_name} not found at ${app_dir}"
+        return 1
+    fi
+    
     source "${app_dir}/.deploy_config"
     
     # Create upstream configuration
@@ -735,14 +740,28 @@ configure_nginx() {
         upstream_block="${upstream_block}    server 127.0.0.1:${port};\n"
     done
     
+    # Check if domain is configured
+    local has_domain=false
+    if [[ -n "$DOMAIN" ]] && [[ "$DOMAIN" != "" ]]; then
+        has_domain=true
+    fi
+    
     # Create Nginx config file
-    cat > /etc/nginx/conf.d/${app_name}.conf <<EOF
+    if [[ "$has_domain" == "true" ]]; then
+        # Domain is configured - use set_domain config structure
+        log_info "Domain ${DOMAIN} is configured, using domain-specific config"
+        # Call set_domain to regenerate with domain
+        set_domain "$DOMAIN" "$app_name"
+        return 0
+    else
+        # No domain - use localhost/IP config
+        cat > /etc/nginx/conf.d/${app_name}.conf <<EOF
 # Upstream backend for ${app_name}
 upstream ${app_name}_backend {
     ip_hash;  # Sticky sessions
 ${upstream_block}}
 
-# HTTP server (redirects to HTTPS if domain is configured)
+# HTTP server for localhost/IP access
 server {
     listen 80;
     server_name _;
@@ -773,6 +792,7 @@ server {
     }
 }
 EOF
+    fi
     
     # Test and start/reload Nginx
     if nginx -t; then
