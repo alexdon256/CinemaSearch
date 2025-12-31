@@ -2503,80 +2503,105 @@ configure_nginx_localhost() {
             # Match server blocks with root pointing to default HTML directories
             local nginx_conf_modified=false
             
-            # Use a simple approach: comment out server blocks with welcome page
-            local temp_conf="/tmp/nginx.conf.$$"
-            local in_server_block=false
-            local brace_count=0
-            local server_has_welcome=false
+            # Use Python for reliable parsing (more robust than bash for nested structures)
+            if command -v python3 &>/dev/null; then
+                log_info "Using Python to disable welcome page server block..."
+                python3 <<'PYTHON_EOF'
+import re
+import sys
+
+try:
+    with open('/etc/nginx/nginx.conf', 'r') as f:
+        lines = f.readlines()
+    
+    in_server = False
+    brace_count = 0
+    server_start = 0
+    has_welcome = False
+    result = []
+    
+    for i, line in enumerate(lines):
+        # Detect server block start
+        if re.match(r'^\s*server\s*\{', line):
+            in_server = True
+            server_start = i
+            brace_count = 1
+            has_welcome = False
+            # Don't add to result yet - wait until block closes
+        
+        # If in server block
+        elif in_server:
+            # Check for welcome page
+            if re.search(r'root\s+.*/usr/share/nginx/html|root\s+.*/var/www/html', line):
+                has_welcome = True
             
-            while IFS= read -r line || [[ -n "$line" ]]; do
-                # Detect start of server block
-                if echo "$line" | grep -qE "^[[:space:]]*server[[:space:]]*\{"; then
-                    in_server_block=true
-                    brace_count=1
-                    server_has_welcome=false
-                    # Check if this line itself has welcome page indicator
-                    if echo "$line" | grep -q "root.*/usr/share/nginx/html\|root.*/var/www/html"; then
-                        server_has_welcome=true
-                    fi
-                    # Start commenting if it's a welcome page server
-                    if [[ "$server_has_welcome" == "true" ]]; then
-                        echo "# DISABLED BY CINESTREAM - Welcome page server block" >> "$temp_conf"
-                        echo "# DISABLED BY CINESTREAM - $line" >> "$temp_conf"
-                    else
-                        echo "$line" >> "$temp_conf"
-                    fi
-                # Process lines inside server block
-                elif [[ "$in_server_block" == "true" ]]; then
-                    # Check for welcome page root in this line
-                    if echo "$line" | grep -q "root.*/usr/share/nginx/html\|root.*/var/www/html"; then
-                        server_has_welcome=true
-                    fi
-                    
-                    # Count braces to track block nesting
-                    local open_braces=$(echo "$line" | tr -cd '{' | wc -c)
-                    local close_braces=$(echo "$line" | tr -cd '}' | wc -c)
-                    brace_count=$((brace_count + open_braces - close_braces))
-                    
-                    # Comment out if this is a welcome page server block
-                    if [[ "$server_has_welcome" == "true" ]]; then
-                        echo "# DISABLED BY CINESTREAM - $line" >> "$temp_conf"
-                    else
-                        echo "$line" >> "$temp_conf"
-                    fi
-                    
-                    # Check if we've closed the server block
-                    if [[ $brace_count -le 0 ]]; then
-                        in_server_block=false
-                        brace_count=0
-                        server_has_welcome=false
-                    fi
-                # Lines outside server blocks
-                else
-                    echo "$line" >> "$temp_conf"
-                fi
-            done < /etc/nginx/nginx.conf
+            # Count braces
+            brace_count += line.count('{') - line.count('}')
             
-            # Replace original with processed version
-            if mv "$temp_conf" /etc/nginx/nginx.conf 2>/dev/null; then
-                # Verify the change worked
-                if grep -q "# DISABLED BY CINESTREAM.*root.*/usr/share/nginx/html" /etc/nginx/nginx.conf 2>/dev/null || \
-                   ! grep -qE "^[^#]*root[[:space:]]+.*/usr/share/nginx/html" /etc/nginx/nginx.conf 2>/dev/null; then
-                    log_success "Disabled welcome page server block in nginx.conf"
-                    disabled_count=$((disabled_count + 1))
-                    nginx_conf_modified=true
+            # Check if server block closed
+            if brace_count <= 0:
+                # Add all lines from server_start to current (inclusive)
+                for j in range(server_start, i + 1):
+                    if has_welcome:
+                        result.append('# DISABLED BY CINESTREAM - ' + lines[j])
+                    else:
+                        result.append(lines[j])
+                in_server = False
+                brace_count = 0
+                has_welcome = False
+            # else: we're still in the block, don't add yet - continue to next line
+        
+        # Not in server block
+        else:
+            result.append(line)
+    
+    # Handle case where file ends while still in server block
+    if in_server:
+        for j in range(server_start, len(lines)):
+            if has_welcome:
+                result.append('# DISABLED BY CINESTREAM - ' + lines[j])
+            else:
+                result.append(lines[j])
+    
+    # Write result
+    with open('/etc/nginx/nginx.conf', 'w') as f:
+        f.writelines(result)
+    
+    sys.exit(0)
+except Exception as e:
+    print(f"Error: {e}", file=sys.stderr)
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+PYTHON_EOF
+                if [[ $? -eq 0 ]]; then
+                    # Verify nginx config is valid
+                    if nginx -t &>/dev/null; then
+                        log_success "Disabled welcome page server block in nginx.conf (using Python)"
+                        disabled_count=$((disabled_count + 1))
+                        nginx_conf_modified=true
+                    else
+                        log_error "Python script broke nginx.conf - restoring backup"
+                        # Restore from most recent backup
+                        local latest_backup=$(ls -t /etc/nginx/nginx.conf.backup.* 2>/dev/null | head -1)
+                        if [[ -n "$latest_backup" ]]; then
+                            cp "$latest_backup" /etc/nginx/nginx.conf 2>/dev/null && \
+                            log_info "Restored nginx.conf from backup"
+                        fi
+                    fi
                 else
-                    log_warning "Could not verify nginx.conf modification - welcome page may still be active"
+                    log_warning "Python script failed to modify nginx.conf"
                 fi
             else
-                log_warning "Could not modify nginx.conf - check permissions"
-                rm -f "$temp_conf" 2>/dev/null || true
+                log_warning "Python3 not available - cannot automatically disable welcome page in nginx.conf"
+                log_warning "Please manually comment out the server block in /etc/nginx/nginx.conf"
             fi
             
             if [[ "$nginx_conf_modified" != "true" ]]; then
                 log_warning "Could not automatically disable welcome page in nginx.conf"
                 log_warning "Please manually comment out the server block in /etc/nginx/nginx.conf"
                 log_info "Look for: server { ... root /usr/share/nginx/html; ... }"
+                log_info "You can restore from backup: cp /etc/nginx/nginx.conf.backup.* /etc/nginx/nginx.conf"
             fi
         fi
     fi
