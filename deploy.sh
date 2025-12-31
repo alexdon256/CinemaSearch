@@ -2984,8 +2984,20 @@ EOF
             fi
             
             # Check for any other configs serving the welcome page
-            for check_file in /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null; do
-                if [[ -f "$check_file" ]] && [[ "$check_file" != "$LOCALHOST_CONF" ]]; then
+            local check_files=()
+            if [[ -d "/etc/nginx/conf.d" ]]; then
+                for check_file in /etc/nginx/conf.d/*.conf; do
+                    [[ -f "$check_file" ]] && check_files+=("$check_file")
+                done
+            fi
+            if [[ -d "/etc/nginx/sites-enabled" ]]; then
+                for check_file in /etc/nginx/sites-enabled/*; do
+                    [[ -f "$check_file" ]] && check_files+=("$check_file")
+                done
+            fi
+            
+            for check_file in "${check_files[@]}"; do
+                if [[ "$check_file" != "$LOCALHOST_CONF" ]]; then
                     if grep -q "root.*/usr/share/nginx/html\|root.*/var/www/html" "$check_file" 2>/dev/null; then
                         if grep -q "listen.*80" "$check_file" 2>/dev/null; then
                             log_warning "⚠ Found config serving welcome page: $check_file"
