@@ -784,6 +784,14 @@ configure_nginx() {
         log_info "Added conf.d include to nginx.conf"
     fi
     
+    # Check if default server block in main nginx.conf needs to be disabled
+    # The default server block tries to serve static files and interferes with our proxy
+    if grep -qE "server[[:space:]]*{[^#]*listen[[:space:]]+80" /etc/nginx/nginx.conf && grep -A 5 "server[[:space:]]*{" /etc/nginx/nginx.conf | grep -q "root[[:space:]]+/usr/share/nginx/html"; then
+        log_warn "Default server block found in nginx.conf that may interfere with application routing"
+        log_warn "Please manually comment out the default server block in /etc/nginx/nginx.conf"
+        log_warn "Or ensure the 'include /etc/nginx/conf.d/*.conf;' line comes BEFORE the default server block"
+    fi
+    
     # Create upstream configuration
     local upstream_block=""
     for port in $(seq ${START_PORT} ${END_PORT}); do
@@ -814,7 +822,7 @@ ${upstream_block}}
 # HTTP server for localhost/IP access
 server {
     listen 80 default_server;
-    server_name _;
+    server_name _ localhost 127.0.0.1;
     
     # Redirect root to /${app_name}/ for localhost access
     location = / {
@@ -915,7 +923,7 @@ server {
 # HTTP server - catch-all for IP and other hostnames
 server {
     listen 80 default_server;
-    server_name _;
+    server_name _ localhost 127.0.0.1;
     
     # Redirect root to /${app_name}/ for localhost access
     location = / {
