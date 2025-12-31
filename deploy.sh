@@ -763,7 +763,7 @@ ${upstream_block}}
 
 # HTTP server for localhost/IP access
 server {
-    listen 80;
+    listen 80 default_server;
     server_name _;
     
     # Redirect root to /${app_name}/ for localhost access
