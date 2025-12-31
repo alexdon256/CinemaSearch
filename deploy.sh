@@ -681,12 +681,15 @@ create_worker_services() {
     done
     
     # Also stop any running instances
-    systemctl list-units --all --type=service --no-pager | grep "${app_name}@" | awk '{print $1}' | while read service; do
-        if [[ -n "$service" ]]; then
-            systemctl stop "${service}" 2>/dev/null || true
-            systemctl disable "${service}" 2>/dev/null || true
-        fi
-    done
+    local running_services=$(systemctl list-units --all --type=service --no-pager 2>/dev/null | grep "${app_name}@" | awk '{print $1}' || true)
+    if [[ -n "$running_services" ]]; then
+        echo "$running_services" | while read service; do
+            if [[ -n "$service" ]]; then
+                systemctl stop "${service}" 2>/dev/null || true
+                systemctl disable "${service}" 2>/dev/null || true
+            fi
+        done
+    fi
     
     # Stop and disable target and startup service
     systemctl stop "${app_name}.target" 2>/dev/null || true
@@ -700,6 +703,7 @@ create_worker_services() {
     log_info "Creating service template and target files..."
     
     # Create service template
+    log_info "Writing service template to /etc/systemd/system/${app_name}@.service..."
     cat > /etc/systemd/system/${app_name}@.service <<EOF
 [Unit]
 Description=${app_name} Web Worker (Port %i)
@@ -720,7 +724,15 @@ ExecStartPost=/bin/bash -c 'sleep 1 && /usr/local/bin/cinestream-set-cpu-affinit
 WantedBy=${app_name}.target
 EOF
     
+    if [[ $? -ne 0 ]] || [[ ! -f "/etc/systemd/system/${app_name}@.service" ]]; then
+        log_error "Failed to create service template"
+        return 1
+    fi
+    
+    log_info "Service template created: ${app_name}@.service"
+    
     # Create target for all workers
+    log_info "Writing target to /etc/systemd/system/${app_name}.target..."
     cat > /etc/systemd/system/${app_name}.target <<EOF
 [Unit]
 Description=${app_name} Application Target
@@ -731,7 +743,15 @@ Wants=${app_name}@*.service
 WantedBy=multi-user.target
 EOF
     
+    if [[ $? -ne 0 ]] || [[ ! -f "/etc/systemd/system/${app_name}.target" ]]; then
+        log_error "Failed to create target file"
+        return 1
+    fi
+    
+    log_info "Target created: ${app_name}.target"
+    
     # Create startup service
+    log_info "Writing startup service to /etc/systemd/system/${app_name}-startup.service..."
     cat > /etc/systemd/system/${app_name}-startup.service <<EOF
 [Unit]
 Description=${app_name} Startup Service
@@ -747,6 +767,13 @@ ExecStart=/bin/bash -c 'for port in \$(seq ${START_PORT} ${END_PORT}); do system
 WantedBy=${app_name}.target
 EOF
     
+    if [[ $? -ne 0 ]] || [[ ! -f "/etc/systemd/system/${app_name}-startup.service" ]]; then
+        log_error "Failed to create startup service"
+        return 1
+    fi
+    
+    log_info "Startup service created: ${app_name}-startup.service"
+    log_info "All service files created successfully"
     log_info "Reloading systemd daemon..."
     systemctl daemon-reload
     
