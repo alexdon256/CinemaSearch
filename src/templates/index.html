@@ -1808,15 +1808,15 @@
         
         async function fetchCitySuggestions(query) {
             try {
-                const countryCode = getCountryCode(countrySelect.value);
+                // Search globally - don't restrict by country
                 // Request address details for better structured data
                 // Remove featuretype=city restriction to get all city-like places (cities, towns, villages, etc.)
                 // This ensures we get results for major cities like Los Angeles, New York, etc.
                 let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=10&addressdetails=1&extratags=1`;
                 
-                if (countryCode) {
-                    url += `&countrycodes=${countryCode}`;
-                }
+                // Note: We intentionally don't use countrycodes parameter here to allow global city search
+                // The country selection is only used when submitting the search, not for autocomplete
+                // This allows users to search for any city worldwide regardless of country filter
                 
                 const response = await fetch(url, {
                     headers: { 
