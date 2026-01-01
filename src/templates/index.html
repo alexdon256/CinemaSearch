@@ -2354,6 +2354,15 @@
                     return;
                 }
                 
+                // FIRST: Check for error status BEFORE checking showtimes
+                if (data.status === 'error') {
+                    // Error occurred - stop animation and show error
+                    hideLoadingOverlay();
+                    const errorMsg = data.message || data.error_message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
+                    showErrorState(errorMsg, () => fetchShowtimes(city, country, state));
+                    return;
+                }
+                
                 // If we get showtimes directly, render them immediately (stop animation)
                 if (data.showtimes && Array.isArray(data.showtimes) && data.showtimes.length > 0) {
                     hideLoadingOverlay(); // Stop animation immediately
@@ -2362,7 +2371,7 @@
                     return;
                 }
                 
-                // Check if response contains showtimes (even if empty array)
+                // Check if response contains showtimes (even if empty array) - but only if not error
                 if (data.showtimes && Array.isArray(data.showtimes)) {
                     // Use showtimes from response immediately! (stop animation)
                     hideLoadingOverlay(); // Stop animation
@@ -2374,10 +2383,6 @@
                     const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
                     hideLoadingOverlay(); // Stop animation before loading
                     await loadShowtimes(locationId);
-                } else if (data.status === 'error') {
-                    // Error occurred - stop animation and show error
-                    hideLoadingOverlay();
-                    showErrorState(data.message || 'An error occurred', () => fetchShowtimes(city, country, state));
                 }
             } catch (e) {
                 console.error('Scrape error:', e);
@@ -2519,6 +2524,25 @@
             if (languageFilter.value) params.append('language', languageFilter.value);
             
             try {
+                // First check status to see if there's an error
+                const statusResponse = await fetch(`/api/scrape/status/${encodeURIComponent(locationId)}`);
+                const statusData = await statusResponse.json();
+                
+                // If status is error, show error message instead of loading showtimes
+                if (statusData.status === 'error') {
+                    hideLoadingOverlay();
+                    const errorMsg = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
+                    showErrorState(errorMsg, () => {
+                        const city = cityInput.value.trim();
+                        const country = countrySelect.value;
+                        const state = cityInput.dataset.state || '';
+                        if (city && country) {
+                            fetchShowtimes(city, country, state);
+                        }
+                    });
+                    return;
+                }
+                
                 const response = await fetch(`/api/showtimes?${params}`);
                 showtimes = await response.json();
                 // Stop animation and render results
