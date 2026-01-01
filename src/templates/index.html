@@ -2806,44 +2806,59 @@
                 // Helper function to calculate match score (higher = better match)
                 function calculateMatchScore(result, query) {
                     var cityName = getCityName(result);
+                    var displayName = result.display_name || '';
                     var cityLower = cityName.toLowerCase();
-                    var queryLower = query.toLowerCase();
+                    var displayLower = displayName.toLowerCase();
+                    var queryLower = query.toLowerCase().trim();
+                    
+                    // If query doesn't match at all, return 0 (will be filtered out)
+                    var cityMatches = cityLower.indexOf(queryLower) !== -1;
+                    var displayMatches = displayLower.indexOf(queryLower) !== -1;
+                    
+                    if (!cityMatches && !displayMatches) {
+                        return 0;
+                    }
                     
                     var score = 0;
+                    var isPrefixMatch = false;
                     
-                    // Exact prefix match gets highest score (1000+)
+                    // Check city name first (most important)
                     if (cityLower.indexOf(queryLower) === 0) {
+                        // Exact prefix match on city name gets highest score
+                        score = 10000;
+                        isPrefixMatch = true;
+                        // Shorter names with prefix match rank higher
+                        score += (1000 - cityName.length);
+                    } else if (cityLower.indexOf(queryLower) !== -1) {
+                        // Contains match in city name
                         score = 1000;
-                        // Shorter names with prefix match rank higher (exact matches first)
-                        score += (100 - cityName.length);
-                    }
-                    // Contains match gets medium score (500+)
-                    else if (cityLower.indexOf(queryLower) !== -1) {
-                        score = 500;
-                        // Earlier position in name gets higher score
                         var position = cityLower.indexOf(queryLower);
                         score += (100 - position);
                     }
-                    // Fuzzy match (word boundary or similar) gets lower score (100+)
-                    else {
-                        var words = cityLower.split(/\s+/);
-                        for (var w = 0; w < words.length; w++) {
-                            if (words[w].indexOf(queryLower) === 0) {
-                                score = 100;
-                                break;
-                            }
-                        }
+                    
+                    // Also check display_name for prefix match (boost if found)
+                    if (displayLower.indexOf(queryLower) === 0 && !isPrefixMatch) {
+                        // Prefix match in display name (but not city name) - still very good
+                        score = 5000;
+                        score += (500 - displayName.length);
+                    } else if (displayLower.indexOf(queryLower) !== -1 && score < 1000) {
+                        // Contains match in display name (only if city name didn't match well)
+                        score = 500;
+                        var displayPosition = displayLower.indexOf(queryLower);
+                        score += (50 - displayPosition);
                     }
                     
-                    // Boost score for city/town types
-                    var placeType = (result.type || '').toLowerCase();
-                    var placeClass = (result.class || '').toLowerCase();
-                    if (placeType.indexOf('city') !== -1) {
-                        score += 50;
-                    } else if (placeType.indexOf('town') !== -1) {
-                        score += 30;
-                    } else if (placeClass === 'place') {
-                        score += 20;
+                    // Boost score for city/town types (but only if we have a match)
+                    if (score > 0) {
+                        var placeType = (result.type || '').toLowerCase();
+                        var placeClass = (result.class || '').toLowerCase();
+                        if (placeType.indexOf('city') !== -1) {
+                            score += 50;
+                        } else if (placeType.indexOf('town') !== -1) {
+                            score += 30;
+                        } else if (placeClass === 'place') {
+                            score += 20;
+                        }
                     }
                     
                     return score;
@@ -2870,11 +2885,14 @@
                     
                     if (shouldInclude) {
                         var score = calculateMatchScore(result, query);
-                        scoredResults.push({
-                            result: result,
-                            score: score,
-                            cityName: getCityName(result)
-                        });
+                        // Only include results that actually match the query (score > 0)
+                        if (score > 0) {
+                            scoredResults.push({
+                                result: result,
+                                score: score,
+                                cityName: getCityName(result)
+                            });
+                        }
                     }
                 }
                 
@@ -2891,11 +2909,17 @@
                 var displayResults = [];
                 for (var j = 0; j < scoredResults.length && j < 10; j++) {
                     displayResults.push(scoredResults[j].result);
+                    // Debug logging
+                    console.log('Suggestion', j + 1, ':', getCityName(scoredResults[j].result), '- Score:', scoredResults[j].score);
                 }
                 
-                // If no filtered results, use first 5 from original results
+                // If no filtered results, don't show anything (better than showing irrelevant results)
                 if (displayResults.length === 0) {
-                    displayResults = results.slice(0, 5);
+                    console.log('No matching results found for query:', query);
+                    if (citySuggestions) {
+                        hideDropdown(citySuggestions);
+                    }
+                    return;
                 }
                 
                 console.log('Displaying', displayResults.length, 'city suggestions (sorted by relevance)');
