@@ -1633,6 +1633,129 @@
     </div>
     
     <script>
+        // Feature detection for old devices
+        var supportsFetch = typeof fetch !== 'undefined';
+        var supportsAsyncAwait = (function() {
+            try {
+                new Function('async () => {}');
+                return true;
+            } catch (e) {
+                return false;
+            }
+        })();
+        var supportsArrayFrom = typeof Array.from !== 'undefined';
+        var supportsArrayFind = Array.prototype.find !== undefined;
+        var supportsArrayIncludes = Array.prototype.includes !== undefined;
+        
+        // Polyfill for Array.from (for IE11 and older)
+        if (!supportsArrayFrom) {
+            Array.from = function(arrayLike) {
+                var result = [];
+                for (var i = 0; i < arrayLike.length; i++) {
+                    result.push(arrayLike[i]);
+                }
+                return result;
+            };
+        }
+        
+        // Polyfill for Array.find (for IE11 and older)
+        if (!supportsArrayFind) {
+            Array.prototype.find = function(predicate) {
+                if (this == null) {
+                    throw new TypeError('Array.prototype.find called on null or undefined');
+                }
+                if (typeof predicate !== 'function') {
+                    throw new TypeError('predicate must be a function');
+                }
+                var list = Object(this);
+                var length = parseInt(list.length) || 0;
+                var thisArg = arguments[1];
+                var value;
+                for (var i = 0; i < length; i++) {
+                    value = list[i];
+                    if (predicate.call(thisArg, value, i, list)) {
+                        return value;
+                    }
+                }
+                return undefined;
+            };
+        }
+        
+        // Polyfill for Array.includes (for IE11 and older)
+        if (!supportsArrayIncludes) {
+            Array.prototype.includes = function(searchElement) {
+                var O = Object(this);
+                var len = parseInt(O.length) || 0;
+                if (len === 0) {
+                    return false;
+                }
+                var n = parseInt(arguments[1]) || 0;
+                var k;
+                if (n >= 0) {
+                    k = n;
+                } else {
+                    k = len + n;
+                    if (k < 0) {
+                        k = 0;
+                    }
+                }
+                function sameValueZero(x, y) {
+                    return x === y || (typeof x === 'number' && typeof y === 'number' && isNaN(x) && isNaN(y));
+                }
+                for (; k < len; k++) {
+                    if (sameValueZero(O[k], searchElement)) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+        }
+        
+        // Fetch polyfill using XMLHttpRequest (for old browsers)
+        if (!supportsFetch) {
+            window.fetch = function(url, options) {
+                return new Promise(function(resolve, reject) {
+                    var xhr = new XMLHttpRequest();
+                    var method = (options && options.method) || 'GET';
+                    var headers = (options && options.headers) || {};
+                    var body = options && options.body;
+                    
+                    xhr.open(method, url);
+                    
+                    for (var key in headers) {
+                        if (headers.hasOwnProperty(key)) {
+                            xhr.setRequestHeader(key, headers[key]);
+                        }
+                    }
+                    
+                    xhr.onload = function() {
+                        var response = {
+                            ok: xhr.status >= 200 && xhr.status < 300,
+                            status: xhr.status,
+                            statusText: xhr.statusText,
+                            json: function() {
+                                return Promise.resolve(JSON.parse(xhr.responseText));
+                            },
+                            text: function() {
+                                return Promise.resolve(xhr.responseText);
+                            }
+                        };
+                        if (response.ok) {
+                            resolve(response);
+                        } else {
+                            reject(new Error('HTTP ' + xhr.status + ': ' + xhr.statusText));
+                        }
+                    };
+                    
+                    xhr.onerror = function() {
+                        reject(new Error('Network error'));
+                    };
+                    
+                    xhr.send(body);
+                });
+            };
+        }
+        
         const cityInput = document.getElementById('city-input');
         const stateInput = document.getElementById('state-input');
         const countrySelect = document.getElementById('country-select');
@@ -1643,6 +1766,18 @@
         const formatFilter = document.getElementById('format-filter');
         const languageFilter = document.getElementById('language-filter');
         const container = document.getElementById('showtimes-container');
+        
+        // For old devices: Show native select instead of custom dropdown
+        var useNativeSelect = !supportsFetch || !supportsAsyncAwait;
+        if (useNativeSelect) {
+            // Hide custom country input, show native select
+            if (countryInput && countryInput.parentElement) {
+                countryInput.parentElement.style.display = 'none';
+            }
+            if (countrySelect) {
+                countrySelect.style.display = 'block';
+            }
+        }
         
         let currentCity = null;
         let currentCountry = null;
@@ -2016,65 +2151,77 @@
             "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe"
         ];
         
-        // Populate country dropdown (hidden select for form submission)
-        countries.forEach(country => {
-            const option = document.createElement('option');
+        // Populate country dropdown (hidden select for form submission, or visible for old devices)
+        for (var i = 0; i < countries.length; i++) {
+            var country = countries[i];
+            var option = document.createElement('option');
             option.value = country;
             option.textContent = country;
-            countrySelect.appendChild(option);
-        });
+            if (countrySelect) {
+                countrySelect.appendChild(option);
+            }
+        }
         
-        // Country search functionality
-        let countrySearchTimeout = null;
-        countryInput.addEventListener('input', (e) => {
-            const query = e.target.value.trim().toLowerCase();
-            
-            if (countrySearchTimeout) {
-                clearTimeout(countrySearchTimeout);
-            }
-            
-            // Reset selection when input changes
-            selectedCountryIndex = -1;
-            
-            if (query.length === 0) {
-                countryDropdown.classList.remove('show');
-                countrySelect.value = '';
-                selectedCountryIndex = -1;
-                return;
-            }
-            
-            countrySearchTimeout = setTimeout(() => {
-                const filtered = countries.filter(c => 
-                    c.toLowerCase().includes(query)
-                ).slice(0, 10); // Limit to 10 results
+        // Country search functionality (only for modern browsers)
+        if (!useNativeSelect && countryInput) {
+            let countrySearchTimeout = null;
+            countryInput.addEventListener('input', function(e) {
+                const query = e.target.value.trim().toLowerCase();
                 
-                countryDropdown.innerHTML = '';
-                if (filtered.length === 0) {
+                if (countrySearchTimeout) {
+                    clearTimeout(countrySearchTimeout);
+                }
+                
+                // Reset selection when input changes
+                selectedCountryIndex = -1;
+                
+                if (query.length === 0) {
                     countryDropdown.classList.remove('show');
+                    countrySelect.value = '';
+                    selectedCountryIndex = -1;
                     return;
                 }
                 
-                filtered.forEach((country, index) => {
-                    const div = document.createElement('div');
-                    div.className = 'country-option';
-                    div.textContent = country;
+                countrySearchTimeout = setTimeout(function() {
+                    var filtered = [];
+                    for (var i = 0; i < countries.length; i++) {
+                        if (countries[i].toLowerCase().indexOf(query) !== -1) {
+                            filtered.push(countries[i]);
+                            if (filtered.length >= 10) break; // Limit to 10 results
+                        }
+                    }
                     
-                    // Function to select this country (used by both click and keyboard)
-                    const selectCountry = () => {
-                        countryInput.value = country;
-                        countrySelect.value = country;
+                    countryDropdown.innerHTML = '';
+                    if (filtered.length === 0) {
                         countryDropdown.classList.remove('show');
-                        selectedCountryIndex = -1; // Reset selection
-                    };
+                        return;
+                    }
                     
-                    div.addEventListener('click', selectCountry);
-                    countryDropdown.appendChild(div);
-                });
-                
-                countryDropdown.classList.add('show');
-                selectedCountryIndex = -1; // Reset selection when new suggestions are shown
-            }, 200);
-        });
+                    for (var j = 0; j < filtered.length; j++) {
+                        var country = filtered[j];
+                        var div = document.createElement('div');
+                        div.className = 'country-option';
+                        div.textContent = country;
+                        
+                        // Function to select this country (used by both click and keyboard)
+                        var selectCountry = function(countryName) {
+                            return function() {
+                                countryInput.value = countryName;
+                                countrySelect.value = countryName;
+                                countryDropdown.classList.remove('show');
+                                selectedCountryIndex = -1; // Reset selection
+                            };
+                        }(country);
+                        
+                        div.addEventListener('click', selectCountry);
+                        countryDropdown.appendChild(div);
+                    }
+                    
+                    countryDropdown.classList.add('show');
+                    selectedCountryIndex = -1; // Reset selection when new suggestions are shown
+                }, 200);
+            });
+        }
         
         // Keyboard navigation for country suggestions
         countryInput.addEventListener('keydown', (e) => {
@@ -2116,100 +2263,106 @@
             }
         });
         
-        function updateCountrySelection(countryOptions) {
-            countryOptions.forEach((item, index) => {
-                if (index === selectedCountryIndex) {
-                    item.classList.add('selected');
-                    item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-                } else {
-                    item.classList.remove('selected');
+        // Allow selecting from native select (for old browsers and keyboard users)
+        if (countrySelect) {
+            countrySelect.addEventListener('change', function(e) {
+                if (e.target.value && !useNativeSelect && countryInput) {
+                    countryInput.value = e.target.value;
                 }
             });
         }
         
-        // Hide country dropdown when clicking outside
-        document.addEventListener('click', (e) => {
-            if (!countryInput.contains(e.target) && !countryDropdown.contains(e.target)) {
-                countryDropdown.classList.remove('show');
-                selectedCountryIndex = -1;
-            }
-        });
-        
-        // Allow selecting from hidden select (for keyboard users)
-        countrySelect.addEventListener('change', (e) => {
-            if (e.target.value) {
-                countryInput.value = e.target.value;
-            }
-        });
-        
         // City autocomplete using OpenStreetMap Nominatim (free API)
-        cityInput.addEventListener('input', (e) => {
-            const query = e.target.value.trim();
-            
-            // Clear previous timeout
-            if (autocompleteTimeout) {
-                clearTimeout(autocompleteTimeout);
-            }
-            
-            if (query.length < 2) {
-                citySuggestions.classList.remove('show');
-                return;
-            }
-            
-            // Debounce API calls (500ms delay)
-            autocompleteTimeout = setTimeout(() => fetchCitySuggestions(query), 500);
-        });
-        
-        async function fetchCitySuggestions(query) {
-            try {
-                // Search globally - don't restrict by country
-                // Request address details for better structured data
-                // Remove featuretype=city restriction to get all city-like places (cities, towns, villages, etc.)
-                // This ensures we get results for major cities like Los Angeles, New York, etc.
-                let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=10&addressdetails=1&extratags=1`;
+        if (cityInput) {
+            cityInput.addEventListener('input', function(e) {
+                const query = e.target.value.trim();
                 
-                // Note: We intentionally don't use countrycodes parameter here to allow global city search
-                // The country selection is only used when submitting the search, not for autocomplete
-                // This allows users to search for any city worldwide regardless of country filter
+                // Clear previous timeout
+                if (autocompleteTimeout) {
+                    clearTimeout(autocompleteTimeout);
+                }
                 
-                const response = await fetch(url, {
-                    headers: { 
-                        'Accept-Language': '{{ lang }}',
-                        'User-Agent': 'CineStream/1.0' // Required by Nominatim
+                if (query.length < 2) {
+                    if (citySuggestions) {
+                        citySuggestions.classList.remove('show');
                     }
-                });
-                
-                if (!response.ok) {
-                    console.error('Nominatim API error:', response.status, response.statusText);
-                    citySuggestions.classList.remove('show');
                     return;
                 }
                 
-                const results = await response.json();
+                // Debounce API calls (500ms delay)
+                autocompleteTimeout = setTimeout(function() {
+                    fetchCitySuggestions(query);
+                }, 500);
+            });
+        }
+        
+        function fetchCitySuggestions(query) {
+            // Search globally - don't restrict by country
+            // Request address details for better structured data
+            // Remove featuretype=city restriction to get all city-like places (cities, towns, villages, etc.)
+            // This ensures we get results for major cities like Los Angeles, New York, etc.
+            var url = 'https://nominatim.openstreetmap.org/search?q=' + encodeURIComponent(query) + '&format=json&limit=10&addressdetails=1&extratags=1';
+            
+            // Note: We intentionally don't use countrycodes parameter here to allow global city search
+            // The country selection is only used when submitting the search, not for autocomplete
+            // This allows users to search for any city worldwide regardless of country filter
+            
+            fetch(url, {
+                headers: { 
+                    'Accept-Language': '{{ lang }}',
+                    'User-Agent': 'CineStream/1.0' // Required by Nominatim
+                }
+            }).then(function(response) {
+                if (!response.ok) {
+                    console.error('Nominatim API error:', response.status, response.statusText);
+                    if (citySuggestions) {
+                        citySuggestions.classList.remove('show');
+                    }
+                    return;
+                }
+                return response.json();
+            }).then(function(results) {
+                if (!results) return;
                 
                 // Filter results to prioritize cities, towns, and municipalities
                 // But include other place types if they're the best match
-                const filteredResults = results.filter(result => {
-                    const placeType = result.type || '';
-                    const placeClass = result.class || '';
+                var filteredResults = [];
+                for (var i = 0; i < results.length; i++) {
+                    var result = results[i];
+                    var placeType = result.type || '';
+                    var placeClass = result.class || '';
+                    var shouldInclude = false;
+                    
                     // Include cities, towns, villages, municipalities, and administrative areas
-                    return placeType.includes('city') || 
-                           placeType.includes('town') || 
-                           placeType.includes('village') || 
-                           placeType.includes('municipality') ||
-                           placeType.includes('administrative') ||
-                           placeClass === 'place' ||
-                           (result.address && (result.address.city || result.address.town || result.address.village || result.address.municipality));
-                }).slice(0, 5); // Limit to 5 results
+                    if (placeType.indexOf('city') !== -1 || 
+                        placeType.indexOf('town') !== -1 || 
+                        placeType.indexOf('village') !== -1 || 
+                        placeType.indexOf('municipality') !== -1 ||
+                        placeType.indexOf('administrative') !== -1 ||
+                        placeClass === 'place' ||
+                        (result.address && (result.address.city || result.address.town || result.address.village || result.address.municipality))) {
+                        shouldInclude = true;
+                    }
+                    
+                    if (shouldInclude) {
+                        filteredResults.push(result);
+                        if (filteredResults.length >= 5) break; // Limit to 5 results
+                    }
+                }
                 
-                displayCitySuggestions(filteredResults.length > 0 ? filteredResults : results.slice(0, 5));
-            } catch (e) {
+                var displayResults = filteredResults.length > 0 ? filteredResults : results.slice(0, 5);
+                displayCitySuggestions(displayResults);
+            }).catch(function(e) {
                 console.error('Autocomplete error:', e);
-                citySuggestions.classList.remove('show');
-            }
+                if (citySuggestions) {
+                    citySuggestions.classList.remove('show');
+                }
+            });
         }
         
         function displayCitySuggestions(results) {
+            if (!citySuggestions) return;
+            
             if (results.length === 0) {
                 citySuggestions.classList.remove('show');
                 selectedSuggestionIndex = -1;
@@ -2218,15 +2371,17 @@
             
             citySuggestions.innerHTML = '';
             selectedSuggestionIndex = -1; // Reset selection when new suggestions are shown
-            results.forEach((result, index) => {
-                const div = document.createElement('div');
+            
+            for (var i = 0; i < results.length; i++) {
+                var result = results[i];
+                var div = document.createElement('div');
                 div.className = 'suggestion-item';
                 
                 // Extract city, state, and country from Nominatim API response
                 // Prefer structured address object over parsing display_name
-                let cityName = '';
-                let stateName = '';
-                let countryName = '';
+                var cityName = '';
+                var stateName = '';
+                var countryName = '';
                 
                 if (result.address) {
                     // Use structured address data (more reliable)
@@ -2249,7 +2404,7 @@
                 
                 // Fallback to parsing display_name if address object is incomplete
                 if (!cityName || !countryName) {
-                    const parts = result.display_name.split(', ');
+                    var parts = result.display_name.split(', ');
                     if (!cityName) {
                         cityName = parts[0];
                     }
@@ -2267,43 +2422,52 @@
                 countryName = countryName.trim();
                 
                 // Build display text
-                let displayText = cityName;
+                var displayText = cityName;
                 if (stateName) {
-                    displayText += ` <small>(${stateName}, ${countryName})</small>`;
+                    displayText += ' <small>(' + stateName + ', ' + countryName + ')</small>';
                 } else {
-                    displayText += ` <small>(${countryName})</small>`;
+                    displayText += ' <small>(' + countryName + ')</small>';
                 }
                 
                 div.innerHTML = displayText;
                 
                 // Store full location data in data attributes
-                div.dataset.city = cityName;
-                div.dataset.state = stateName;
-                div.dataset.country = countryName;
+                div.setAttribute('data-city', cityName);
+                div.setAttribute('data-state', stateName);
+                div.setAttribute('data-country', countryName);
                 
                 // Function to select this suggestion (used by both click and keyboard)
-                const selectSuggestion = () => {
-                    // Set state in dataset and input FIRST to prevent input event listener from clearing it
-                    if (stateName && stateName.length > 0) {
-                        cityInput.dataset.state = stateName;
-                        stateInput.value = stateName;
-                    } else {
-                        delete cityInput.dataset.state;
-                        stateInput.value = '';
-                    }
-                    
-                    // Set city name (this will trigger input event, but dataset.state is already set)
-                    cityInput.value = cityName;
-                    
-                    // Try to match and select the country
-                    // First, normalize country name (remove common suffixes, handle abbreviations)
-                    const normalizeCountryName = (name) => {
-                        return name.toLowerCase()
-                            .replace(/\s+/g, ' ')
-                            .trim();
-                    };
-                    
-                    const countryLower = normalizeCountryName(countryName);
+                var selectSuggestion = (function(city, state, country) {
+                    return function() {
+                        // Set state in dataset and input FIRST to prevent input event listener from clearing it
+                        if (state && state.length > 0) {
+                            if (cityInput.dataset) {
+                                cityInput.dataset.state = state;
+                            } else {
+                                cityInput.setAttribute('data-state', state);
+                            }
+                            stateInput.value = state;
+                        } else {
+                            if (cityInput.dataset) {
+                                delete cityInput.dataset.state;
+                            } else {
+                                cityInput.removeAttribute('data-state');
+                            }
+                            stateInput.value = '';
+                        }
+                        
+                        // Set city name (this will trigger input event, but dataset.state is already set)
+                        cityInput.value = city;
+                        
+                        // Try to match and select the country
+                        // First, normalize country name (remove common suffixes, handle abbreviations)
+                        function normalizeCountryName(name) {
+                            return name.toLowerCase()
+                                .replace(/\s+/g, ' ')
+                                .trim();
+                        }
+                        
+                        var countryLower = normalizeCountryName(country);
                     
                     // Common country name mappings (API might return different names)
                     const countryMappings = {

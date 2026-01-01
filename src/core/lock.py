@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 LOCK_TIMEOUT = 600  # 10 minutes timeout for locks
 LOCK_SOURCE_ONDEMAND = 'on-demand'
 LOCK_SOURCE_DAILY = 'daily-refresh'
+LOCK_SOURCE_SCRAPING_AGENT = 'scraping-agent'
 
 def acquire_lock(db: Database, city_name: str, lock_source: str = LOCK_SOURCE_ONDEMAND, priority: bool = False) -> bool:
     """
@@ -31,13 +32,14 @@ def acquire_lock(db: Database, city_name: str, lock_source: str = LOCK_SOURCE_ON
         
         # Build query based on priority
         if priority:
-            # Priority requests (on-demand) can override expired or daily-refresh locks
+            # Priority requests (on-demand) can override expired, daily-refresh, or scraping-agent locks
             query = {
                 'city_name': city_name,
                 '$or': [
                     {'status': {'$ne': 'processing'}},
                     {'last_updated': {'$lt': timeout_threshold}},  # Expired lock
-                    {'lock_source': LOCK_SOURCE_DAILY}  # Can override daily refresh
+                    {'lock_source': LOCK_SOURCE_DAILY},  # Can override daily refresh
+                    {'lock_source': LOCK_SOURCE_SCRAPING_AGENT}  # Can override scraping agents
                 ]
             }
         else:
@@ -64,9 +66,11 @@ def acquire_lock(db: Database, city_name: str, lock_source: str = LOCK_SOURCE_ON
         
         # If no document exists, create one with processing status atomically
         if result.matched_count == 0:
-            # Try atomic upsert - this prevents race conditions
+            # Try atomic upsert with the same query conditions to prevent race conditions
+            # This ensures we only create/update if the conditions are still met
+            upsert_query = query.copy()
             upsert_result = db.locations.update_one(
-                {'city_name': city_name},
+                upsert_query,
                 {
                     '$set': {
                         'status': 'processing',
@@ -79,45 +83,28 @@ def acquire_lock(db: Database, city_name: str, lock_source: str = LOCK_SOURCE_ON
             # If we created a new document, we got the lock
             if upsert_result.upserted_id:
                 return True
-            # If document already existed (race condition), check if we can override
+            # If we modified an existing document, we got the lock
             if upsert_result.modified_count > 0:
                 return True
-            # Document exists but wasn't modified - check current state
-            current = db.locations.find_one({'city_name': city_name})
-            if current:
-                current_status = current.get('status')
-                # If not processing, try to acquire lock again
-                if current_status != 'processing':
-                    retry_result = db.locations.update_one(
-                        {
-                            'city_name': city_name,
-                            'status': {'$ne': 'processing'}
-                        },
-                        {
-                            '$set': {
-                                'status': 'processing',
-                                'lock_source': lock_source,
-                                'last_updated': now
-                            }
+            # Document exists but wasn't modified - another process got the lock
+            # For priority requests, try one more time to override scraping-agent or daily-refresh locks
+            if priority:
+                # Try to override scraping-agent or daily-refresh locks atomically
+                override_result = db.locations.update_one(
+                    {
+                        'city_name': city_name,
+                        'lock_source': {'$in': [LOCK_SOURCE_DAILY, LOCK_SOURCE_SCRAPING_AGENT]}
+                    },
+                    {
+                        '$set': {
+                            'status': 'processing',
+                            'lock_source': lock_source,
+                            'last_updated': now
                         }
-                    )
-                    return retry_result.modified_count > 0
-                # If processing, check if we can override (priority only)
-                if priority and current.get('lock_source') == LOCK_SOURCE_DAILY:
-                    override_result = db.locations.update_one(
-                        {
-                            'city_name': city_name,
-                            'lock_source': LOCK_SOURCE_DAILY
-                        },
-                        {
-                            '$set': {
-                                'status': 'processing',
-                                'lock_source': lock_source,
-                                'last_updated': now
-                            }
-                        }
-                    )
-                    return override_result.modified_count > 0
+                    }
+                )
+                if override_result.modified_count > 0:
+                    return True
             return False
         
         return result.modified_count > 0
@@ -126,7 +113,7 @@ def acquire_lock(db: Database, city_name: str, lock_source: str = LOCK_SOURCE_ON
         print(f"Error acquiring lock: {e}")
         return False
 
-def release_lock(db: Database, city_name: str, status: str = 'fresh'):
+def release_lock(db: Database, city_name: str, status: str = 'fresh', lock_source: str = None):
     """
     Release a lock for a city
     
@@ -134,11 +121,19 @@ def release_lock(db: Database, city_name: str, status: str = 'fresh'):
         db: MongoDB database instance
         city_name: Name of the city to unlock
         status: Status to set after releasing lock (default: 'fresh')
+        lock_source: Optional - only release if lock_source matches (prevents releasing someone else's lock)
     """
     try:
         from datetime import timezone
-        db.locations.update_one(
-            {'city_name': city_name},
+        query = {'city_name': city_name}
+        
+        # If lock_source is specified, only release if we still own the lock
+        # This prevents a scraping agent from releasing an on-demand lock that overrode it
+        if lock_source:
+            query['lock_source'] = lock_source
+        
+        result = db.locations.update_one(
+            query,
             {
                 '$set': {
                     'status': status,
@@ -149,8 +144,15 @@ def release_lock(db: Database, city_name: str, status: str = 'fresh'):
                 }
             }
         )
+        
+        # If lock_source was specified but we didn't modify anything, the lock was overridden
+        if lock_source and result.modified_count == 0:
+            return False  # Lock was overridden by another process
+        
+        return True
     except Exception as e:
         print(f"Error releasing lock: {e}")
+        return False
 
 def is_locked(db: Database, city_name: str) -> bool:
     """

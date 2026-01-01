@@ -814,17 +814,26 @@ def api_scrape():
                 })
     
     # Try to acquire lock with priority (on-demand requests take precedence)
+    # On-demand can override scraping-agent and daily-refresh locks immediately
     if not acquire_lock(db, location_id, lock_source='on-demand', priority=True):
         # Check what's holding the lock
         lock_info = get_lock_info(db, location_id)
         if lock_info:
             source = lock_info.get('source', 'unknown')
-            if source == 'daily-refresh':
-                message = 'Daily refresh is currently running. Your request will be processed after it completes.'
+            if source == 'on-demand':
+                # Another on-demand request is already processing
+                message = 'Another on-demand scraping request is already in progress. Please wait for it to complete.'
+            elif source == 'daily-refresh':
+                # This shouldn't happen if override worked, but handle it anyway
+                message = 'Daily refresh is currently running. Your request should override it - please try again in a moment.'
+            elif source == 'scraping-agent':
+                # This shouldn't happen if override worked, but handle it anyway
+                message = 'A scraping agent is processing this city. Your request should override it - please try again in a moment.'
             else:
                 message = 'Scraping already in progress'
         else:
-            message = 'Scraping already in progress'
+            # Lock was released between check and acquire (race condition)
+            message = 'Scraping status changed. Please try again.'
         return jsonify({'status': 'processing', 'message': message}), 202
     
     try:
