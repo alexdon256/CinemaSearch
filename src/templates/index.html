@@ -1701,6 +1701,7 @@
     <script>
         // Feature detection for old devices
         var supportsFetch = typeof fetch !== 'undefined';
+        var supportsPromise = typeof Promise !== 'undefined';
         var supportsAsyncAwait = (function() {
             try {
                 new Function('async () => {}');
@@ -1712,6 +1713,90 @@
         var supportsArrayFrom = typeof Array.from !== 'undefined';
         var supportsArrayFind = Array.prototype.find !== undefined;
         var supportsArrayIncludes = Array.prototype.includes !== undefined;
+        
+        // Promise polyfill for old Android devices (simplified version)
+        if (!supportsPromise) {
+            window.Promise = function(executor) {
+                var self = this;
+                self.state = 'pending';
+                self.value = undefined;
+                self.handlers = [];
+                
+                function resolve(result) {
+                    if (self.state === 'pending') {
+                        self.state = 'fulfilled';
+                        self.value = result;
+                        self.handlers.forEach(handle);
+                        self.handlers = null;
+                    }
+                }
+                
+                function reject(error) {
+                    if (self.state === 'pending') {
+                        self.state = 'rejected';
+                        self.value = error;
+                        self.handlers.forEach(handle);
+                        self.handlers = null;
+                    }
+                }
+                
+                function handle(handler) {
+                    if (self.state === 'pending') {
+                        self.handlers.push(handler);
+                    } else {
+                        if (self.state === 'fulfilled' && typeof handler.onFulfilled === 'function') {
+                            handler.onFulfilled(self.value);
+                        }
+                        if (self.state === 'rejected' && typeof handler.onRejected === 'function') {
+                            handler.onRejected(self.value);
+                        }
+                    }
+                }
+                
+                self.then = function(onFulfilled, onRejected) {
+                    return new Promise(function(resolve, reject) {
+                        handle({
+                            onFulfilled: function(result) {
+                                try {
+                                    resolve(onFulfilled ? onFulfilled(result) : result);
+                                } catch (ex) {
+                                    reject(ex);
+                                }
+                            },
+                            onRejected: function(error) {
+                                try {
+                                    resolve(onRejected ? onRejected(error) : reject(error));
+                                } catch (ex) {
+                                    reject(ex);
+                                }
+                            }
+                        });
+                    });
+                };
+                
+                self.catch = function(onRejected) {
+                    return self.then(null, onRejected);
+                };
+                
+                try {
+                    executor(resolve, reject);
+                } catch (ex) {
+                    reject(ex);
+                }
+            };
+            
+            Promise.resolve = function(value) {
+                return new Promise(function(resolve) {
+                    resolve(value);
+                });
+            };
+            
+            Promise.reject = function(reason) {
+                return new Promise(function(resolve, reject) {
+                    reject(reason);
+                });
+            };
+        }
         
         // Polyfill for Array.from (for IE11 and older)
         if (!supportsArrayFrom) {
@@ -1945,10 +2030,24 @@
                     };
                     
                     xhr.onerror = function() {
+                        console.error('XHR error for URL:', url);
                         reject(new Error('Network error'));
                     };
                     
-                    xhr.send(body);
+                    xhr.ontimeout = function() {
+                        console.error('XHR timeout for URL:', url);
+                        reject(new Error('Request timeout'));
+                    };
+                    
+                    // Set timeout for old devices (30 seconds)
+                    xhr.timeout = 30000;
+                    
+                    try {
+                        xhr.send(body);
+                    } catch (sendError) {
+                        console.error('XHR send error:', sendError);
+                        reject(new Error('Failed to send request: ' + sendError.message));
+                    }
                 });
             };
         }
@@ -2661,22 +2760,26 @@
             // This allows users to search for any city worldwide regardless of country filter
             
             console.log('Fetching city suggestions for:', query);
+            console.log('Fetch available:', typeof fetch !== 'undefined');
+            console.log('Promise available:', typeof Promise !== 'undefined');
             
-            fetch(url, {
-                headers: { 
-                    'Accept-Language': '{{ lang }}',
-                    'User-Agent': 'CineStream/1.0' // Required by Nominatim
-                }
-            }).then(function(response) {
-                if (!response.ok) {
-                    console.error('Nominatim API error:', response.status, response.statusText);
-                    if (citySuggestions) {
-                        hideDropdown(citySuggestions);
+            try {
+                fetch(url, {
+                    headers: { 
+                        'Accept-Language': '{{ lang }}',
+                        'User-Agent': 'CineStream/1.0' // Required by Nominatim
                     }
-                    return null;
-                }
-                return response.json();
-            }).then(function(results) {
+                }).then(function(response) {
+                    console.log('Fetch response received, status:', response.status);
+                    if (!response.ok) {
+                        console.error('Nominatim API error:', response.status, response.statusText);
+                        if (citySuggestions) {
+                            hideDropdown(citySuggestions);
+                        }
+                        return null;
+                    }
+                    return response.json();
+                }).then(function(results) {
                 if (!results || results.length === 0) {
                     console.log('No results from Nominatim');
                     if (citySuggestions) {
@@ -2716,13 +2819,31 @@
                 var displayResults = filteredResults.length > 0 ? filteredResults : results.slice(0, 5);
                 console.log('Displaying', displayResults.length, 'city suggestions');
                 displayCitySuggestions(displayResults);
-            }).catch(function(e) {
-                console.error('Autocomplete error:', e);
-                console.error('Error details:', e.message, e.stack);
+                }).catch(function(e) {
+                    console.error('Autocomplete error:', e);
+                    console.error('Error details:', e.message, e.stack);
+                    console.error('Error type:', typeof e);
+                    if (citySuggestions) {
+                        hideDropdown(citySuggestions);
+                        citySuggestions.innerHTML = '<div class="suggestion-item" style="color: #e74c3c; padding: 0.75rem;">Error loading suggestions. Please check your connection.</div>';
+                        showDropdown(citySuggestions);
+                        setTimeout(function() {
+                            hideDropdown(citySuggestions);
+                        }, 3000);
+                    }
+                });
+            } catch (error) {
+                console.error('Failed to initiate fetch:', error);
+                console.error('Error type:', typeof error);
                 if (citySuggestions) {
                     hideDropdown(citySuggestions);
+                    citySuggestions.innerHTML = '<div class="suggestion-item" style="color: #e74c3c; padding: 0.75rem;">Browser does not support fetching. Please update your browser.</div>';
+                    showDropdown(citySuggestions);
+                    setTimeout(function() {
+                        hideDropdown(citySuggestions);
+                    }, 3000);
                 }
-            });
+            }
         }
         
         function displayCitySuggestions(results) {
