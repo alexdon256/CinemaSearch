@@ -811,7 +811,8 @@ def api_city_suggestions():
             # Geonames search API - using demo account (limited requests)
             # For production, register at geonames.org for free account (1000 requests/hour)
             # Use 'q' parameter for better partial matching (fuzzy search) instead of name_startsWith
-            geonames_url = f"http://api.geonames.org/searchJSON?q={urllib.parse.quote(query)}&maxRows=20&lang={lang}&style=FULL&username=demo&featureClass=P&orderby=relevance"
+            # Increase maxRows to get more candidates, then we'll sort and filter
+            geonames_url = f"http://api.geonames.org/searchJSON?q={urllib.parse.quote(query)}&maxRows=30&lang={lang}&style=FULL&username=demo&featureClass=P&orderby=relevance"
             
             geonames_req = urllib.request.Request(geonames_url, headers={
                 'User-Agent': 'CineStream/1.0'
@@ -833,16 +834,39 @@ def api_city_suggestions():
                     lat = item.get('lat', '')
                     lon = item.get('lng', '')
                     
-                    # Flexible matching - Geonames already does fuzzy matching, so we just need to verify relevance
+                    # Flexible matching with scoring - prioritize exact prefix matches
                     city_lower = city_name.lower()
-                    matches = False
+                    match_score = 0
+                    match_type = None
                     
-                    # Direct prefix match (best) - "ankar" matches "ankara"
+                    # Direct prefix match (best) - "ankar" matches "ankara" exactly
                     if city_lower.startswith(query_lower):
-                        matches = True
-                    # Contains match for single word queries - "ankar" in "ankara"
+                        match_score = 1000  # Base score for prefix match
+                        # Boost capital cities and major cities
+                        if fcode in ['PPLC']:  # Capital city
+                            match_score += 500
+                        elif fcode in ['PPLA']:  # First-order admin division seat
+                            match_score += 300
+                        # Boost cities that are closer in length to query (ankara is better than ankaran for "ankar")
+                        length_diff = abs(len(city_lower) - len(query_lower))
+                        if length_diff <= 2:  # Very close match
+                            match_score += 200
+                        elif length_diff <= 5:
+                            match_score += 100
+                        match_type = 'prefix'
+                    # Contains match for single word queries - "ankar" in "ankara" (but not at start)
                     elif len(query_words) == 1 and query_lower in city_lower:
-                        matches = True
+                        # Check if it's a close match (query is at the start of the word)
+                        pos = city_lower.find(query_lower)
+                        if pos == 0:
+                            match_score = 1000  # Should have been caught above, but just in case
+                            match_type = 'prefix'
+                        elif pos <= 2:  # Very close to start
+                            match_score = 500
+                            match_type = 'near_prefix'
+                        else:
+                            match_score = 100  # Lower priority for contains matches
+                            match_type = 'contains'
                     # Word-by-word prefix match for multi-word queries
                     elif len(query_words) > 1:
                         city_words = city_lower.split()
@@ -853,12 +877,19 @@ def api_city_suggestions():
                                     all_match = False
                                     break
                             if all_match:
-                                matches = True
+                                match_score = 800
+                                match_type = 'word_prefix'
                     # Last resort: check if query is a substring (for cases like "ankar" -> "ankara")
                     elif query_lower in city_lower and len(query_lower) >= 4:  # Only for queries 4+ chars to avoid false positives
-                        matches = True
+                        pos = city_lower.find(query_lower)
+                        if pos <= 2:  # Close to start
+                            match_score = 300
+                            match_type = 'near_start'
+                        else:
+                            match_score = 50  # Very low priority
+                            match_type = 'contains'
                     
-                    if matches:
+                    if match_score > 0:
                         # Use Nominatim to resolve and normalize state name
                         state = admin_name1
                         if state and lat and lon:
@@ -893,11 +924,21 @@ def api_city_suggestions():
                                 'province': state,
                                 'region': state,
                                 'country': country_name
-                            }
+                            },
+                            '_match_score': match_score,  # Internal scoring for sorting
+                            '_match_type': match_type
                         }
                         filtered_data.append(converted_item)
                 
                 if filtered_data:
+                    # Sort by match score (highest first), then by city name length (shorter = more precise)
+                    filtered_data.sort(key=lambda x: (-x.get('_match_score', 0), len(x.get('display_name', ''))))
+                    
+                    # Remove internal scoring fields before returning
+                    for item in filtered_data:
+                        item.pop('_match_score', None)
+                        item.pop('_match_type', None)
+                    
                     return jsonify(filtered_data[:10]), 200
         except Exception as e:
             print(f"Geonames API error: {e}, trying Photon")
@@ -925,13 +966,27 @@ def api_city_suggestions():
                     if place_type not in ['city', 'town', 'village', 'municipality']:
                         continue
                     
-                    # Strict matching - must actually match the query
+                    # Matching with scoring - prioritize exact prefix matches
                     city_lower = city_name.lower()
-                    matches = False
+                    match_score = 0
+                    match_type = None
                     
-                    # Direct prefix match (best)
+                    # Direct prefix match (best) - "ankar" matches "ankara" exactly
                     if city_lower.startswith(query_lower):
-                        matches = True
+                        match_score = 1000
+                        match_type = 'prefix'
+                    # Contains match for single word queries
+                    elif len(query_words) == 1 and query_lower in city_lower:
+                        pos = city_lower.find(query_lower)
+                        if pos == 0:
+                            match_score = 1000
+                            match_type = 'prefix'
+                        elif pos <= 2:
+                            match_score = 500
+                            match_type = 'near_prefix'
+                        else:
+                            match_score = 100
+                            match_type = 'contains'
                     # Word-by-word prefix match (e.g., "los angel" matches "los angeles")
                     elif len(query_words) > 1:
                         city_words = city_lower.split()
@@ -942,15 +997,19 @@ def api_city_suggestions():
                                     all_match = False
                                     break
                             if all_match:
-                                matches = True
-                    # Contains match (only if single word query) - "ankar" in "ankara"
-                    elif len(query_words) == 1 and query_lower in city_lower:
-                        matches = True
-                    # Last resort: check if query is a substring (for cases like "ankar" -> "ankara")
-                    elif query_lower in city_lower and len(query_lower) >= 4:  # Only for queries 4+ chars to avoid false positives
-                        matches = True
+                                match_score = 800
+                                match_type = 'word_prefix'
+                    # Last resort: check if query is a substring
+                    elif query_lower in city_lower and len(query_lower) >= 4:
+                        pos = city_lower.find(query_lower)
+                        if pos <= 2:
+                            match_score = 300
+                            match_type = 'near_start'
+                        else:
+                            match_score = 50
+                            match_type = 'contains'
                     
-                    if matches:
+                    if match_score > 0:
                         # Convert to Nominatim-like format
                         coords = geometry.get('coordinates', [])
                         country = props.get('country', '')
@@ -993,11 +1052,20 @@ def api_city_suggestions():
                                 'province': state,
                                 'region': state,
                                 'country': country
-                            }
+                            },
+                            '_match_score': match_score,
+                            '_match_type': match_type
                         }
                         filtered_data.append(converted_item)
                 
                 if filtered_data:
+                    # Sort by match score (highest first), then by city name length (shorter first)
+                    # This ensures "ankara" (shorter, exact prefix) comes before "ankaran" (longer, also prefix)
+                    filtered_data.sort(key=lambda x: (-x.get('_match_score', 0), len(x.get('display_name', ''))))
+                    # Remove internal scoring fields before returning
+                    for item in filtered_data:
+                        item.pop('_match_score', None)
+                        item.pop('_match_type', None)
                     return jsonify(filtered_data[:10]), 200
         except Exception as e:
             print(f"Photon API error: {e}, falling back to Nominatim")
@@ -1074,9 +1142,15 @@ def api_city_suggestions():
                         if len(filtered_data) >= 20:
                             break
                 
-                # If we have good matches, return them
+                # If we have good matches, sort and return them
                 if len(filtered_data) > 0:
-                    return jsonify(filtered_data), 200
+                    # Sort by match score (highest first), then by city name length (shorter first)
+                    filtered_data.sort(key=lambda x: (-x.get('_match_score', 0), len(x.get('display_name', ''))))
+                    # Remove internal scoring fields before returning
+                    for item in filtered_data:
+                        item.pop('_match_score', None)
+                        item.pop('_match_type', None)
+                    return jsonify(filtered_data[:10]), 200
                 
                 # If no good matches from Nominatim, try Geonames as fallback
                 # Geonames is often more accurate for city searches
