@@ -473,6 +473,108 @@ def translate_location_name(city, state, country, target_lang='en'):
     _translation_cache[cache_key] = result
     return result
 
+def verify_location_exists(city, country, state=None):
+    """
+    Verify that a location (city, state, country) actually exists using Nominatim API.
+    Returns True if location is found, False otherwise.
+    This prevents scraping non-existent places.
+    """
+    if not city or not country:
+        return False
+    
+    import urllib.request
+    import json
+    import urllib.parse
+    
+    # Build search query
+    location_parts = [city]
+    if state:
+        location_parts.append(state)
+    location_parts.append(country)
+    search_query = ', '.join(location_parts)
+    
+    # Check cache first (use session cache)
+    cache_key = f"verified_location_{search_query.lower()}"
+    cached = session.get(cache_key)
+    if cached is not None:
+        return cached
+    
+    try:
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(search_query)}&format=json&limit=5&addressdetails=1&accept-language=en"
+        
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'CineStream/1.0'
+        })
+        
+        with urllib.request.urlopen(req, timeout=3) as response:
+            results = json.loads(response.read().decode())
+            
+            if not results or len(results) == 0:
+                # No results found - location doesn't exist
+                session[cache_key] = False
+                return False
+            
+            # Check if any result matches the location
+            city_lower = city.lower()
+            country_lower = country.lower()
+            state_lower = state.lower() if state else ''
+            
+            for result in results:
+                address = result.get('address', {})
+                result_city = (address.get('city') or 
+                             address.get('town') or 
+                             address.get('village') or 
+                             address.get('municipality') or '').lower()
+                result_country = (address.get('country') or '').lower()
+                result_state = (address.get('state') or 
+                              address.get('province') or 
+                              address.get('region') or '').lower()
+                
+                # Check if country matches
+                if result_country:
+                    if country_lower not in result_country and result_country not in country_lower:
+                        continue
+                
+                # Check if city matches (fuzzy matching)
+                if result_city:
+                    # Exact or substring match
+                    if city_lower in result_city or result_city in city_lower:
+                        # If state is provided, check it matches too
+                        if state_lower:
+                            if result_state and (state_lower in result_state or result_state in state_lower):
+                                session[cache_key] = True
+                                return True
+                        else:
+                            # No state provided, city and country match is enough
+                            session[cache_key] = True
+                            return True
+                    
+                    # Word-based matching (e.g., "New York" matches "New York City")
+                    city_words = [w for w in city_lower.split() if len(w) > 2]
+                    result_city_words = [w for w in result_city.split() if len(w) > 2]
+                    matching_words = sum(1 for w in city_words if w in result_city_words)
+                    
+                    if matching_words >= min(len(city_words), 2):
+                        # If state is provided, check it matches too
+                        if state_lower:
+                            if result_state and (state_lower in result_state or result_state in state_lower):
+                                session[cache_key] = True
+                                return True
+                        else:
+                            session[cache_key] = True
+                            return True
+            
+            # No matching result found
+            session[cache_key] = False
+            return False
+            
+    except Exception as e:
+        print(f"Location verification error for {search_query}: {e}")
+        # On error, don't block - but log it
+        # Return False to be safe (prevent scraping invalid locations)
+        session[cache_key] = False
+        return False
+
 def normalize_location_names_together(city, state, country):
     """
     Optimized: Normalize city, state, and country in a single Nominatim API call.
@@ -851,8 +953,11 @@ def api_scrape():
     if state and len(state) < 2:
         return jsonify({'error': 'State/Province name is too short'}), 400
     
-    # Note: Location validation is done on the frontend to save API calls and reduce latency
-    # We trust the frontend validation and only normalize names here for consistency
+    # Verify location exists before scraping (backend validation)
+    # This prevents scraping non-existent places even if frontend validation is bypassed
+    location_valid = verify_location_exists(city, country, state)
+    if not location_valid:
+        return jsonify({'error': 'Location not found. Please verify the city, state, and country names are correct.'}), 400
     
     # Optimize: Normalize all location names in a single API call when possible
     # This reduces Nominatim API calls from 3 to 1 when we have city, state, and country
@@ -882,15 +987,57 @@ def api_scrape():
     else:
         location_id = f"{city}, {country}"
     
-    # Check if location exists and is fresh (within last 24 hours)
+    # Check if we have complete data (all 14 days) - if so, just return it without scraping
+    from datetime import timedelta, timezone
+    now_utc = datetime.now(timezone.utc)
+    today = now_utc.date()
+    two_weeks_from_today = today + timedelta(days=14)
+    
+    # Check if we have data for all dates
+    movies = list(db.movies.find({'city_id': location_id}))
+    if movies:
+        # Collect all unique dates that have showtimes
+        dates_with_data = set()
+        for movie in movies:
+            theaters = movie.get('theaters', [])
+            for theater in theaters:
+                showtimes = theater.get('showtimes', [])
+                for st in showtimes:
+                    start_time = st.get('start_time')
+                    if isinstance(start_time, datetime):
+                        # Convert to UTC for comparison
+                        if start_time.tzinfo is None:
+                            start_time_utc = start_time.replace(tzinfo=timezone.utc)
+                        else:
+                            start_time_utc = start_time.astimezone(timezone.utc)
+                        # Get the date (ignore time)
+                        date_with_data = start_time_utc.date()
+                        dates_with_data.add(date_with_data)
+        
+        # Check if we have data for all dates from today to 2 weeks ahead
+        all_dates_present = True
+        current_date = today
+        while current_date <= two_weeks_from_today:
+            if current_date not in dates_with_data:
+                all_dates_present = False
+                break
+            current_date += timedelta(days=1)
+        
+        if all_dates_present:
+            # We have complete data (all 14 days) - just return it without scraping
+            showtimes = get_showtimes_for_city(location_id)
+            return jsonify({
+                'status': 'fresh', 
+                'message': 'Data is up to date (2 weeks coverage)',
+                'showtimes': showtimes
+            })
+    
+    # Check if location exists and is fresh (within last 24 hours) - also return without scraping
     location = db.locations.find_one({'city_name': location_id})
     if location and location.get('status') == 'fresh':
         last_updated = location.get('last_updated')
         if last_updated and isinstance(last_updated, datetime):
             # Handle both timezone-aware and naive datetimes
-            from datetime import timezone
-            now_utc = datetime.now(timezone.utc)
-            
             if last_updated.tzinfo is None:
                 # Naive datetime - assume UTC and convert
                 last_updated_utc = last_updated.replace(tzinfo=timezone.utc)
@@ -909,7 +1056,7 @@ def api_scrape():
                 })
     
     # Try to acquire lock with priority (on-demand requests take precedence)
-    # On-demand can override scraping-agent and daily-refresh locks immediately
+    # On-demand can override daily-refresh locks immediately
     if not acquire_lock(db, location_id, lock_source='on-demand', priority=True):
         # Check what's holding the lock
         lock_info = get_lock_info(db, location_id)
@@ -921,9 +1068,6 @@ def api_scrape():
             elif source == 'daily-refresh':
                 # This shouldn't happen if override worked, but handle it anyway
                 message = 'Daily refresh is currently running. Your request should override it - please try again in a moment.'
-            elif source == 'scraping-agent':
-                # This shouldn't happen if override worked, but handle it anyway
-                message = 'A scraping agent is processing this city. Your request should override it - please try again in a moment.'
             else:
                 message = 'Scraping already in progress'
         else:
@@ -932,10 +1076,21 @@ def api_scrape():
         return jsonify({'status': 'processing', 'message': message}), 202
     
     try:
-        # Determine date range to scrape (incremental scraping)
+        # Determine date range to scrape (incremental scraping - only missing days)
         date_start, date_end = get_date_range_to_scrape(location_id)
         
-        # Spawn AI agent to scrape
+        # Check if there's actually a date range to scrape (if all dates are present, range will be very small)
+        time_diff = (date_end - date_start).total_seconds()
+        if time_diff < 3600:  # Less than 1 hour means no real date range to scrape
+            # All dates are already present - just return existing data
+            showtimes = get_showtimes_for_city(location_id)
+            return jsonify({
+                'status': 'fresh',
+                'message': 'Data is up to date (all dates covered)',
+                'showtimes': showtimes
+            })
+        
+        # Spawn AI agent to scrape only the missing date range
         agent = ClaudeAgent()
         result = agent.scrape_city_showtimes(city, country, state, date_start, date_end)
         
@@ -1158,24 +1313,27 @@ def api_scrape():
 
 def get_date_range_to_scrape(city_id):
     """
-    Determine what date range needs to be scraped.
-    Returns (start_date, end_date) - if we have 2 weeks of data, only scrape the missing day.
+    Determine what date range needs to be scraped (incremental - only missing days).
+    Only scrapes missing days up to 2 weeks total from today.
+    Returns (start_date, end_date) - only the missing date range.
+    
+    Example: If we have 5 days of data, only scrape days 6-14 (to complete 2 weeks).
     """
     from datetime import timedelta, timezone
     
     now = datetime.now(timezone.utc)
-    two_weeks_from_now = now + timedelta(days=14)
+    today = now.date()
+    two_weeks_from_today = today + timedelta(days=14)
     
     # Find all movies for this city
     movies = list(db.movies.find({'city_id': city_id}))
     
     if not movies:
-        # No data yet, scrape full range
-        return now, two_weeks_from_now
+        # No data yet, scrape full 2 weeks range
+        return now, datetime.combine(two_weeks_from_today, datetime.max.time()).replace(tzinfo=timezone.utc)
     
-    # Find the latest showtime date across all movies
-    # Convert all to UTC for comparison, but this is just for determining date range
-    latest_date_utc = None
+    # Collect all unique dates that have showtimes
+    dates_with_data = set()
     for movie in movies:
         theaters = movie.get('theaters', [])
         for theater in theaters:
@@ -1188,29 +1346,37 @@ def get_date_range_to_scrape(city_id):
                         start_time_utc = start_time.replace(tzinfo=timezone.utc)
                     else:
                         start_time_utc = start_time.astimezone(timezone.utc)
-                    if latest_date_utc is None or start_time_utc > latest_date_utc:
-                        latest_date_utc = start_time_utc
+                    # Get the date (ignore time)
+                    date_with_data = start_time_utc.date()
+                    dates_with_data.add(date_with_data)
     
-    latest_date = latest_date_utc
-    
-    if latest_date is None:
+    if not dates_with_data:
         # No valid showtimes found, scrape full range
-        return now, two_weeks_from_now
+        return now, datetime.combine(two_weeks_from_today, datetime.max.time()).replace(tzinfo=timezone.utc)
     
-    # Check if we have data up to 2 weeks ahead
-    target_end = now + timedelta(days=14)
+    # Find missing dates between today and 2 weeks from today
+    missing_dates = []
+    current_date = today
+    while current_date <= two_weeks_from_today:
+        if current_date not in dates_with_data:
+            missing_dates.append(current_date)
+        current_date += timedelta(days=1)
     
-    # If we already have data up to 2 weeks, only scrape the new day (2 weeks from now)
-    if latest_date >= target_end - timedelta(days=1):
-        # We have most data, only scrape the missing day
-        scrape_start = target_end - timedelta(days=1)
-        scrape_end = target_end
-        return scrape_start, scrape_end
-    else:
-        # We're missing data, scrape from latest_date to 2 weeks ahead
-        scrape_start = max(now, latest_date - timedelta(hours=1))  # Start from now or slightly before latest
-        scrape_end = target_end
-        return scrape_start, scrape_end
+    if not missing_dates:
+        # We already have all 14 days, no scraping needed
+        # Return a very small range (just today) to indicate no new data needed
+        # But the caller should handle this case
+        return now, now + timedelta(hours=1)
+    
+    # Scrape only the missing date range
+    scrape_start_date = min(missing_dates)
+    scrape_end_date = max(missing_dates)
+    
+    # Convert to datetime (start of first missing day, end of last missing day)
+    scrape_start = datetime.combine(scrape_start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+    scrape_end = datetime.combine(scrape_end_date, datetime.max.time()).replace(tzinfo=timezone.utc)
+    
+    return scrape_start, scrape_end
 
 def get_showtimes_for_city(city_name):
     """Helper to get formatted showtimes for a city (flattened from movies structure)"""

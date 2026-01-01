@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 APP_NAME="${APP_NAME:-cinestream}"
 APP_DIR="/var/www/${APP_NAME}"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKER_COUNT=20
+WORKER_COUNT=12
 START_PORT=8001
 P_CORES="0-5"      # P-cores for MongoDB and Nginx
 E_CORES="6-13"     # E-cores for Python apps
@@ -858,22 +858,14 @@ EOF
 }
 
 # Create scraping agent services (20 agents with load balancing)
+# Scraping agents removed - only on-demand scraping is used now
+# This function is kept for compatibility but only cleans up existing agents
 create_scraping_agents() {
     local app_name="${1:-${APP_NAME}}"
-    local app_dir="/var/www/${app_name}"
-    local total_agents=20
-    
-    log_step "Creating ${total_agents} scraping agent services for ${app_name}..."
-    
-    if [[ ! -f "${app_dir}/.deploy_config" ]]; then
-        log_error "Configuration file not found: ${app_dir}/.deploy_config"
-        return 1
-    fi
-    
-    source "${app_dir}/.deploy_config"
+    log_info "Scraping agents removed - only on-demand scraping is used now"
+    log_info "Cleaning up any existing scraping agent services and timers..."
     
     # Stop and disable any existing scraping agent services and timers
-    log_info "Cleaning up any existing scraping agent services and timers..."
     for service in /etc/systemd/system/${app_name}-scraping-agent-*.service; do
         if [[ -f "$service" ]]; then
             local service_name=$(basename "$service")
@@ -890,88 +882,8 @@ create_scraping_agents() {
             rm -f "$timer"
         fi
     done
-    
-    local created_count=0
-    
-    # Create 20 scraping agent services (agent-0 through agent-19)
-    for agent_id in $(seq 0 $((total_agents - 1))); do
-        log_info "Creating scraping agent service: agent-${agent_id}"
-        
-        # Create systemd service for this scraping agent (runs once per day)
-        # Each service runs as a completely separate process for true parallel execution
-        local service_name="${app_name}-scraping-agent-${agent_id}.service"
-        cat > "/etc/systemd/system/${service_name}" <<EOF
-[Unit]
-Description=${app_name} Scraping Agent #${agent_id} (daily, load balanced)
-After=network.target mongodb.service
-# No dependencies on other agents - runs independently in parallel
-
-[Service]
-Type=oneshot
-# Each scraping agent runs as a separate OS process for true parallel execution
-# 20 agents run simultaneously once daily, each processing a subset of cities (load balanced)
-CPUAffinity=${E_CORES}
-WorkingDirectory=${app_dir}
-Environment="PATH=${app_dir}/venv/bin:/usr/local/bin:/usr/bin:/bin"
-# Run as separate Python process - bypasses GIL, enables true parallelism
-# Agent ID determines which cities it processes: (hash(city_name) % 20 == agent_id)
-ExecStart=${app_dir}/venv/bin/python ${app_dir}/src/scripts/scraping_agent.py --agent-id ${agent_id}
-# Allow multiple instances to run in parallel (no conflicts - load balanced)
-ExecStartPost=/bin/bash -c 'sleep 1 && /usr/local/bin/cinestream-set-cpu-affinity.sh python || true'
-EOF
-        
-        # Create systemd timer for this scraping agent (runs daily at 06:00 AM)
-        local timer_name="${app_name}-scraping-agent-${agent_id}.timer"
-        cat > "/etc/systemd/system/${timer_name}" <<EOF
-[Unit]
-Description=${app_name} Scraping Agent #${agent_id} Timer (daily at 06:00)
-Requires=${service_name}
-
-[Timer]
-# Run daily at 06:00 AM
-OnCalendar=*-*-* 06:00:00
-# Run immediately if missed (e.g., server was down)
-Persistent=true
-# Add random delay (0-300 seconds) to spread load across agents
-RandomizedDelaySec=300
-# Specify which service to trigger
-Unit=${service_name}
-
-[Install]
-WantedBy=timers.target
-EOF
-        
-        if [[ $? -eq 0 ]]; then
-            created_count=$((created_count + 1))
-            log_info "  ✓ Created ${service_name} and ${timer_name} (runs daily at 06:00 AM)"
-        else
-            log_error "  ✗ Failed to create ${service_name}"
-        fi
-    done
-    
-    # Reload systemd daemon once after creating all services/timers
-    if [[ $created_count -gt 0 ]]; then
-        systemctl daemon-reload
-        log_info "Systemd daemon reloaded"
-        
-        # Enable all timers
-        for agent_id in $(seq 0 $((total_agents - 1))); do
-            local timer_name="${app_name}-scraping-agent-${agent_id}.timer"
-            if [[ -f "/etc/systemd/system/${timer_name}" ]]; then
-                systemctl enable "${timer_name}" 2>/dev/null || log_warn "Failed to enable ${timer_name}"
-            fi
-        done
-    fi
-    
-    log_info "Created ${created_count}/${total_agents} scraping agent service(s) and timer(s)"
-    
-    # Update .deploy_config with scraping agents info
-    if ! grep -q "^SCRAPING_AGENTS=" "${app_dir}/.deploy_config"; then
-        echo "SCRAPING_AGENTS=${total_agents}" >> "${app_dir}/.deploy_config"
-    else
-        sed -i "s|^SCRAPING_AGENTS=.*|SCRAPING_AGENTS=${total_agents}|" "${app_dir}/.deploy_config"
-    fi
-    
+    systemctl daemon-reload
+    log_info "Cleanup complete"
     return 0
 }
 
@@ -1362,14 +1274,7 @@ enable_autostart() {
                 systemctl enable "${target_name}@${port}.service" 2>/dev/null || true
             done
             
-            # Enable all scraping agent timers for this app (20 agents with load balancing, run daily)
-            log_info "Enabling autostart for 20 ${target_name} scraping agent timers (daily at 06:00 AM)..."
-            for agent_id in $(seq 0 19); do
-                local scraping_timer="${target_name}-scraping-agent-${agent_id}.timer"
-                if [[ -f "/etc/systemd/system/${scraping_timer}" ]]; then
-                    systemctl enable "${scraping_timer}" 2>/dev/null || true
-                fi
-            done
+            # Scraping agents removed - only on-demand scraping is used now
         fi
     done
     
@@ -1381,20 +1286,14 @@ enable_autostart() {
         fi
     done
     
-    # Also enable any scraping agent timers found in systemd (fallback)
-    for timer in /etc/systemd/system/${APP_NAME}-scraping-agent-*.timer; do
-        if [[ -f "$timer" ]]; then
-            local timer_name=$(basename "$timer")
-            systemctl enable "${timer_name}" 2>/dev/null || true
-        fi
-    done
+    # Scraping agents removed - only on-demand scraping is used now
     
     # Enable master startup target
     if [[ -f /etc/systemd/system/cinestream.target ]]; then
         systemctl enable cinestream.target 2>/dev/null || true
     fi
     
-    log_info "Autostart enabled for all services, workers, and scraping agents"
+    log_info "Autostart enabled for all services and workers"
     
     # Also start all services now
     log_step "Starting all services..."
@@ -1447,8 +1346,7 @@ EOF
     # Create worker services
     create_worker_services "${APP_NAME}"
     
-    # Create scraping agent services (20 agents with load balancing)
-    create_scraping_agents "${APP_NAME}"
+    # Note: Scraping agents removed - only on-demand scraping is used now
     
     # Configure Nginx
     configure_nginx "${APP_NAME}"
@@ -1463,10 +1361,10 @@ EOF
         log_warn "Database not initialized. Update ANTHROPIC_API_KEY in ${app_dir}/.env and run: ${app_dir}/venv/bin/python ${app_dir}/src/scripts/init_db.py"
     fi
     
-    # Start all services (MongoDB, Nginx, and all 20 workers 8001-8020)
+    # Start all services (MongoDB, Nginx, and all workers)
     start_all
     
-    # Enable autostart for all services (including all 20 workers 8001-8020)
+    # Enable autostart for all services (including all workers)
     # This must be done AFTER services are started to ensure they're properly configured
     log_info "Enabling autostart for all services..."
     enable_autostart
@@ -2327,21 +2225,7 @@ start_all() {
                 done
             fi
             
-            # Enable scraping agent timers (they run daily at 06:00 AM, not continuously)
-            log_info "Enabling scraping agent timers for ${app_name} (run daily at 06:00 AM)..."
-            local scraping_enabled=0
-            for timer in /etc/systemd/system/${app_name}-scraping-agent-*.timer; do
-                if [[ -f "$timer" ]]; then
-                    local timer_name=$(basename "$timer")
-                    if systemctl enable "${timer_name}" 2>/dev/null && systemctl start "${timer_name}" 2>/dev/null; then
-                        log_info "  ✓ ${timer_name} - enabled (runs daily at 06:00 AM)"
-                        scraping_enabled=$((scraping_enabled + 1))
-                    fi
-                fi
-            done
-            if [[ $scraping_enabled -gt 0 ]]; then
-                log_info "  Enabled ${scraping_enabled} scraping agent timer(s) - will run daily at 06:00 AM with load balancing"
-            fi
+            # Scraping agents removed - only on-demand scraping is used now
         fi
     done
     
@@ -2459,23 +2343,8 @@ main() {
             verify_workers "${2:-${APP_NAME}}"
             ;;
         create-scraping-agents)
-            check_root
+            log_warn "Scraping agents removed - only on-demand scraping is used now"
             create_scraping_agents "${2:-${APP_NAME}}"
-            log_info "Enabling scraping agent timers (run daily at 06:00 AM)..."
-            local app_name="${2:-${APP_NAME}}"
-            local enabled_count=0
-            for timer in /etc/systemd/system/${app_name}-scraping-agent-*.timer; do
-                if [[ -f "$timer" ]]; then
-                    local timer_name=$(basename "$timer")
-                    if systemctl enable "${timer_name}" 2>/dev/null && systemctl start "${timer_name}" 2>/dev/null; then
-                        log_info "  ✓ Enabled ${timer_name} - runs daily at 06:00 AM"
-                        enabled_count=$((enabled_count + 1))
-                    else
-                        log_warn "  ✗ Failed to enable ${timer_name}"
-                    fi
-                fi
-            done
-            log_info "Enabled ${enabled_count} scraping agent timer(s) - will run daily at 06:00 AM with load balancing"
             ;;
         *)
             echo "CineStream Deployment Script"
@@ -2492,7 +2361,7 @@ main() {
             echo "  stop-all                Stop all services"
             echo "  enable-autostart        Enable autostart for all services"
             echo "  reconfigure-nginx       Reconfigure Nginx for application"
-            echo "  create-scraping-agents  Create/update 20 scraping agent timers (daily at 06:00 AM, load balanced)"
+            echo "  create-scraping-agents  (Deprecated - scraping agents removed, only on-demand scraping used)"
             echo "  test-backend            Test backend workers and Nginx config"
             echo "  check-duplicates        Check for duplicate systemd services"
             echo "  test-load-balancing     Test load balancing distribution"

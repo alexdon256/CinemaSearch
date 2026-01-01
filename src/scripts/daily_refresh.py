@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Daily Background Refresh Job (DEPRECATED - Replaced by scraping agents)
+Daily Background Refresh Job
 Runs at 06:00 AM daily for image cleanup only
 
-NOTE: This script has been replaced by 20 scraping agents (scraping_agent.py) that run daily.
-- 20 scraping agents handle all scraping operations (load balanced, run daily at 06:00 AM)
-- This script now only handles image cleanup
-- Scraping agents replace the old daily refresh functionality with load-balanced parallel processing
+NOTE: All scraping is now handled on-demand by user requests.
+- This script only handles image cleanup
+- No automatic daily scraping - only on-demand scraping is used
 """
 
 import os
@@ -25,10 +24,10 @@ load_dotenv()
 def refresh_all_cities():
     """
     Perform daily image cleanup only.
-    All scraping is now handled by 20 scraping agents (scraping_agent.py) that run daily.
+    All scraping is now handled on-demand by user requests.
     """
     print(f"[{datetime.now(timezone.utc)}] Starting daily image cleanup job...")
-    print("NOTE: All scraping is now handled by 20 scraping agents (scraping_agent.py)")
+    print("NOTE: All scraping is now handled on-demand by user requests.")
     print("This script only performs image cleanup.")
     print()
     

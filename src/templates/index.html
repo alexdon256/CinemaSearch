@@ -387,6 +387,7 @@
             top: 100%;
             left: 0;
             right: 0;
+            width: 100%;
             background: var(--charcoal);
             border: 1px solid rgba(255, 255, 255, 0.2);
             border-top: none;
@@ -395,10 +396,14 @@
             overflow-y: auto;
             z-index: 1000;
             display: none;
+            visibility: hidden;
+            opacity: 0;
         }
         
         .suggestions-dropdown.show {
-            display: block;
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
         }
         
         .suggestion-item {
@@ -816,6 +821,7 @@
             top: 100%;
             left: 0;
             right: 0;
+            width: 100%;
             background: var(--charcoal);
             border: 1px solid rgba(255, 255, 255, 0.2);
             border-top: none;
@@ -824,10 +830,14 @@
             overflow-y: auto;
             z-index: 1000;
             display: none;
+            visibility: hidden;
+            opacity: 0;
         }
         
         .country-dropdown.show {
-            display: block;
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
         }
         
         .country-option {
@@ -1672,6 +1682,68 @@
             };
         }
         
+        // Polyfill for classList.add/remove if not fully supported (old Android)
+        if (typeof Element !== 'undefined' && Element.prototype) {
+            if (!Element.prototype.classList || !Element.prototype.classList.add) {
+                // Basic classList polyfill
+                Element.prototype.classList = {
+                    add: function(className) {
+                        if (this.className.indexOf(className) === -1) {
+                            this.className += (this.className ? ' ' : '') + className;
+                        }
+                    },
+                    remove: function(className) {
+                        this.className = this.className.replace(new RegExp('(^|\\s)' + className + '(\\s|$)', 'g'), ' ').trim();
+                    },
+                    contains: function(className) {
+                        return this.className.indexOf(className) !== -1;
+                    },
+                    toggle: function(className) {
+                        if (this.classList.contains(className)) {
+                            this.classList.remove(className);
+                        } else {
+                            this.classList.add(className);
+                        }
+                    }
+                };
+            }
+        }
+        
+        // Helper function to safely add/remove classes (works on all browsers)
+        function addClass(element, className) {
+            if (!element) return;
+            if (element.classList && element.classList.add) {
+                element.classList.add(className);
+            } else {
+                // Fallback for browsers without classList
+                var currentClasses = element.className || '';
+                if (currentClasses.indexOf(className) === -1) {
+                    element.className = currentClasses + (currentClasses ? ' ' : '') + className;
+                }
+            }
+        }
+        
+        function removeClass(element, className) {
+            if (!element) return;
+            if (element.classList && element.classList.remove) {
+                element.classList.remove(className);
+            } else {
+                // Fallback for browsers without classList
+                var currentClasses = element.className || '';
+                element.className = currentClasses.replace(new RegExp('(^|\\s)' + className + '(\\s|$)', 'g'), ' ').trim();
+            }
+        }
+        
+        function hasClass(element, className) {
+            if (!element) return false;
+            if (element.classList && element.classList.contains) {
+                return element.classList.contains(className);
+            } else {
+                var currentClasses = element.className || '';
+                return currentClasses.indexOf(className) !== -1;
+            }
+        }
+        
         // Polyfill for Array.find (for IE11 and older)
         if (!supportsArrayFind) {
             Array.prototype.find = function(predicate) {
@@ -2243,7 +2315,8 @@
                 selectedCountryIndex = -1;
                 
                 if (query.length === 0) {
-                    countryDropdown.classList.remove('show');
+                    removeClass(countryDropdown, 'show');
+                    if (countryDropdown) countryDropdown.style.display = 'none';
                     countrySelect.value = '';
                     selectedCountryIndex = -1;
                     return;
@@ -2260,7 +2333,8 @@
                     
                     countryDropdown.innerHTML = '';
                     if (filtered.length === 0) {
-                        countryDropdown.classList.remove('show');
+                        removeClass(countryDropdown, 'show');
+                    if (countryDropdown) countryDropdown.style.display = 'none';
                         return;
                     }
                     
@@ -2275,7 +2349,8 @@
                             return function() {
                                 countryInput.value = countryName;
                                 countrySelect.value = countryName;
-                                countryDropdown.classList.remove('show');
+                                removeClass(countryDropdown, 'show');
+                    if (countryDropdown) countryDropdown.style.display = 'none';
                                 selectedCountryIndex = -1; // Reset selection
                             };
                         }(country);
@@ -2284,7 +2359,9 @@
                         countryDropdown.appendChild(div);
                     }
                     
-                    countryDropdown.classList.add('show');
+                    addClass(countryDropdown, 'show');
+                    countryDropdown.style.display = 'block'; // Explicit fallback for old browsers
+                    countryDropdown.style.visibility = 'visible'; // Additional fallback
                     selectedCountryIndex = -1; // Reset selection when new suggestions are shown
                 }, 200);
             });
@@ -2294,7 +2371,7 @@
         countryInput.addEventListener('keydown', function(e) {
             var countryOptions = countryDropdown.querySelectorAll('.country-option');
             
-            if (!countryDropdown.classList.contains('show') || countryOptions.length === 0) {
+            if (!hasClass(countryDropdown, 'show') || countryOptions.length === 0) {
                 // If suggestions are not visible, allow Enter key to work normally
                 return;
             }
@@ -2318,13 +2395,15 @@
                         countryOptions[selectedCountryIndex].click();
                     } else {
                         // If no selection, close dropdown
-                        countryDropdown.classList.remove('show');
+                        removeClass(countryDropdown, 'show');
+                    if (countryDropdown) countryDropdown.style.display = 'none';
                         selectedCountryIndex = -1;
                     }
                     break;
                 case 'Escape':
                     e.preventDefault();
-                    countryDropdown.classList.remove('show');
+                    removeClass(countryDropdown, 'show');
+                    if (countryDropdown) countryDropdown.style.display = 'none';
                     selectedCountryIndex = -1;
                     break;
             }
@@ -2353,7 +2432,8 @@
                 
                 if (query.length < 2) {
                     if (citySuggestions) {
-                        citySuggestions.classList.remove('show');
+                        removeClass(citySuggestions, 'show');
+                        citySuggestions.style.display = 'none'; // Explicit fallback for old browsers
                     }
                     return;
                 }
@@ -2395,7 +2475,8 @@
                 if (!response.ok) {
                     console.error('Nominatim API error:', response.status, response.statusText);
                     if (citySuggestions) {
-                        citySuggestions.classList.remove('show');
+                        removeClass(citySuggestions, 'show');
+                        citySuggestions.style.display = 'none'; // Explicit fallback for old browsers
                     }
                     return null;
                 }
@@ -2404,7 +2485,8 @@
                 if (!results || results.length === 0) {
                     console.log('No results from Nominatim');
                     if (citySuggestions) {
-                        citySuggestions.classList.remove('show');
+                        removeClass(citySuggestions, 'show');
+                        citySuggestions.style.display = 'none'; // Explicit fallback for old browsers
                     }
                     return;
                 }
@@ -2444,7 +2526,8 @@
                 console.error('Autocomplete error:', e);
                 console.error('Error details:', e.message, e.stack);
                 if (citySuggestions) {
-                    citySuggestions.classList.remove('show');
+                    removeClass(citySuggestions, 'show');
+                    if (citySuggestions) citySuggestions.style.display = 'none';
                 }
             });
         }
@@ -2459,7 +2542,8 @@
             
             if (results.length === 0) {
                 console.log('No results to display, hiding suggestions');
-                citySuggestions.classList.remove('show');
+                removeClass(citySuggestions, 'show');
+                if (citySuggestions) citySuggestions.style.display = 'none';
                 selectedSuggestionIndex = -1;
                 return;
             }
@@ -2719,7 +2803,8 @@
                         console.log('Selected location: City="' + cityName + '", State="' + (stateName || '(none)') + '", Country="' + (matchedCountry || countryName) + '"');
                         
                         // Close suggestions
-                        citySuggestions.classList.remove('show');
+                        removeClass(citySuggestions, 'show');
+                    if (citySuggestions) citySuggestions.style.display = 'none';
                         selectedSuggestionIndex = -1;
                     };
                 }(cityName, stateName, countryName));
@@ -2731,8 +2816,10 @@
             
             // Show the suggestions dropdown
             console.log('Showing suggestions dropdown');
-            citySuggestions.classList.add('show');
-            console.log('Suggestions dropdown should now be visible');
+            addClass(citySuggestions, 'show');
+            citySuggestions.style.display = 'block'; // Explicit fallback for old browsers
+            citySuggestions.style.visibility = 'visible'; // Additional fallback
+            console.log('Suggestions dropdown should now be visible, display:', citySuggestions.style.display);
         }
         
         // Complete ISO 3166-1 alpha-2 country codes for Nominatim (matches all countries in list)
@@ -2793,7 +2880,8 @@
         // Hide suggestions when clicking outside
         document.addEventListener('click', function(e) {
             if (!cityInput.contains(e.target) && !citySuggestions.contains(e.target)) {
-                citySuggestions.classList.remove('show');
+                removeClass(citySuggestions, 'show');
+                if (citySuggestions) citySuggestions.style.display = 'none';
             }
         });
         
@@ -3015,11 +3103,12 @@
         cityInput.addEventListener('keydown', function(e) {
             var suggestions = citySuggestions.querySelectorAll('.suggestion-item');
             
-            if (!citySuggestions.classList.contains('show') || suggestions.length === 0) {
+            if (!hasClass(citySuggestions, 'show') || suggestions.length === 0) {
                 // If suggestions are not visible, handle Enter key to search
                 if (e.key === 'Enter') {
                     e.preventDefault();
-                    citySuggestions.classList.remove('show');
+                    removeClass(citySuggestions, 'show');
+                    if (citySuggestions) citySuggestions.style.display = 'none';
                     searchBtn.click();
                 }
                 return;
@@ -3152,16 +3241,19 @@
                         
                         // State is already set above before cityInput.value was set
                         
-                        citySuggestions.classList.remove('show');
+                        removeClass(citySuggestions, 'show');
+                    if (citySuggestions) citySuggestions.style.display = 'none';
                         selectedSuggestionIndex = -1;
                     } else {
-                        citySuggestions.classList.remove('show');
+                        removeClass(citySuggestions, 'show');
+                    if (citySuggestions) citySuggestions.style.display = 'none';
                         searchBtn.click();
                     }
                     break;
                 case 'Escape':
                     e.preventDefault();
-                    citySuggestions.classList.remove('show');
+                    removeClass(citySuggestions, 'show');
+                    if (citySuggestions) citySuggestions.style.display = 'none';
                     selectedSuggestionIndex = -1;
                     break;
             }
@@ -3599,7 +3691,7 @@
                 overlay.classList.remove('show');
                 // Remove overlay after animation
                 setTimeout(() => {
-                    if (overlay && !overlay.classList.contains('show')) {
+                    if (overlay && !hasClass(overlay, 'show')) {
                         overlay.remove();
                     }
                 }, 300);
