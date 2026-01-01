@@ -2988,15 +2988,16 @@
                 
                 // Extract results and limit to top 10
                 var displayResults = [];
+                console.log('Total scored results:', scoredResults.length);
                 for (var j = 0; j < scoredResults.length && j < 10; j++) {
                     displayResults.push(scoredResults[j].result);
                     // Debug logging
-                    console.log('Suggestion', j + 1, ':', getCityName(scoredResults[j].result), '- Score:', scoredResults[j].score);
+                    console.log('Suggestion', j + 1, ':', getCityName(scoredResults[j].result), '- Score:', scoredResults[j].score, '- Display:', scoredResults[j].result.display_name);
                 }
                 
-                // If no filtered results, don't show anything (better than showing irrelevant results)
+                // Always show results if we have any (even if scores are low)
                 if (displayResults.length === 0) {
-                    console.log('No matching results found for query:', query);
+                    console.log('No results to display for query:', query);
                     if (citySuggestions) {
                         hideDropdown(citySuggestions);
                     }
