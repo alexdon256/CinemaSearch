@@ -812,7 +812,10 @@ def api_city_suggestions():
             # For production, register at geonames.org for free account (1000 requests/hour)
             # Use 'q' parameter for better partial matching (fuzzy search) instead of name_startsWith
             # Increase maxRows to get more candidates, then we'll sort and filter
-            geonames_url = f"http://api.geonames.org/searchJSON?q={urllib.parse.quote(query)}&maxRows=30&lang={lang}&style=FULL&username=demo&featureClass=P&orderby=relevance"
+            # Try searching in user's language first, then fall back to English
+            # Geonames supports limited languages, so we check alternate names for Ukrainian/Russian
+            geonames_lang = lang if lang in ['en', 'de', 'fr', 'es', 'it', 'pt', 'ru'] else 'en'
+            geonames_url = f"http://api.geonames.org/searchJSON?q={urllib.parse.quote(query)}&maxRows=30&lang={geonames_lang}&style=FULL&username=demo&featureClass=P&orderby=relevance"
             
             geonames_req = urllib.request.Request(geonames_url, headers={
                 'User-Agent': 'CineStream/1.0'
@@ -828,68 +831,118 @@ def api_city_suggestions():
                         continue
                     
                     city_name = item.get('name', '')
+                    alternate_names = item.get('alternateNames', '')  # Alternate names in different languages
                     country_code = item.get('countryCode', '')
                     admin_name1 = item.get('adminName1', '')  # State/province from Geonames
                     country_name = item.get('countryName', '')
                     lat = item.get('lat', '')
                     lon = item.get('lng', '')
                     
+                    # Parse alternate names (format: "name1|name2|name3" or list of objects)
+                    alternate_names_list = []
+                    if alternate_names:
+                        if isinstance(alternate_names, str):
+                            # Pipe-separated string format
+                            alternate_names_list = [name.strip() for name in alternate_names.split('|') if name.strip()]
+                        elif isinstance(alternate_names, list):
+                            # List format - could be strings or objects with 'name' and 'lang' fields
+                            for alt_item in alternate_names:
+                                if isinstance(alt_item, str):
+                                    alternate_names_list.append(alt_item.strip())
+                                elif isinstance(alt_item, dict):
+                                    alt_name = alt_item.get('name', '').strip()
+                                    alt_lang = alt_item.get('lang', '').strip()
+                                    if alt_name:
+                                        # Prefer names in user's language
+                                        if lang in ['uk', 'ru'] and alt_lang == lang:
+                                            alternate_names_list.insert(0, alt_name)  # Put at front
+                                        else:
+                                            alternate_names_list.append(alt_name)
+                    
+                    # Check all possible city names (primary + alternates) for matching
+                    all_city_names = [city_name] + alternate_names_list
+                    
                     # Flexible matching with scoring - prioritize exact prefix matches
-                    city_lower = city_name.lower()
-                    match_score = 0
+                    best_match_name = city_name
+                    best_match_score = 0
                     match_type = None
                     
-                    # Direct prefix match (best) - "ankar" matches "ankara" exactly
-                    if city_lower.startswith(query_lower):
-                        match_score = 1000  # Base score for prefix match
-                        # Boost capital cities and major cities
-                        if fcode in ['PPLC']:  # Capital city
-                            match_score += 500
-                        elif fcode in ['PPLA']:  # First-order admin division seat
-                            match_score += 300
-                        # Boost cities that are closer in length to query (ankara is better than ankaran for "ankar")
-                        length_diff = abs(len(city_lower) - len(query_lower))
-                        if length_diff <= 2:  # Very close match
-                            match_score += 200
-                        elif length_diff <= 5:
-                            match_score += 100
-                        match_type = 'prefix'
-                    # Contains match for single word queries - "ankar" in "ankara" (but not at start)
-                    elif len(query_words) == 1 and query_lower in city_lower:
-                        # Check if it's a close match (query is at the start of the word)
-                        pos = city_lower.find(query_lower)
-                        if pos == 0:
-                            match_score = 1000  # Should have been caught above, but just in case
-                            match_type = 'prefix'
-                        elif pos <= 2:  # Very close to start
-                            match_score = 500
-                            match_type = 'near_prefix'
-                        else:
-                            match_score = 100  # Lower priority for contains matches
-                            match_type = 'contains'
-                    # Word-by-word prefix match for multi-word queries
-                    elif len(query_words) > 1:
-                        city_words = city_lower.split()
-                        if len(city_words) >= len(query_words):
-                            all_match = True
-                            for i in range(len(query_words)):
-                                if i >= len(city_words) or not city_words[i].startswith(query_words[i]):
-                                    all_match = False
-                                    break
-                            if all_match:
-                                match_score = 800
-                                match_type = 'word_prefix'
-                    # Last resort: check if query is a substring (for cases like "ankar" -> "ankara")
-                    elif query_lower in city_lower and len(query_lower) >= 4:  # Only for queries 4+ chars to avoid false positives
-                        pos = city_lower.find(query_lower)
-                        if pos <= 2:  # Close to start
-                            match_score = 300
-                            match_type = 'near_start'
-                        else:
-                            match_score = 50  # Very low priority
-                            match_type = 'contains'
+                    # Check primary name and all alternate names
+                    for check_name in all_city_names:
+                        check_name_lower = check_name.lower()
+                        current_score = 0
+                        current_type = None
                     
-                    if match_score > 0:
+                        # Direct prefix match (best) - "ankar" matches "ankara" exactly
+                        if check_name_lower.startswith(query_lower):
+                            current_score = 1000  # Base score for prefix match
+                            # Boost capital cities and major cities
+                            if fcode in ['PPLC']:  # Capital city
+                                current_score += 500
+                            elif fcode in ['PPLA']:  # First-order admin division seat
+                                current_score += 300
+                            # Boost cities that are closer in length to query (ankara is better than ankaran for "ankar")
+                            length_diff = abs(len(check_name_lower) - len(query_lower))
+                            if length_diff <= 2:  # Very close match
+                                current_score += 200
+                            elif length_diff <= 5:
+                                current_score += 100
+                            # Boost if it's the primary name (not alternate)
+                            if check_name == city_name:
+                                current_score += 50
+                            current_type = 'prefix'
+                        # Contains match for single word queries - "ankar" in "ankara" (but not at start)
+                        elif len(query_words) == 1 and query_lower in check_name_lower:
+                            # Check if it's a close match (query is at the start of the word)
+                            pos = check_name_lower.find(query_lower)
+                            if pos == 0:
+                                current_score = 1000  # Should have been caught above, but just in case
+                                current_type = 'prefix'
+                            elif pos <= 2:  # Very close to start
+                                current_score = 500
+                                current_type = 'near_prefix'
+                            else:
+                                current_score = 100  # Lower priority for contains matches
+                                current_type = 'contains'
+                        # Word-by-word prefix match for multi-word queries
+                        elif len(query_words) > 1:
+                            check_words = check_name_lower.split()
+                            if len(check_words) >= len(query_words):
+                                all_match = True
+                                for i in range(len(query_words)):
+                                    if i >= len(check_words) or not check_words[i].startswith(query_words[i]):
+                                        all_match = False
+                                        break
+                                if all_match:
+                                    current_score = 800
+                                    current_type = 'word_prefix'
+                        # Last resort: check if query is a substring (for cases like "ankar" -> "ankara")
+                        elif query_lower in check_name_lower and len(query_lower) >= 4:  # Only for queries 4+ chars
+                            pos = check_name_lower.find(query_lower)
+                            if pos <= 2:  # Close to start
+                                current_score = 300
+                                current_type = 'near_start'
+                            else:
+                                current_score = 50  # Very low priority
+                                current_type = 'contains'
+                        
+                        # Keep track of best match
+                        if current_score > best_match_score:
+                            best_match_score = current_score
+                            best_match_name = check_name
+                            match_type = current_type
+                    
+                    # Use the best matching name (might be alternate name in user's language)
+                    if best_match_score > 0:
+                        # If we matched on an alternate name, prefer it if it's in the user's language
+                        display_city_name = best_match_name
+                        if best_match_name != city_name and lang in ['uk', 'ru']:
+                            # Check if alternate name is in the requested language
+                            # Geonames alternate names format: "lang:name" or just "name"
+                            for alt_name in alternate_names_list:
+                                if alt_name.lower() == best_match_name.lower():
+                                    display_city_name = best_match_name
+                                    break
                         # Use Nominatim to resolve and normalize state name
                         state = admin_name1
                         if state and lat and lon:
@@ -913,19 +966,19 @@ def api_city_suggestions():
                                 print(f"Error resolving state from Nominatim for {city_name}: {e}")
                         
                         converted_item = {
-                            'display_name': city_name,
+                            'display_name': display_city_name,
                             'lat': str(lat),
                             'lon': str(lon),
                             'type': 'city' if fcode in ['PPLC', 'PPLA'] else 'town',
                             'class': 'place',
                             'address': {
-                                'city': city_name,
+                                'city': display_city_name,
                                 'state': state,
                                 'province': state,
                                 'region': state,
                                 'country': country_name
                             },
-                            '_match_score': match_score,  # Internal scoring for sorting
+                            '_match_score': best_match_score,  # Internal scoring for sorting
                             '_match_type': match_type
                         }
                         filtered_data.append(converted_item)
