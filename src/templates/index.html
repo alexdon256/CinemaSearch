@@ -88,6 +88,35 @@
             box-shadow: 0 4px 12px rgba(39, 174, 96, 0.4);
         }
         
+        .donate-btn .flag-emoji {
+            display: inline-block;
+        }
+        
+        .donate-btn .flag-fallback {
+            display: none;
+            background: linear-gradient(to bottom, #0057B7 0%, #0057B7 50%, #FFD700 50%, #FFD700 100%);
+            color: transparent;
+            background-clip: text;
+            -webkit-background-clip: text;
+            font-weight: bold;
+            font-size: 0.9em;
+            padding: 0 0.2em;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 2px;
+            background-color: rgba(0, 87, 183, 0.8);
+            color: #FFD700;
+            text-shadow: 0 0 2px rgba(0, 0, 0, 0.3);
+        }
+        
+        /* Fallback for old Android: show text flag if emoji doesn't render */
+        .donate-btn.flag-not-supported .flag-emoji {
+            display: none;
+        }
+        
+        .donate-btn.flag-not-supported .flag-fallback {
+            display: inline-block;
+        }
+        
         .lang-selector {
             display: flex;
             gap: 0.5rem;
@@ -350,6 +379,11 @@
         
         .location-input-group {
             position: relative;
+            overflow: visible; /* Ensure dropdowns are not clipped */
+        }
+        
+        .country-input-group {
+            overflow: visible; /* Ensure dropdowns are not clipped */
         }
         
         .location-input-group input {
@@ -394,7 +428,7 @@
             border-radius: 0 0 5px 5px;
             max-height: 200px;
             overflow-y: auto;
-            z-index: 1000;
+            z-index: 9999;
             display: none;
             visibility: hidden;
             opacity: 0;
@@ -404,6 +438,8 @@
             display: block !important;
             visibility: visible !important;
             opacity: 1 !important;
+            position: absolute !important;
+            z-index: 9999 !important;
         }
         
         .suggestion-item {
@@ -828,7 +864,7 @@
             border-radius: 0 0 5px 5px;
             max-height: 300px;
             overflow-y: auto;
-            z-index: 1000;
+            z-index: 9999;
             display: none;
             visibility: hidden;
             opacity: 0;
@@ -838,6 +874,8 @@
             display: block !important;
             visibility: visible !important;
             opacity: 1 !important;
+            position: absolute !important;
+            z-index: 9999 !important;
         }
         
         .country-option {
@@ -1535,7 +1573,11 @@
                     <a href="/set-language/ua" class="lang-btn {{ 'active' if lang == 'ua' else '' }}">UA</a>
                     <a href="/set-language/ru" class="lang-btn {{ 'active' if lang == 'ru' else '' }}">RU</a>
                 </div>
-                <a href="{{ donation_url }}" target="_blank" class="donate-btn">🇺🇦 {{ translations.donate }}</a>
+                <a href="{{ donation_url }}" target="_blank" class="donate-btn">
+                    <span class="flag-emoji">🇺🇦</span>
+                    <span class="flag-fallback" style="display: none;">UA</span>
+                    {{ translations.donate }}
+                </a>
             </div>
         </nav>
     </header>
@@ -1789,6 +1831,30 @@
             }
         }
         
+        // Helper function to show dropdown (for old Android compatibility)
+        function showDropdown(element) {
+            if (!element) return;
+            addClass(element, 'show');
+            element.style.display = 'block';
+            element.style.visibility = 'visible';
+            element.style.opacity = '1';
+            element.style.position = 'absolute';
+            element.style.zIndex = '9999';
+            element.style.top = '100%';
+            element.style.left = '0';
+            element.style.right = '0';
+            element.style.width = '100%';
+        }
+        
+        // Helper function to hide dropdown (for old Android compatibility)
+        function hideDropdown(element) {
+            if (!element) return;
+            removeClass(element, 'show');
+            element.style.display = 'none';
+            element.style.visibility = 'hidden';
+            element.style.opacity = '0';
+        }
+        
         // Polyfill for Array.find (for IE11 and older)
         if (!supportsArrayFind) {
             Array.prototype.find = function(predicate) {
@@ -1926,6 +1992,46 @@
         } else {
             console.log('✓ fetch is available');
         }
+        
+        // Detect flag emoji support and show fallback on old Android devices
+        (function() {
+            var donateBtn = document.querySelector('.donate-btn');
+            if (donateBtn) {
+                // Create a test element with flag emoji
+                var testEl = document.createElement('span');
+                testEl.textContent = '🇺🇦';
+                testEl.style.position = 'absolute';
+                testEl.style.visibility = 'hidden';
+                testEl.style.fontSize = '16px';
+                testEl.style.whiteSpace = 'nowrap';
+                document.body.appendChild(testEl);
+                
+                // Check if emoji renders as single character or multiple (old Android shows as "UA")
+                var emojiWidth = testEl.offsetWidth;
+                
+                // Compare with text "UA" width
+                var textEl = document.createElement('span');
+                textEl.textContent = 'UA';
+                textEl.style.position = 'absolute';
+                textEl.style.visibility = 'hidden';
+                textEl.style.fontSize = '16px';
+                textEl.style.whiteSpace = 'nowrap';
+                document.body.appendChild(textEl);
+                var textWidth = textEl.offsetWidth;
+                
+                // Clean up test elements
+                document.body.removeChild(testEl);
+                document.body.removeChild(textEl);
+                
+                // If flag emoji width is similar to "UA" text width, emoji not supported
+                // Flag emoji should be wider than "UA" text (usually 2x or more)
+                if (emojiWidth <= textWidth * 1.3) {
+                    // Flag emoji not properly supported - use fallback
+                    donateBtn.classList.add('flag-not-supported');
+                    console.log('Flag emoji not supported, using fallback');
+                }
+            }
+        })();
         
         // For old devices: Show native select instead of custom dropdown
         // Since we have polyfills for fetch, only check for async/await support
@@ -2360,29 +2466,30 @@
         }
         
         // Country search functionality (only for modern browsers)
-        if (!useNativeSelect && countryInput) {
-            console.log('✓ Country input event listener attached');
-            var countrySearchTimeout = null;
-            countryInput.addEventListener('input', function(e) {
-                console.log('Country input event triggered, value:', e.target.value);
-                var query = e.target.value.trim().toLowerCase();
-                
-                if (countrySearchTimeout) {
-                    clearTimeout(countrySearchTimeout);
-                }
-                
-                // Reset selection when input changes
+        // Declare timeout variable in outer scope so it's accessible to handler
+        var countrySearchTimeout = null;
+        
+        // Handler function for country input (works with both 'input' and 'keyup' events)
+        function handleCountryInput(e) {
+            var target = e.target || e.srcElement; // Support old browsers
+            console.log('Country input event triggered, value:', target.value);
+            var query = target.value.trim().toLowerCase();
+            
+            if (countrySearchTimeout) {
+                clearTimeout(countrySearchTimeout);
+            }
+            
+            // Reset selection when input changes
+            selectedCountryIndex = -1;
+            
+            if (query.length === 0) {
+                hideDropdown(countryDropdown);
+                countrySelect.value = '';
                 selectedCountryIndex = -1;
-                
-                if (query.length === 0) {
-                    removeClass(countryDropdown, 'show');
-                    if (countryDropdown) countryDropdown.style.display = 'none';
-                    countrySelect.value = '';
-                    selectedCountryIndex = -1;
-                    return;
-                }
-                
-                countrySearchTimeout = setTimeout(function() {
+                return;
+            }
+            
+            countrySearchTimeout = setTimeout(function() {
                     var filtered = [];
                     for (var i = 0; i < countries.length; i++) {
                         if (countries[i].toLowerCase().indexOf(query) !== -1) {
@@ -2393,8 +2500,7 @@
                     
                     countryDropdown.innerHTML = '';
                     if (filtered.length === 0) {
-                        removeClass(countryDropdown, 'show');
-                    if (countryDropdown) countryDropdown.style.display = 'none';
+                        hideDropdown(countryDropdown);
                         return;
                     }
                     
@@ -2409,8 +2515,7 @@
                             return function() {
                                 countryInput.value = countryName;
                                 countrySelect.value = countryName;
-                                removeClass(countryDropdown, 'show');
-                                if (countryDropdown) countryDropdown.style.display = 'none';
+                                hideDropdown(countryDropdown);
                                 selectedCountryIndex = -1; // Reset selection
                             };
                         }(country);
@@ -2419,12 +2524,28 @@
                         countryDropdown.appendChild(div);
                     }
                     
-                    addClass(countryDropdown, 'show');
-                    countryDropdown.style.display = 'block'; // Explicit fallback for old browsers
-                    countryDropdown.style.visibility = 'visible'; // Additional fallback
+                    showDropdown(countryDropdown);
                     selectedCountryIndex = -1; // Reset selection when new suggestions are shown
                 }, 200);
-            });
+            }
+        
+        if (!useNativeSelect && countryInput) {
+            console.log('✓ Country input event listener attached');
+            // Use 'input' event for modern browsers
+            if (countryInput.addEventListener) {
+                countryInput.addEventListener('input', handleCountryInput, false);
+                // Fallback to 'keyup' for old Android devices that don't support 'input' event properly
+                countryInput.addEventListener('keyup', function(e) {
+                    // Only trigger on character keys (not arrow keys, etc.)
+                    var key = e.keyCode || e.which;
+                    if (key >= 32 && key <= 126 || key === 8 || key === 46) { // Printable chars, backspace, delete
+                        handleCountryInput(e);
+                    }
+                }, false);
+            } else if (countryInput.attachEvent) {
+                // IE8 and older
+                countryInput.attachEvent('onkeyup', handleCountryInput);
+            }
         }
         
         // Keyboard navigation for country suggestions
@@ -2455,15 +2576,13 @@
                         countryOptions[selectedCountryIndex].click();
                     } else {
                         // If no selection, close dropdown
-                        removeClass(countryDropdown, 'show');
-                    if (countryDropdown) countryDropdown.style.display = 'none';
+                        hideDropdown(countryDropdown);
                         selectedCountryIndex = -1;
                     }
                     break;
                 case 'Escape':
                     e.preventDefault();
-                    removeClass(countryDropdown, 'show');
-                    if (countryDropdown) countryDropdown.style.display = 'none';
+                    hideDropdown(countryDropdown);
                     selectedCountryIndex = -1;
                     break;
             }
@@ -2479,31 +2598,48 @@
         }
         
         // City autocomplete using OpenStreetMap Nominatim (free API)
+        // Handler function for city input (works with both 'input' and 'keyup' events)
+        function handleCityInput(e) {
+            var target = e.target || e.srcElement; // Support old browsers
+            console.log('City input event triggered, value:', target.value);
+            var query = target.value.trim();
+            
+            // Clear previous timeout
+            if (autocompleteTimeout) {
+                clearTimeout(autocompleteTimeout);
+            }
+            
+            if (query.length < 2) {
+                if (citySuggestions) {
+                    hideDropdown(citySuggestions);
+                }
+                return;
+            }
+            
+            // Debounce API calls (500ms delay)
+            autocompleteTimeout = setTimeout(function() {
+                console.log('Calling fetchCitySuggestions for:', query);
+                fetchCitySuggestions(query);
+            }, 500);
+        }
+        
         if (cityInput) {
             console.log('✓ City input event listener attached');
-            cityInput.addEventListener('input', function(e) {
-                console.log('City input event triggered, value:', e.target.value);
-                var query = e.target.value.trim();
-                
-                // Clear previous timeout
-                if (autocompleteTimeout) {
-                    clearTimeout(autocompleteTimeout);
-                }
-                
-                if (query.length < 2) {
-                    if (citySuggestions) {
-                        removeClass(citySuggestions, 'show');
-                        citySuggestions.style.display = 'none'; // Explicit fallback for old browsers
+            // Use 'input' event for modern browsers
+            if (cityInput.addEventListener) {
+                cityInput.addEventListener('input', handleCityInput, false);
+                // Fallback to 'keyup' for old Android devices that don't support 'input' event properly
+                cityInput.addEventListener('keyup', function(e) {
+                    // Only trigger on character keys (not arrow keys, etc.)
+                    var key = e.keyCode || e.which;
+                    if (key >= 32 && key <= 126 || key === 8 || key === 46) { // Printable chars, backspace, delete
+                        handleCityInput(e);
                     }
-                    return;
-                }
-                
-                // Debounce API calls (500ms delay)
-                autocompleteTimeout = setTimeout(function() {
-                    console.log('Calling fetchCitySuggestions for:', query);
-                    fetchCitySuggestions(query);
-                }, 500);
-            });
+                }, false);
+            } else if (cityInput.attachEvent) {
+                // IE8 and older
+                cityInput.attachEvent('onkeyup', handleCityInput);
+            }
         } else {
             console.error('City input not found - cannot attach event listener');
         }
@@ -2535,8 +2671,7 @@
                 if (!response.ok) {
                     console.error('Nominatim API error:', response.status, response.statusText);
                     if (citySuggestions) {
-                        removeClass(citySuggestions, 'show');
-                        citySuggestions.style.display = 'none'; // Explicit fallback for old browsers
+                        hideDropdown(citySuggestions);
                     }
                     return null;
                 }
@@ -2545,8 +2680,7 @@
                 if (!results || results.length === 0) {
                     console.log('No results from Nominatim');
                     if (citySuggestions) {
-                        removeClass(citySuggestions, 'show');
-                        citySuggestions.style.display = 'none'; // Explicit fallback for old browsers
+                        hideDropdown(citySuggestions);
                     }
                     return;
                 }
@@ -2586,8 +2720,7 @@
                 console.error('Autocomplete error:', e);
                 console.error('Error details:', e.message, e.stack);
                 if (citySuggestions) {
-                    removeClass(citySuggestions, 'show');
-                    if (citySuggestions) citySuggestions.style.display = 'none';
+                    hideDropdown(citySuggestions);
                 }
             });
         }
@@ -2602,7 +2735,7 @@
             
             if (results.length === 0) {
                 console.log('No results to display, hiding suggestions');
-                removeClass(citySuggestions, 'show');
+                hideDropdown(citySuggestions);
                 if (citySuggestions) citySuggestions.style.display = 'none';
                 selectedSuggestionIndex = -1;
                 return;
@@ -2863,7 +2996,7 @@
                         console.log('Selected location: City="' + cityName + '", State="' + (stateName || '(none)') + '", Country="' + (matchedCountry || countryName) + '"');
                         
                         // Close suggestions
-                        removeClass(citySuggestions, 'show');
+                        hideDropdown(citySuggestions);
                     if (citySuggestions) citySuggestions.style.display = 'none';
                         selectedSuggestionIndex = -1;
                     };
@@ -2877,8 +3010,16 @@
             // Show the suggestions dropdown
             console.log('Showing suggestions dropdown');
             addClass(citySuggestions, 'show');
-            citySuggestions.style.display = 'block'; // Explicit fallback for old browsers
-            citySuggestions.style.visibility = 'visible'; // Additional fallback
+            // Aggressive inline styles for old Android devices
+            citySuggestions.style.display = 'block';
+            citySuggestions.style.visibility = 'visible';
+            citySuggestions.style.opacity = '1';
+            citySuggestions.style.position = 'absolute';
+            citySuggestions.style.zIndex = '9999';
+            citySuggestions.style.top = '100%';
+            citySuggestions.style.left = '0';
+            citySuggestions.style.right = '0';
+            citySuggestions.style.width = '100%';
             console.log('Suggestions dropdown should now be visible, display:', citySuggestions.style.display);
         }
         
@@ -2940,7 +3081,7 @@
         // Hide suggestions when clicking outside
         document.addEventListener('click', function(e) {
             if (!cityInput.contains(e.target) && !citySuggestions.contains(e.target)) {
-                removeClass(citySuggestions, 'show');
+                hideDropdown(citySuggestions);
                 if (citySuggestions) citySuggestions.style.display = 'none';
             }
         });
@@ -3064,8 +3205,7 @@
             var state = stateInput.value.trim() || (cityInput.dataset && cityInput.dataset.state) || '';
             
             // Hide suggestions
-            removeClass(citySuggestions, 'show');
-            if (citySuggestions) citySuggestions.style.display = 'none';
+            hideDropdown(citySuggestions);
             
             // Clear any existing polling
             if (pollingInterval) {
@@ -3168,7 +3308,7 @@
                 // If suggestions are not visible, handle Enter key to search
                 if (e.key === 'Enter') {
                     e.preventDefault();
-                    removeClass(citySuggestions, 'show');
+                    hideDropdown(citySuggestions);
                     if (citySuggestions) citySuggestions.style.display = 'none';
                     searchBtn.click();
                 }
@@ -3302,19 +3442,18 @@
                         
                         // State is already set above before cityInput.value was set
                         
-                        removeClass(citySuggestions, 'show');
+                        hideDropdown(citySuggestions);
                     if (citySuggestions) citySuggestions.style.display = 'none';
                         selectedSuggestionIndex = -1;
                     } else {
-                        removeClass(citySuggestions, 'show');
+                        hideDropdown(citySuggestions);
                     if (citySuggestions) citySuggestions.style.display = 'none';
                         searchBtn.click();
                     }
                     break;
                 case 'Escape':
                     e.preventDefault();
-                    removeClass(citySuggestions, 'show');
-                    if (citySuggestions) citySuggestions.style.display = 'none';
+                    hideDropdown(citySuggestions);
                     selectedSuggestionIndex = -1;
                     break;
             }
@@ -3334,23 +3473,63 @@
         }
         
         // Clear state when city input changes manually
-        cityInput.addEventListener('input', function(e) {
-            if (!e.target.dataset.state) {
+        function handleCityInputClear(e) {
+            var target = e.target || e.srcElement; // Support old browsers
+            // Check if dataset exists (old browsers might not support it)
+            if (target.dataset && !target.dataset.state) {
                 // Only clear if user is typing (not from autocomplete selection)
-                delete cityInput.dataset.state;
-                stateInput.value = '';
+                delete target.dataset.state;
+                if (stateInput) stateInput.value = '';
+            } else if (!target.dataset) {
+                // Old browser - use getAttribute instead
+                if (!target.getAttribute('data-state')) {
+                    if (stateInput) stateInput.value = '';
+                }
             }
-        });
+        }
+        
+        if (cityInput && cityInput.addEventListener) {
+            cityInput.addEventListener('input', handleCityInputClear, false);
+            // Fallback for old devices
+            cityInput.addEventListener('keyup', function(e) {
+                var key = e.keyCode || e.which;
+                if (key >= 32 && key <= 126 || key === 8 || key === 46) {
+                    handleCityInputClear(e);
+                }
+            }, false);
+        }
         
         // Sync state input with dataset when manually changed
-        stateInput.addEventListener('input', function(e) {
-            var stateValue = e.target.value.trim();
+        function handleStateInput(e) {
+            var target = e.target || e.srcElement; // Support old browsers
+            var stateValue = target.value.trim();
             if (stateValue) {
-                cityInput.dataset.state = stateValue;
+                // Store in dataset if supported, otherwise use attribute
+                if (cityInput && cityInput.dataset) {
+                    cityInput.dataset.state = stateValue;
+                } else if (cityInput) {
+                    cityInput.setAttribute('data-state', stateValue);
+                }
             } else {
-                delete cityInput.dataset.state;
+                // Clear state
+                if (cityInput && cityInput.dataset) {
+                    delete cityInput.dataset.state;
+                } else if (cityInput) {
+                    cityInput.removeAttribute('data-state');
+                }
             }
-        });
+        }
+        
+        if (stateInput && stateInput.addEventListener) {
+            stateInput.addEventListener('input', handleStateInput, false);
+            // Fallback for old devices
+            stateInput.addEventListener('keyup', function(e) {
+                var key = e.keyCode || e.which;
+                if (key >= 32 && key <= 126 || key === 8 || key === 46) {
+                    handleStateInput(e);
+                }
+            }, false);
+        }
         
         function fetchShowtimes(city, country, state) {
             if (!state) state = '';
