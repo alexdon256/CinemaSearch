@@ -230,8 +230,9 @@ def before_request():
     if lang:
         set_language(lang)
     
-    # Increment visitor counter (only once per session)
-    if 'visited' not in session:
+    # Increment visitor counter (only once per session, skip for health checks and internal requests)
+    # Skip if X-Skip-Visitor-Counter header is present (for verify-workers, health checks, etc.)
+    if 'visited' not in session and not request.headers.get('X-Skip-Visitor-Counter'):
         increment_visitor_counter()
         session['visited'] = True
 

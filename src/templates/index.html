@@ -2163,6 +2163,20 @@
             // First, check if data is already available before triggering a scrape
             const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
             try {
+                // First check status to see if there's an error
+                const statusResponse = await fetch(`/api/scrape/status/${encodeURIComponent(locationId)}`);
+                const statusData = await statusResponse.json();
+                
+                // If status is error, show error immediately
+                if (statusData.status === 'error') {
+                    hideLoadingOverlay();
+                    const errorMsg = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
+                    showErrorState(errorMsg, () => {
+                        fetchShowtimes(city, country, state);
+                    });
+                    return;
+                }
+                
                 const params = new URLSearchParams({city_name: locationId});
                 if (formatFilter.value) params.append('format', formatFilter.value);
                 if (languageFilter.value) params.append('language', languageFilter.value);

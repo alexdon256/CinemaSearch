@@ -1440,6 +1440,19 @@ uninit_server() {
     rm -rf /var/www/${APP_NAME}
     rm -rf /var/www/*/  # Remove all app directories
     
+    # Clean MongoDB database (visitors, locations, movies, stats)
+    if command -v mongosh &> /dev/null; then
+        log_info "Cleaning MongoDB database..."
+        mongosh movie_db --eval "db.dropDatabase()" --quiet 2>/dev/null || true
+        log_info "MongoDB database cleaned"
+    elif command -v mongo &> /dev/null; then
+        log_info "Cleaning MongoDB database..."
+        mongo movie_db --eval "db.dropDatabase()" --quiet 2>/dev/null || true
+        log_info "MongoDB database cleaned"
+    else
+        log_warn "MongoDB client not found, skipping database cleanup"
+    fi
+    
     # Remove CPU affinity script
     rm -f /usr/local/bin/cinestream-set-cpu-affinity.sh
     
@@ -1824,9 +1837,9 @@ verify_workers() {
         status=$(systemctl is-active "$service_name" 2>/dev/null || echo "inactive")
         
         if [[ "$status" == "active" ]]; then
-            # Test if the worker actually responds
+            # Test if the worker actually responds (use X-Skip-Visitor-Counter header to avoid incrementing visitors)
             local response="000"
-            response=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://127.0.0.1:${port}/" 2>/dev/null || echo "000")
+            response=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Skip-Visitor-Counter: true" --connect-timeout 2 "http://127.0.0.1:${port}/" 2>/dev/null || echo "000")
             if [[ "$response" == "200" ]]; then
                 echo "  Port ${port}: ✓ Running and responding (HTTP ${response})"
                 running_count=$((running_count + 1))
