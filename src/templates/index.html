@@ -160,6 +160,28 @@
             margin-bottom: 0.5rem;
             font-weight: 600;
             color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        
+        .auto-detected-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            background: rgba(52, 152, 219, 0.2);
+            border: 1px solid var(--accent);
+            border-radius: 12px;
+            color: var(--accent);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-weight: 500;
+            user-select: none;
+        }
+        
+        .auto-detected-badge:hover {
+            background: rgba(52, 152, 219, 0.3);
+            transform: scale(1.05);
         }
         
         .filter-group select,
@@ -1477,7 +1499,10 @@
         <div class="filters">
             <div class="location-search-row">
                 <div class="filter-group city-group">
-                    <label for="city-input">{{ translations.select_city }}</label>
+                    <label for="city-input">
+                        {{ translations.select_city }}
+                        <span class="auto-detected-badge" id="auto-detected-badge" style="display: none;" title="Location auto-detected from your device. Click to clear.">📍 Auto-detected</span>
+                    </label>
                     <div class="location-input-group">
                         <input type="text" id="city-input" placeholder="Enter city name..." autocomplete="off" aria-label="City name input">
                         <div id="city-suggestions" class="suggestions-dropdown" role="listbox" aria-label="City suggestions"></div>
@@ -1600,70 +1625,149 @@
         let autocompleteTimeout = null;
         let skeletonTimeout = null;
         
-        // Auto-fill city and country if detected from IP
-        {% if detected_city and detected_country %}
-        (function() {
-            // Set city
-            cityInput.value = '{{ detected_city }}';
-            {% if detected_region %}
-            cityInput.dataset.state = '{{ detected_region }}';
-            stateInput.value = '{{ detected_region }}';
-            {% endif %}
-            
-            // Set country
-            const countryName = '{{ detected_country }}';
-            countryInput.value = countryName;
-            
-            // Find and select the country in the dropdown
-            // Try exact match first
-            let countryOption = Array.from(countrySelect.options).find(opt => opt.textContent.trim() === countryName);
-            
-            // If no exact match, try case-insensitive match
-            if (!countryOption) {
-                countryOption = Array.from(countrySelect.options).find(opt => 
-                    opt.textContent.trim().toLowerCase() === countryName.toLowerCase()
-                );
+        // Request browser geolocation and reverse geocode
+        function requestLocationAndGeocode() {
+            if (!navigator.geolocation) {
+                console.log('Geolocation is not supported by this browser');
+                return;
             }
             
-            // If still no match, try partial match (country name contains or is contained by option)
-            if (!countryOption) {
-                countryOption = Array.from(countrySelect.options).find(opt => {
-                    const optText = opt.textContent.trim().toLowerCase();
-                    const countryLower = countryName.toLowerCase();
-                    return optText.includes(countryLower) || countryLower.includes(optText);
-                });
-            }
+            // Show a subtle indicator that we're requesting location
+            const locationIndicator = document.createElement('div');
+            locationIndicator.id = 'location-request-indicator';
+            locationIndicator.style.cssText = 'position: fixed; top: 20px; right: 20px; background: rgba(52, 152, 219, 0.9); color: white; padding: 0.75rem 1rem; border-radius: 5px; z-index: 10000; font-size: 0.9rem; box-shadow: 0 2px 10px rgba(0,0,0,0.3);';
+            locationIndicator.textContent = '📍 Requesting location...';
+            document.body.appendChild(locationIndicator);
             
-            if (countryOption) {
-                countrySelect.value = countryOption.value;
-            } else {
-                // If no match found, try to use the country name directly as value
-                console.warn('Could not find exact match for country:', countryName);
-                // Try to use the country name directly as value (if it matches an option value)
-                const valueMatch = Array.from(countrySelect.options).find(opt => opt.value === countryName);
-                if (valueMatch) {
-                    countrySelect.value = countryName;
-                } else {
-                    // Last resort: set the first option that contains the country name
-                    const partialMatch = Array.from(countrySelect.options).find(opt => 
-                        opt.textContent.toLowerCase().includes(countryName.toLowerCase().substring(0, 3))
-                    );
-                    if (partialMatch) {
-                        countrySelect.value = partialMatch.value;
+            navigator.geolocation.getCurrentPosition(
+                async function(position) {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    
+                    try {
+                        // Reverse geocode coordinates to get city/country
+                        const response = await fetch('/api/geocode', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ lat, lon })
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (data.success && data.city && data.country) {
+                            // Set city
+                            cityInput.value = data.city;
+                            if (data.region) {
+                                cityInput.dataset.state = data.region;
+                                stateInput.value = data.region;
+                            }
+                            
+                            // Set country
+                            const countryName = data.country;
+                            countryInput.value = countryName;
+                            
+                            // Find and select the country in the dropdown
+                            let countryOption = Array.from(countrySelect.options).find(opt => 
+                                opt.textContent.trim() === countryName
+                            );
+                            
+                            if (!countryOption) {
+                                countryOption = Array.from(countrySelect.options).find(opt => 
+                                    opt.textContent.trim().toLowerCase() === countryName.toLowerCase()
+                                );
+                            }
+                            
+                            if (!countryOption) {
+                                countryOption = Array.from(countrySelect.options).find(opt => {
+                                    const optText = opt.textContent.trim().toLowerCase();
+                                    const countryLower = countryName.toLowerCase();
+                                    return optText.includes(countryLower) || countryLower.includes(optText);
+                                });
+                            }
+                            
+                            if (countryOption) {
+                                countrySelect.value = countryOption.value;
+                            }
+                            
+                            // Show auto-detected badge
+                            const badge = document.getElementById('auto-detected-badge');
+                            if (badge) {
+                                badge.style.display = 'inline-block';
+                            }
+                            
+                            // Update indicator
+                            locationIndicator.textContent = '✓ Location detected';
+                            locationIndicator.style.background = 'rgba(39, 174, 96, 0.9)';
+                            setTimeout(() => {
+                                locationIndicator.remove();
+                            }, 2000);
+                        } else {
+                            locationIndicator.textContent = '⚠ Could not determine location';
+                            locationIndicator.style.background = 'rgba(243, 156, 18, 0.9)';
+                            setTimeout(() => {
+                                locationIndicator.remove();
+                            }, 3000);
+                        }
+                    } catch (error) {
+                        console.error('Geocoding error:', error);
+                        locationIndicator.textContent = '⚠ Location error';
+                        locationIndicator.style.background = 'rgba(231, 76, 60, 0.9)';
+                        setTimeout(() => {
+                            locationIndicator.remove();
+                        }, 3000);
                     }
+                },
+                function(error) {
+                    // User denied or error occurred
+                    let message = 'Location access denied';
+                    if (error.code === error.PERMISSION_DENIED) {
+                        message = 'Location permission denied';
+                    } else if (error.code === error.POSITION_UNAVAILABLE) {
+                        message = 'Location unavailable';
+                    } else if (error.code === error.TIMEOUT) {
+                        message = 'Location request timeout';
+                    }
+                    
+                    locationIndicator.textContent = `⚠ ${message}`;
+                    locationIndicator.style.background = 'rgba(231, 76, 60, 0.9)';
+                    setTimeout(() => {
+                        locationIndicator.remove();
+                    }, 3000);
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0  // Don't use cached position
                 }
-            }
-            
-            // Trigger search automatically if both city and country are detected
-            setTimeout(() => {
-                // Check both countrySelect.value and countryInput.value
-                const hasCountry = countrySelect.value || countryInput.value.trim();
-                if (cityInput.value && hasCountry) {
-                    searchBtn.click();
-                }
-            }, 500);
-        })();
-        {% endif %}
+            );
+        }
+        
+        // Request location on page load (only once)
+        if (navigator.geolocation) {
+            // Small delay to let page render first
+            setTimeout(requestLocationAndGeocode, 500);
+        }
+        
+        // Clear auto-detected location when badge is clicked
+        const autoDetectedBadge = document.getElementById('auto-detected-badge');
+        if (autoDetectedBadge) {
+            autoDetectedBadge.addEventListener('click', function() {
+                // Clear city, state, and country inputs
+                cityInput.value = '';
+                stateInput.value = '';
+                countryInput.value = '';
+                countrySelect.value = '';
+                delete cityInput.dataset.state;
+                
+                // Hide the badge
+                autoDetectedBadge.style.display = 'none';
+                
+                // Focus on city input for user to type
+                cityInput.focus();
+            });
+        }
         
         // Comprehensive country list (ISO 3166-1)
         const countries = [

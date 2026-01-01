@@ -170,11 +170,31 @@ def detect_city_from_ip():
                 data = json.loads(response.read().decode())
                 
                 if data.get('status') == 'success':
-                    city = data.get('city', '')
-                    country = data.get('country', '')
-                    region = data.get('regionName', '')
+                    city = data.get('city', '').strip()
+                    country = data.get('country', '').strip()
+                    region = data.get('regionName', '').strip()
                     
+                    # Validate city name - reject if too short, contains only numbers, or seems invalid
                     if city and country:
+                        # Filter out suspicious city names:
+                        # - Too short (less than 3 characters)
+                        # - Contains only numbers
+                        # - Very unusual patterns
+                        city_lower = city.lower()
+                        
+                        # Common invalid patterns from IP geolocation services
+                        invalid_patterns = [
+                            len(city) < 3,  # Too short (reject very short names like "Auly")
+                            city.isdigit(),  # Only numbers
+                            # Reject very unusual single-word city names that might be errors
+                            len(city.split()) == 1 and len(city) < 5 and not any(c.isupper() for c in city),  # Very short single word without capitals
+                        ]
+                        
+                        # If city seems invalid, don't return it
+                        if any(invalid_patterns):
+                            print(f"Rejected suspicious city name from geolocation: '{city}' for IP {client_ip}")
+                            return None
+                        
                         result = {
                             'city': city,
                             'country': country,
@@ -246,11 +266,11 @@ def index():
             lang = 'en'
         t = TRANSLATIONS[lang]
         
-        # Detect city and country from IP
-        geo_data = detect_city_from_ip()
-        detected_city = geo_data.get('city') if geo_data else None
-        detected_country = geo_data.get('country') if geo_data else None
-        detected_region = geo_data.get('region') if geo_data else None
+        # Don't auto-detect from IP - let browser geolocation handle it
+        # This gives users control and better accuracy
+        detected_city = None
+        detected_country = None
+        detected_region = None
         
         # Get locations
         try:
@@ -279,6 +299,80 @@ def index():
                              locations=[],
                              visitor_count=0,
                              donation_url=DONATION_URL), 500
+
+@app.route('/api/geocode', methods=['POST'])
+def api_geocode():
+    """Reverse geocode coordinates to get city, country, and region"""
+    try:
+        data = request.get_json() or {}
+        lat = data.get('lat')
+        lon = data.get('lon')
+        
+        if not lat or not lon:
+            return jsonify({'success': False, 'error': 'Latitude and longitude required'}), 400
+        
+        # Validate coordinates
+        try:
+            lat = float(lat)
+            lon = float(lon)
+            if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+                return jsonify({'success': False, 'error': 'Invalid coordinates'}), 400
+        except (ValueError, TypeError):
+            return jsonify({'success': False, 'error': 'Invalid coordinate format'}), 400
+        
+        # Use Nominatim for reverse geocoding (free, no API key needed)
+        import urllib.request
+        import json
+        
+        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&addressdetails=1"
+        
+        try:
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'CineStream/1.0'  # Required by Nominatim
+            })
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode())
+                
+                if data and 'address' in data:
+                    address = data.get('address', {})
+                    
+                    # Extract city (can be in different fields)
+                    city = (address.get('city') or 
+                           address.get('town') or 
+                           address.get('village') or 
+                           address.get('municipality') or
+                           address.get('county') or
+                           '')
+                    
+                    # Extract country
+                    country = address.get('country', '')
+                    
+                    # Extract region/state
+                    region = (address.get('state') or 
+                             address.get('province') or 
+                             address.get('region') or
+                             address.get('state_district') or
+                             '')
+                    
+                    if city and country:
+                        return jsonify({
+                            'success': True,
+                            'city': city.strip(),
+                            'country': country.strip(),
+                            'region': region.strip() if region else None
+                        })
+                    else:
+                        return jsonify({'success': False, 'error': 'Could not determine city and country from coordinates'}), 400
+                else:
+                    return jsonify({'success': False, 'error': 'No address data found'}), 400
+                    
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
+            print(f"Reverse geocoding error: {e}")
+            return jsonify({'success': False, 'error': 'Geocoding service unavailable'}), 500
+            
+    except Exception as e:
+        print(f"Error in geocode endpoint: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/showtimes')
 def api_showtimes():
