@@ -3011,8 +3011,8 @@
         var selectedSuggestionIndex = -1;
         var selectedCountryIndex = -1;
         
-        cityInput.addEventListener('keydown', (e) => {
-            const suggestions = citySuggestions.querySelectorAll('.suggestion-item');
+        cityInput.addEventListener('keydown', function(e) {
+            var suggestions = citySuggestions.querySelectorAll('.suggestion-item');
             
             if (!citySuggestions.classList.contains('show') || suggestions.length === 0) {
                 // If suggestions are not visible, handle Enter key to search
@@ -3041,10 +3041,10 @@
                     e.preventDefault();
                     if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < suggestions.length) {
                         // Get the selected suggestion's data
-                        const selectedItem = suggestions[selectedSuggestionIndex];
-                        const cityName = selectedItem.dataset.city;
-                        const stateName = selectedItem.dataset.state || '';
-                        const countryName = selectedItem.dataset.country;
+                        var selectedItem = suggestions[selectedSuggestionIndex];
+                        var cityName = selectedItem.dataset.city;
+                        var stateName = selectedItem.dataset.state || '';
+                        var countryName = selectedItem.dataset.country;
                         
                         // Set state in dataset and input FIRST to prevent input event listener from clearing it
                         if (stateName && stateName.length > 0) {
@@ -3059,16 +3059,16 @@
                         cityInput.value = cityName;
                         
                         // Use the same country matching logic as click handler
-                        const normalizeCountryName = (name) => {
+                        var normalizeCountryName = function(name) {
                             return name.toLowerCase()
                                 .replace(/\s+/g, ' ')
                                 .trim();
                         };
                         
-                        const countryLower = normalizeCountryName(countryName);
+                        var countryLower = normalizeCountryName(countryName);
                         
                         // Common country name mappings
-                        const countryMappings = {
+                        var countryMappings = {
                             'usa': 'United States',
                             'us': 'United States',
                             'united states of america': 'United States',
@@ -3086,30 +3086,58 @@
                             'ivory coast': 'Ivory Coast'
                         };
                         
-                        let matchedCountry = null;
+                        var matchedCountry = null;
                         if (countryMappings[countryLower]) {
                             matchedCountry = countryMappings[countryLower];
                         } else {
-                            matchedCountry = countries.find(c => {
-                                const cLower = normalizeCountryName(c);
-                                return cLower === countryLower;
-                            });
+                            // Use Array.find polyfill if available
+                            var foundCountry = null;
+                            for (var i = 0; i < countries.length; i++) {
+                                var c = countries[i];
+                                var cLower = normalizeCountryName(c);
+                                if (cLower === countryLower) {
+                                    foundCountry = c;
+                                    break;
+                                }
+                            }
+                            matchedCountry = foundCountry;
                             
                             if (!matchedCountry) {
-                                matchedCountry = countries.find(c => {
-                                    const cLower = normalizeCountryName(c);
-                                    return countryLower.includes(cLower) || cLower.includes(countryLower);
-                                });
+                                for (var j = 0; j < countries.length; j++) {
+                                    var c2 = countries[j];
+                                    var cLower2 = normalizeCountryName(c2);
+                                    if (countryLower.indexOf(cLower2) !== -1 || cLower2.indexOf(countryLower) !== -1) {
+                                        matchedCountry = c2;
+                                        break;
+                                    }
+                                }
                             }
                             
                             if (!matchedCountry) {
-                                const countryWords = countryLower.split(/\s+/).filter(w => w.length > 2);
-                                matchedCountry = countries.find(c => {
-                                    const cLower = normalizeCountryName(c);
-                                    const cWords = cLower.split(/\s+/);
-                                    return countryWords.some(word => cWords.includes(word)) ||
-                                           cWords.some(word => countryWords.includes(word));
-                                });
+                                var countryWords = [];
+                                var words = countryLower.split(/\s+/);
+                                for (var w = 0; w < words.length; w++) {
+                                    if (words[w].length > 2) {
+                                        countryWords.push(words[w]);
+                                    }
+                                }
+                                for (var k = 0; k < countries.length; k++) {
+                                    var c3 = countries[k];
+                                    var cLower3 = normalizeCountryName(c3);
+                                    var cWords = cLower3.split(/\s+/);
+                                    var foundMatch = false;
+                                    for (var wIdx = 0; wIdx < countryWords.length; wIdx++) {
+                                        for (var cwIdx = 0; cwIdx < cWords.length; cwIdx++) {
+                                            if (countryWords[wIdx] === cWords[cwIdx] || cWords[cwIdx] === countryWords[wIdx]) {
+                                                matchedCountry = c3;
+                                                foundMatch = true;
+                                                break;
+                                            }
+                                        }
+                                        if (foundMatch) break;
+                                    }
+                                    if (foundMatch) break;
+                                }
                             }
                         }
                         
@@ -3118,7 +3146,7 @@
                             countryInput.value = matchedCountry;
                         } else {
                             countryInput.value = countryName;
-                            console.warn(`Could not match country "${countryName}" to country list`);
+                            console.warn('Could not match country "' + countryName + '" to country list');
                         }
                         
                         // State is already set above before cityInput.value was set
@@ -3200,7 +3228,6 @@
                             fetchShowtimes(city, country, state);
                         });
                     });
-                    return;
                 }
                 
                 return scrapeResponse.json().then(function(data) {
