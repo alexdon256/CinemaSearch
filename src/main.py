@@ -806,10 +806,10 @@ def api_city_suggestions():
         query_words = query_lower.split()
         
         # Use Nominatim for city search
-        # Support multilingual search: include common languages (en, uk, ru) to find cities regardless of input language
+        # Support multilingual search: don't restrict language so Nominatim can return names in any language
         # This allows finding "одеса" even when site is in English mode
-        languages = 'en,uk,ru'  # Always search in these languages for better multilingual support
-        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=30&addressdetails=1&extratags=1&accept-language={languages}&dedupe=1"
+        # Nominatim will search for the query regardless of language, and return results with multilingual names
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=30&addressdetails=1&extratags=1&dedupe=1"
         
         try:
             req = urllib.request.Request(url, headers={
@@ -830,32 +830,29 @@ def api_city_suggestions():
                                 address.get('village') or 
                                 address.get('municipality') or '')
                     
-                    # Also check display_name
-                    display_name = item.get('display_name', '').lower()
+                    # Also check display_name - this is important for multilingual support
+                    # display_name often contains names in multiple languages
+                    display_name = item.get('display_name', '')
+                    display_name_lower = display_name.lower()
                     
                     # Check if query matches city name or display name
                     city_lower = city_name.lower()
                     matches = False
                     
-                    # Direct prefix match (best) - query starts the city name
-                    if city_lower.startswith(query_lower) or display_name.startswith(query_lower):
+                    # Direct prefix match (best) - query starts the city name or display name
+                    # Check display_name first as it often contains multilingual names
+                    if display_name_lower.startswith(query_lower) or city_lower.startswith(query_lower):
+                        matches = True
+                    # Contains match in display_name (important for multilingual - "одеса" might be in display_name even if city_name is "Odesa")
+                    elif query_lower in display_name_lower:
                         matches = True
                     # Word-by-word prefix match (e.g., "los angel" matches "los angeles")
                     # This is more important than contains match for multi-word queries
                     elif len(query_words) > 1:
                         city_words = city_lower.split()
-                        display_words = display_name.split()
-                        # Check city words
-                        if len(city_words) >= len(query_words):
-                            all_match = True
-                            for i in range(len(query_words)):
-                                if i >= len(city_words) or not city_words[i].startswith(query_words[i]):
-                                    all_match = False
-                                    break
-                            if all_match:
-                                matches = True
-                        # Check display words if city didn't match
-                        if not matches and len(display_words) >= len(query_words):
+                        display_words = display_name_lower.split()
+                        # Check display words first (more likely to have multilingual names)
+                        if len(display_words) >= len(query_words):
                             all_match = True
                             for i in range(len(query_words)):
                                 if i >= len(display_words) or not display_words[i].startswith(query_words[i]):
@@ -863,11 +860,20 @@ def api_city_suggestions():
                                     break
                             if all_match:
                                 matches = True
-                    # Contains match - only for single word queries to avoid false positives like "Accra" for "los angel"
-                    elif len(query_words) == 1 and (query_lower in city_lower or query_lower in display_name):
+                        # Check city words if display didn't match
+                        if not matches and len(city_words) >= len(query_words):
+                            all_match = True
+                            for i in range(len(query_words)):
+                                if i >= len(city_words) or not city_words[i].startswith(query_words[i]):
+                                    all_match = False
+                                    break
+                            if all_match:
+                                matches = True
+                    # Contains match in city name - only for single word queries to avoid false positives
+                    elif len(query_words) == 1 and query_lower in city_lower:
                         matches = True
                     # Last resort: check if query is a substring (for cases like "ankar" -> "ankara")
-                    elif (query_lower in city_lower or query_lower in display_name) and len(query_lower) >= 4:  # Only for queries 4+ chars
+                    elif query_lower in city_lower and len(query_lower) >= 4:  # Only for queries 4+ chars
                         matches = True
                     
                     # Only include if it matches
