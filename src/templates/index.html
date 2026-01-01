@@ -2783,6 +2783,10 @@
                     }
                     
                     console.log('Received', results.length, 'results from API');
+                    console.log('Query was:', query);
+                    if (results.length > 0) {
+                        console.log('First result:', results[0].display_name, '- City:', (results[0].address && (results[0].address.city || results[0].address.town)) || 'N/A');
+                    }
                 
                 // Helper function to extract city name from result
                 function getCityName(result) {
@@ -2803,6 +2807,60 @@
                     return cityName || displayName;
                 }
                 
+                // Helper function to normalize query for matching (remove spaces, handle partial words)
+                function normalizeForMatch(text) {
+                    return text.toLowerCase().replace(/\s+/g, '');
+                }
+                
+                // Helper function to check if query matches (handles partial word matches)
+                function queryMatches(text, query) {
+                    var textLower = text.toLowerCase();
+                    var queryLower = query.toLowerCase();
+                    
+                    // Direct match
+                    if (textLower.indexOf(queryLower) !== -1) {
+                        return true;
+                    }
+                    
+                    // Check if query matches when spaces are removed (e.g., "los ang" matches "los angeles")
+                    var textNoSpaces = textLower.replace(/\s+/g, '');
+                    var queryNoSpaces = queryLower.replace(/\s+/g, '');
+                    if (textNoSpaces.indexOf(queryNoSpaces) !== -1) {
+                        return true;
+                    }
+                    
+                    // Check word-by-word prefix match (e.g., "los ang" matches "los angeles")
+                    var textWords = textLower.split(/\s+/);
+                    var queryWords = queryLower.split(/\s+/);
+                    if (queryWords.length > 0) {
+                        var firstQueryWord = queryWords[0];
+                        var matchesFirstWord = false;
+                        for (var w = 0; w < textWords.length; w++) {
+                            if (textWords[w].indexOf(firstQueryWord) === 0) {
+                                matchesFirstWord = true;
+                                break;
+                            }
+                        }
+                        if (matchesFirstWord && queryWords.length > 1) {
+                            // Check if subsequent query words match
+                            var allMatch = true;
+                            for (var q = 1; q < queryWords.length && q < textWords.length; q++) {
+                                if (textWords[q].indexOf(queryWords[q]) !== 0) {
+                                    allMatch = false;
+                                    break;
+                                }
+                            }
+                            if (allMatch) {
+                                return true;
+                            }
+                        } else if (matchesFirstWord) {
+                            return true;
+                        }
+                    }
+                    
+                    return false;
+                }
+                
                 // Helper function to calculate match score (higher = better match)
                 function calculateMatchScore(result, query) {
                     var cityName = getCityName(result);
@@ -2811,9 +2869,9 @@
                     var displayLower = displayName.toLowerCase();
                     var queryLower = query.toLowerCase().trim();
                     
-                    // If query doesn't match at all, return 0 (will be filtered out)
-                    var cityMatches = cityLower.indexOf(queryLower) !== -1;
-                    var displayMatches = displayLower.indexOf(queryLower) !== -1;
+                    // Check if query matches at all (using flexible matching)
+                    var cityMatches = queryMatches(cityName, query);
+                    var displayMatches = queryMatches(displayName, query);
                     
                     if (!cityMatches && !displayMatches) {
                         return 0;
@@ -2829,11 +2887,22 @@
                         isPrefixMatch = true;
                         // Shorter names with prefix match rank higher
                         score += (1000 - cityName.length);
-                    } else if (cityLower.indexOf(queryLower) !== -1) {
+                    } else if (cityLower.replace(/\s+/g, '').indexOf(queryLower.replace(/\s+/g, '')) === 0) {
+                        // Prefix match when spaces removed (e.g., "los ang" matches "los angeles")
+                        score = 9000;
+                        isPrefixMatch = true;
+                        score += (900 - cityName.length);
+                    } else if (cityMatches) {
                         // Contains match in city name
                         score = 1000;
                         var position = cityLower.indexOf(queryLower);
-                        score += (100 - position);
+                        if (position === -1) {
+                            // Try with spaces removed
+                            position = cityLower.replace(/\s+/g, '').indexOf(queryLower.replace(/\s+/g, ''));
+                        }
+                        if (position !== -1) {
+                            score += (100 - position);
+                        }
                     }
                     
                     // Also check display_name for prefix match (boost if found)
@@ -2841,11 +2910,20 @@
                         // Prefix match in display name (but not city name) - still very good
                         score = 5000;
                         score += (500 - displayName.length);
-                    } else if (displayLower.indexOf(queryLower) !== -1 && score < 1000) {
+                    } else if (displayLower.replace(/\s+/g, '').indexOf(queryLower.replace(/\s+/g, '')) === 0 && !isPrefixMatch) {
+                        // Prefix match in display name when spaces removed
+                        score = 4500;
+                        score += (450 - displayName.length);
+                    } else if (displayMatches && score < 1000) {
                         // Contains match in display name (only if city name didn't match well)
                         score = 500;
                         var displayPosition = displayLower.indexOf(queryLower);
-                        score += (50 - displayPosition);
+                        if (displayPosition === -1) {
+                            displayPosition = displayLower.replace(/\s+/g, '').indexOf(queryLower.replace(/\s+/g, ''));
+                        }
+                        if (displayPosition !== -1) {
+                            score += (50 - displayPosition);
+                        }
                     }
                     
                     // Boost score for city/town types (but only if we have a match)
@@ -2885,14 +2963,17 @@
                     
                     if (shouldInclude) {
                         var score = calculateMatchScore(result, query);
-                        // Only include results that actually match the query (score > 0)
-                        if (score > 0) {
-                            scoredResults.push({
-                                result: result,
-                                score: score,
-                                cityName: getCityName(result)
-                            });
+                        // Include all results, but give non-matching ones a very low score
+                        // This ensures we show something even if Nominatim returns unexpected results
+                        if (score === 0) {
+                            // Give a small score so it appears at the bottom
+                            score = 1;
                         }
+                        scoredResults.push({
+                            result: result,
+                            score: score,
+                            cityName: getCityName(result)
+                        });
                     }
                 }
                 
