@@ -2108,21 +2108,15 @@
                         var emojiText = flagEmoji.textContent || flagEmoji.innerText || '';
                         // Check if emoji rendered as country code (old Android)
                         // On old Android, flag emojis render as "UA" text
-                        // On modern browsers, they render as actual emoji characters
-                        var isCountryCode = emojiText.trim() === 'UA' || emojiText.trim() === 'ua' || emojiText.trim() === '';
+                        // On modern browsers, they render as actual emoji characters (🇺🇦)
+                        var isCountryCode = emojiText.trim() === 'UA' || emojiText.trim() === 'ua';
                         var hasFlagChars = emojiText.indexOf('🇺') !== -1 || emojiText.indexOf('🇦') !== -1;
+                        var isEmpty = emojiText.trim() === '';
                         
-                        // If it's showing as country code or empty, use fallback
-                        if (isCountryCode || (!hasFlagChars && emojiText.length < 3)) {
+                        // If it's showing as country code or empty (not rendering), use fallback
+                        if (isCountryCode || (isEmpty && !hasFlagChars)) {
                             // Use helper functions for classList
-                            if (donateBtn.classList) {
-                                donateBtn.classList.add('flag-not-supported');
-                            } else {
-                                var className = donateBtn.className || '';
-                                if (className.indexOf('flag-not-supported') === -1) {
-                                    donateBtn.className = className + ' flag-not-supported';
-                                }
-                            }
+                            addClass(donateBtn, 'flag-not-supported');
                             console.log('Flag emoji not supported, using fallback. Emoji text:', emojiText);
                         } else {
                             console.log('Flag emoji supported. Emoji text:', emojiText);
@@ -2132,9 +2126,14 @@
                     // Check immediately
                     checkFlagSupport();
                     
-                    // Check again after rendering
-                    setTimeout(checkFlagSupport, 200);
+                    // Check again after rendering (some browsers need time)
+                    setTimeout(checkFlagSupport, 300);
+                    setTimeout(checkFlagSupport, 1000);
+                } else {
+                    console.warn('Flag emoji element not found in donate button');
                 }
+            } else {
+                console.warn('Donate button not found');
             }
         })();
         

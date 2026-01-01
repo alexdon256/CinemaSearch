@@ -798,14 +798,86 @@ def api_city_suggestions():
         if not query or len(query) < 2:
             return jsonify([]), 200
         
-        # Use Nominatim for city search
         import urllib.request
         import json
         import urllib.parse
         
-        # Increase limit to get better matches, but don't restrict by featuretype
-        # This allows Nominatim to return the best matches regardless of type
-        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=20&addressdetails=1&extratags=1&accept-language={lang}"
+        query_lower = query.lower().strip()
+        query_words = query_lower.split()
+        
+        # Try Photon API first (better for autocomplete, free, no API key needed)
+        # Photon is specifically designed for autocomplete and handles partial matches better
+        try:
+            photon_url = f"https://photon.komoot.io/api/?q={urllib.parse.quote(query)}&limit=15&lang={lang}"
+            req = urllib.request.Request(photon_url, headers={
+                'User-Agent': 'CineStream/1.0'
+            })
+            with urllib.request.urlopen(req, timeout=8) as response:
+                photon_data = json.loads(response.read().decode())
+                
+                # Convert Photon format to Nominatim-like format for frontend compatibility
+                filtered_data = []
+                for item in photon_data.get('features', []):
+                    props = item.get('properties', {})
+                    geometry = item.get('geometry', {})
+                    
+                    # Extract city name from Photon response
+                    city_name = props.get('name', '')
+                    place_type = props.get('type', '')
+                    
+                    # Only include cities, towns, villages
+                    if place_type not in ['city', 'town', 'village', 'municipality']:
+                        continue
+                    
+                    # Strict matching - must actually match the query
+                    city_lower = city_name.lower()
+                    matches = False
+                    
+                    # Direct prefix match (best)
+                    if city_lower.startswith(query_lower):
+                        matches = True
+                    # Word-by-word prefix match (e.g., "los angel" matches "los angeles")
+                    elif len(query_words) > 1:
+                        city_words = city_lower.split()
+                        if len(city_words) >= len(query_words):
+                            all_match = True
+                            for i in range(len(query_words)):
+                                if i >= len(city_words) or not city_words[i].startswith(query_words[i]):
+                                    all_match = False
+                                    break
+                            if all_match:
+                                matches = True
+                    # Contains match (only if single word query)
+                    elif len(query_words) == 1 and query_lower in city_lower:
+                        matches = True
+                    
+                    if matches:
+                        # Convert to Nominatim-like format
+                        coords = geometry.get('coordinates', [])
+                        converted_item = {
+                            'display_name': city_name,
+                            'lat': str(coords[1]) if len(coords) > 1 else '',
+                            'lon': str(coords[0]) if len(coords) > 0 else '',
+                            'type': place_type,
+                            'class': 'place',
+                            'address': {
+                                'city': city_name if place_type == 'city' else None,
+                                'town': city_name if place_type == 'town' else None,
+                                'village': city_name if place_type == 'village' else None,
+                                'municipality': city_name if place_type == 'municipality' else None,
+                                'country': props.get('country', '')
+                            }
+                        }
+                        filtered_data.append(converted_item)
+                
+                if filtered_data:
+                    return jsonify(filtered_data[:10]), 200
+        except Exception as e:
+            print(f"Photon API error: {e}, falling back to Nominatim")
+        
+        # Fallback to Nominatim if Photon fails or returns no results
+        # Use dedupe=1 to remove duplicates and increase limit for better matching
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=30&addressdetails=1&extratags=1&accept-language={lang}&dedupe=1"
         
         try:
             req = urllib.request.Request(url, headers={
@@ -813,7 +885,117 @@ def api_city_suggestions():
             })
             with urllib.request.urlopen(req, timeout=10) as response:
                 data = json.loads(response.read().decode())
-                return jsonify(data), 200
+                
+                # Filter results on backend to ensure they actually match the query
+                # This prevents irrelevant results like "Accra" for "los angel"
+                query_lower = query.lower().strip()
+                filtered_data = []
+                
+                for item in data:
+                    # Extract city name
+                    address = item.get('address', {})
+                    city_name = (address.get('city') or 
+                                address.get('town') or 
+                                address.get('village') or 
+                                address.get('municipality') or '')
+                    
+                    # Also check display_name
+                    display_name = item.get('display_name', '').lower()
+                    
+                    # Check if query matches city name or display name
+                    city_lower = city_name.lower()
+                    matches = False
+                    
+                    # Direct prefix match (best) - query starts the city name
+                    if city_lower.startswith(query_lower) or display_name.startswith(query_lower):
+                        matches = True
+                    # Word-by-word prefix match (e.g., "los angel" matches "los angeles")
+                    # This is more important than contains match for multi-word queries
+                    query_words = query_lower.split()
+                    if len(query_words) > 1:
+                        city_words = city_lower.split()
+                        display_words = display_name.split()
+                        # Check city words
+                        if len(city_words) >= len(query_words):
+                            all_match = True
+                            for i in range(len(query_words)):
+                                if i >= len(city_words) or not city_words[i].startswith(query_words[i]):
+                                    all_match = False
+                                    break
+                            if all_match:
+                                matches = True
+                        # Check display words if city didn't match
+                        if not matches and len(display_words) >= len(query_words):
+                            all_match = True
+                            for i in range(len(query_words)):
+                                if i >= len(display_words) or not display_words[i].startswith(query_words[i]):
+                                    all_match = False
+                                    break
+                            if all_match:
+                                matches = True
+                    # Contains match - only for single word queries to avoid false positives like "Accra" for "los angel"
+                    elif len(query_words) == 1 and (query_lower in city_lower or query_lower in display_name):
+                        matches = True
+                    
+                    # Only include if it matches
+                    if matches:
+                        filtered_data.append(item)
+                        # Limit to 20 best matches
+                        if len(filtered_data) >= 20:
+                            break
+                
+                # If we have good matches, return them
+                if len(filtered_data) > 0:
+                    return jsonify(filtered_data), 200
+                
+                # If no good matches from Nominatim, try Geonames as fallback
+                # Geonames is often more accurate for city searches
+                try:
+                    geonames_url = f"http://api.geonames.org/searchJSON?name={urllib.parse.quote(query)}&maxRows=20&featureClass=P&style=full&username=demo"
+                    geonames_req = urllib.request.Request(geonames_url, headers={
+                        'User-Agent': 'CineStream/1.0'
+                    })
+                    with urllib.request.urlopen(geonames_req, timeout=5) as geonames_response:
+                        geonames_data = json.loads(geonames_response.read().decode())
+                        geonames_results = geonames_data.get('geonames', [])
+                        
+                        # Convert Geonames format to Nominatim-like format for frontend compatibility
+                        converted_results = []
+                        query_lower = query.lower().strip()
+                        for geo_item in geonames_results:
+                            city_name = geo_item.get('name', '')
+                            country = geo_item.get('countryName', '')
+                            admin1 = geo_item.get('adminName1', '')  # State/province
+                            
+                            # Filter to ensure it matches
+                            city_lower = city_name.lower()
+                            if (city_lower.startswith(query_lower) or 
+                                query_lower in city_lower or
+                                (len(query_lower.split()) > 0 and city_lower.startswith(query_lower.split()[0]))):
+                                # Convert to Nominatim-like format
+                                converted_item = {
+                                    'display_name': f"{city_name}, {admin1}, {country}" if admin1 else f"{city_name}, {country}",
+                                    'address': {
+                                        'city': city_name,
+                                        'country': country,
+                                        'state': admin1 if admin1 else None
+                                    },
+                                    'type': 'city',
+                                    'class': 'place'
+                                }
+                                converted_results.append(converted_item)
+                                if len(converted_results) >= 10:
+                                    break
+                        
+                        if len(converted_results) > 0:
+                            return jsonify(converted_results), 200
+                
+                except Exception as geonames_error:
+                    print(f"Geonames fallback error: {geonames_error}")
+                    # Continue to return empty if both fail
+                
+                # Return empty if no matches found
+                return jsonify([]), 200
                 
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
             print(f"City suggestions error: {e}")
