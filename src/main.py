@@ -805,10 +805,10 @@ def api_city_suggestions():
         query_lower = query.lower().strip()
         query_words = query_lower.split()
         
-        # Try Geonames API first (better for city resolution, free tier available)
-        # Geonames has excellent city database - use it to find cities, then Nominatim to resolve state
+        # Use Nominatim for city search
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=30&addressdetails=1&extratags=1&accept-language={lang}&dedupe=1"
+        
         try:
-            # Geonames search API - using demo account (limited requests)
             # For production, register at geonames.org for free account (1000 requests/hour)
             # Use 'q' parameter for better partial matching (fuzzy search) instead of name_startsWith
             # Increase maxRows to get more candidates, then we'll sort and filter
@@ -1191,67 +1191,31 @@ def api_city_suggestions():
                     # Only include if it matches
                     if matches:
                         filtered_data.append(item)
-                        # Limit to 20 best matches
-                        if len(filtered_data) >= 20:
-                            break
                 
                 # If we have good matches, sort and return them
                 if len(filtered_data) > 0:
-                    # Sort by match score (highest first), then by city name length (shorter first)
-                    filtered_data.sort(key=lambda x: (-x.get('_match_score', 0), len(x.get('display_name', ''))))
-                    # Remove internal scoring fields before returning
-                    for item in filtered_data:
-                        item.pop('_match_score', None)
-                        item.pop('_match_type', None)
+                    # Sort by relevance: prefix matches first, then by city name length (shorter = more precise)
+                    def get_sort_key(item):
+                        address = item.get('address', {})
+                        city_name = (address.get('city') or 
+                                    address.get('town') or 
+                                    address.get('village') or 
+                                    address.get('municipality') or '')
+                        city_lower = city_name.lower()
+                        display_name = item.get('display_name', '').lower()
+                        
+                        # Score: prefix match = 1000, contains = 100, then sort by length
+                        if city_lower.startswith(query_lower) or display_name.startswith(query_lower):
+                            return (-1000, len(city_name))
+                        elif query_lower in city_lower or query_lower in display_name:
+                            return (-100, len(city_name))
+                        else:
+                            return (0, len(city_name))
+                    
+                    filtered_data.sort(key=get_sort_key)
                     return jsonify(filtered_data[:10]), 200
                 
-                # If no good matches from Nominatim, try Geonames as fallback
-                # Geonames is often more accurate for city searches
-                try:
-                    geonames_url = f"http://api.geonames.org/searchJSON?name={urllib.parse.quote(query)}&maxRows=20&featureClass=P&style=full&username=demo"
-                    geonames_req = urllib.request.Request(geonames_url, headers={
-                        'User-Agent': 'CineStream/1.0'
-                    })
-                    with urllib.request.urlopen(geonames_req, timeout=5) as geonames_response:
-                        geonames_data = json.loads(geonames_response.read().decode())
-                        geonames_results = geonames_data.get('geonames', [])
-                        
-                        # Convert Geonames format to Nominatim-like format for frontend compatibility
-                        converted_results = []
-                        query_lower = query.lower().strip()
-                        for geo_item in geonames_results:
-                            city_name = geo_item.get('name', '')
-                            country = geo_item.get('countryName', '')
-                            admin1 = geo_item.get('adminName1', '')  # State/province
-                            
-                            # Filter to ensure it matches
-                            city_lower = city_name.lower()
-                            if (city_lower.startswith(query_lower) or 
-                                query_lower in city_lower or
-                                (len(query_lower.split()) > 0 and city_lower.startswith(query_lower.split()[0]))):
-                                # Convert to Nominatim-like format
-                                converted_item = {
-                                    'display_name': f"{city_name}, {admin1}, {country}" if admin1 else f"{city_name}, {country}",
-                                    'address': {
-                                        'city': city_name,
-                                        'country': country,
-                                        'state': admin1 if admin1 else None
-                                    },
-                                    'type': 'city',
-                                    'class': 'place'
-                                }
-                                converted_results.append(converted_item)
-                                if len(converted_results) >= 10:
-                                    break
-                        
-                        if len(converted_results) > 0:
-                            return jsonify(converted_results), 200
-                
-                except Exception as geonames_error:
-                    print(f"Geonames fallback error: {geonames_error}")
-                    # Continue to return empty if both fail
-                
-                # Return empty if no matches found
+                # If no good matches, return empty
                 return jsonify([]), 200
                 
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
