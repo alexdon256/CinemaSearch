@@ -300,9 +300,76 @@ def index():
                              visitor_count=0,
                              donation_url=DONATION_URL), 500
 
+def normalize_location_name(name, location_type='city'):
+    """
+    Normalize location names to English to avoid duplicates from different languages.
+    Uses Nominatim to get the canonical English name.
+    """
+    if not name or not name.strip():
+        return name
+    
+    import urllib.request
+    import json
+    import time
+    
+    name = name.strip()
+    
+    # Cache normalized names to avoid repeated API calls
+    cache_key = f"normalized_{location_type}_{name.lower()}"
+    cached = session.get(cache_key)
+    if cached:
+        return cached
+    
+    try:
+        # Use Nominatim to search for the location and get English name
+        # Add country context for better results
+        search_query = name
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(search_query)}&format=json&limit=1&addressdetails=1&accept-language=en"
+        
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'CineStream/1.0'
+        })
+        
+        with urllib.request.urlopen(req, timeout=3) as response:
+            results = json.loads(response.read().decode())
+            
+            if results and len(results) > 0:
+                result = results[0]
+                address = result.get('address', {})
+                
+                # Get English name from display_name or address
+                if location_type == 'city':
+                    normalized = (address.get('city') or 
+                                 address.get('town') or 
+                                 address.get('village') or 
+                                 address.get('municipality') or
+                                 name)
+                elif location_type == 'country':
+                    normalized = address.get('country', name)
+                elif location_type == 'state':
+                    normalized = (address.get('state') or 
+                                 address.get('province') or 
+                                 address.get('region') or
+                                 name)
+                else:
+                    normalized = name
+                
+                # Cache the result
+                session[cache_key] = normalized
+                return normalized
+        
+        # If no results, return original name
+        session[cache_key] = name
+        return name
+        
+    except Exception as e:
+        print(f"Normalization error for {name}: {e}")
+        # Return original name if normalization fails
+        return name
+
 @app.route('/api/geocode', methods=['POST'])
 def api_geocode():
-    """Reverse geocode coordinates to get city, country, and region"""
+    """Reverse geocode coordinates to get city, country, and region (normalized to English)"""
     try:
         data = request.get_json() or {}
         lat = data.get('lat')
@@ -323,8 +390,9 @@ def api_geocode():
         # Use Nominatim for reverse geocoding (free, no API key needed)
         import urllib.request
         import json
+        import urllib.parse
         
-        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&addressdetails=1"
+        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&addressdetails=1&accept-language=en"
         
         try:
             req = urllib.request.Request(url, headers={
@@ -336,7 +404,7 @@ def api_geocode():
                 if data and 'address' in data:
                     address = data.get('address', {})
                     
-                    # Extract city (can be in different fields)
+                    # Extract city (can be in different fields) - already in English from accept-language=en
                     city = (address.get('city') or 
                            address.get('town') or 
                            address.get('village') or 
@@ -344,10 +412,10 @@ def api_geocode():
                            address.get('county') or
                            '')
                     
-                    # Extract country
+                    # Extract country - already in English
                     country = address.get('country', '')
                     
-                    # Extract region/state
+                    # Extract region/state - already in English
                     region = (address.get('state') or 
                              address.get('province') or 
                              address.get('region') or
@@ -355,11 +423,17 @@ def api_geocode():
                              '')
                     
                     if city and country:
+                        # Normalize to ensure English names
+                        city = normalize_location_name(city.strip(), 'city')
+                        country = normalize_location_name(country.strip(), 'country')
+                        if region:
+                            region = normalize_location_name(region.strip(), 'state')
+                        
                         return jsonify({
                             'success': True,
-                            'city': city.strip(),
-                            'country': country.strip(),
-                            'region': region.strip() if region else None
+                            'city': city,
+                            'country': country,
+                            'region': region if region else None
                         })
                     else:
                         return jsonify({'success': False, 'error': 'Could not determine city and country from coordinates'}), 400
@@ -372,6 +446,31 @@ def api_geocode():
             
     except Exception as e:
         print(f"Error in geocode endpoint: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/geocode-ip', methods=['GET'])
+def api_geocode_ip():
+    """Fallback: Get location from IP address (when browser geolocation fails)"""
+    try:
+        geo_data = detect_city_from_ip()
+        if geo_data:
+            # Normalize to English
+            city = normalize_location_name(geo_data.get('city', ''), 'city')
+            country = normalize_location_name(geo_data.get('country', ''), 'country')
+            region = geo_data.get('region', '')
+            if region:
+                region = normalize_location_name(region, 'state')
+            
+            return jsonify({
+                'success': True,
+                'city': city,
+                'country': country,
+                'region': region if region else None
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Could not determine location from IP'}), 400
+    except Exception as e:
+        print(f"Error in IP geocode endpoint: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/showtimes')
@@ -485,7 +584,13 @@ def api_scrape():
     if any(char in city or char in country or (state and char in state) for char in dangerous_chars):
         return jsonify({'error': 'Invalid characters in input'}), 400
     
-    # Build location identifier (city, state, country format)
+    # Normalize location names to English to avoid duplicates from different languages
+    city = normalize_location_name(city, 'city')
+    country = normalize_location_name(country, 'country')
+    if state:
+        state = normalize_location_name(state, 'state')
+    
+    # Build location identifier (city, state, country format) - using normalized names
     if state:
         location_id = f"{city}, {state}, {country}"
     else:

@@ -1760,8 +1760,71 @@
                         }, 3000);
                     }
                 },
-                function(error) {
-                    // User denied or error occurred
+                async function(error) {
+                    // User denied or error occurred - try IP-based fallback
+                    if (error.code === error.PERMISSION_DENIED) {
+                        locationIndicator.textContent = '📍 Trying IP-based location...';
+                        locationIndicator.style.background = 'rgba(52, 152, 219, 0.9)';
+                        
+                        // Fallback to IP-based geolocation
+                        try {
+                            const ipResponse = await fetch('/api/geocode-ip');
+                            const ipData = await ipResponse.json();
+                            
+                            if (ipData.success && ipData.city && ipData.country) {
+                                // Set city
+                                cityInput.value = ipData.city;
+                                if (ipData.region) {
+                                    cityInput.dataset.state = ipData.region;
+                                    stateInput.value = ipData.region;
+                                }
+                                
+                                // Set country
+                                const countryName = ipData.country;
+                                countryInput.value = countryName;
+                                
+                                // Find and select the country in the dropdown
+                                let countryOption = Array.from(countrySelect.options).find(opt => 
+                                    opt.textContent.trim() === countryName
+                                );
+                                
+                                if (!countryOption) {
+                                    countryOption = Array.from(countrySelect.options).find(opt => 
+                                        opt.textContent.trim().toLowerCase() === countryName.toLowerCase()
+                                    );
+                                }
+                                
+                                if (!countryOption) {
+                                    countryOption = Array.from(countrySelect.options).find(opt => {
+                                        const optText = opt.textContent.trim().toLowerCase();
+                                        const countryLower = countryName.toLowerCase();
+                                        return optText.includes(countryLower) || countryLower.includes(optText);
+                                    });
+                                }
+                                
+                                if (countryOption) {
+                                    countrySelect.value = countryOption.value;
+                                }
+                                
+                                // Show auto-detected badge
+                                const badge = document.getElementById('auto-detected-badge');
+                                if (badge) {
+                                    badge.style.display = 'inline-block';
+                                }
+                                
+                                locationIndicator.textContent = '✓ Location detected (IP-based)';
+                                locationIndicator.style.background = 'rgba(39, 174, 96, 0.9)';
+                                setTimeout(() => {
+                                    locationIndicator.remove();
+                                }, 2000);
+                                return;
+                            }
+                        } catch (ipError) {
+                            console.error('IP geolocation fallback error:', ipError);
+                        }
+                    }
+                    
+                    // Show error message
                     let message = 'Location access denied';
                     let helpText = '';
                     
