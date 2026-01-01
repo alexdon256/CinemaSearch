@@ -1595,56 +1595,56 @@
                         {{ translations.select_city }}
                         <span class="auto-detected-badge" id="auto-detected-badge" style="display: none;" title="Location auto-detected from your device. Click to clear.">📍 Auto-detected</span>
                     </label>
-                    <div class="location-input-group">
-                        <input type="text" id="city-input" placeholder="Enter city name..." autocomplete="off" aria-label="City name input">
-                        <div id="city-suggestions" class="suggestions-dropdown" role="listbox" aria-label="City suggestions"></div>
-                    </div>
+                <div class="location-input-group">
+                    <input type="text" id="city-input" placeholder="Enter city name..." autocomplete="off" aria-label="City name input">
+                    <div id="city-suggestions" class="suggestions-dropdown" role="listbox" aria-label="City suggestions"></div>
                 </div>
-                
+            </div>
+            
                 <div class="filter-group state-group">
                     <label for="state-input">{{ translations.state_province or 'State/Province (optional)' }}</label>
                     <input type="text" id="state-input" placeholder="{{ translations.state_province or 'State/Province...' }}" autocomplete="off" aria-label="State or Province input">
-                </div>
-                
+            </div>
+            
                 <div class="filter-group country-group">
-                    <label for="country-input">{{ translations.country or 'Country' }}</label>
-                    <div class="country-input-group">
-                        <input type="text" id="country-input" placeholder="Search or select country..." autocomplete="off" aria-label="Country selector">
-                        <div id="country-dropdown" class="country-dropdown"></div>
-                    </div>
-                    <select id="country-select" style="display: none;" aria-label="Country selector">
-                        <option value="">All Countries</option>
-                    </select>
+                <label for="country-input">{{ translations.country or 'Country' }}</label>
+                <div class="country-input-group">
+                    <input type="text" id="country-input" placeholder="Search or select country..." autocomplete="off" aria-label="Country selector">
+                    <div id="country-dropdown" class="country-dropdown"></div>
                 </div>
-                
+                <select id="country-select" style="display: none;" aria-label="Country selector">
+                    <option value="">All Countries</option>
+                </select>
+            </div>
+            
                 <div class="filter-group search-group">
-                    <label>&nbsp;</label>
-                    <button id="search-btn" class="search-btn" aria-label="Search for movie showtimes">🔍 Search Showtimes</button>
+                <label>&nbsp;</label>
+                <button id="search-btn" class="search-btn" aria-label="Search for movie showtimes">🔍 Search Showtimes</button>
                 </div>
             </div>
             
             <div class="additional-filters-row">
-                <div class="filter-group">
-                    <label for="format-filter">{{ translations.filter_by_format }}</label>
-                    <select id="format-filter" aria-label="Filter by movie format">
-                        <option value="">All Formats</option>
-                        <option value="2D">2D</option>
-                        <option value="3D">3D</option>
-                        <option value="IMAX">IMAX</option>
-                        <option value="4DX">4DX</option>
-                        <option value="Dolby Atmos">Dolby Atmos</option>
-                    </select>
-                </div>
-                
-                <div class="filter-group">
-                    <label for="language-filter">{{ translations.filter_by_language }}</label>
-                    <select id="language-filter" aria-label="Filter by language">
-                        <option value="">All Languages</option>
-                        <option value="Ukrainian">Ukrainian</option>
-                        <option value="English">English</option>
-                        <option value="Russian">Russian</option>
-                        <option value="Original">Original</option>
-                    </select>
+            <div class="filter-group">
+                <label for="format-filter">{{ translations.filter_by_format }}</label>
+                <select id="format-filter" aria-label="Filter by movie format">
+                    <option value="">All Formats</option>
+                    <option value="2D">2D</option>
+                    <option value="3D">3D</option>
+                    <option value="IMAX">IMAX</option>
+                    <option value="4DX">4DX</option>
+                    <option value="Dolby Atmos">Dolby Atmos</option>
+                </select>
+            </div>
+            
+            <div class="filter-group">
+                <label for="language-filter">{{ translations.filter_by_language }}</label>
+                <select id="language-filter" aria-label="Filter by language">
+                    <option value="">All Languages</option>
+                    <option value="Ukrainian">Ukrainian</option>
+                    <option value="English">English</option>
+                    <option value="Russian">Russian</option>
+                    <option value="Original">Original</option>
+                </select>
                 </div>
             </div>
         </div>
@@ -2101,38 +2101,39 @@
         (function() {
             var donateBtn = document.querySelector('.donate-btn');
             if (donateBtn) {
-                // Create a test element with flag emoji
-                var testEl = document.createElement('span');
-                testEl.textContent = '🇺🇦';
-                testEl.style.position = 'absolute';
-                testEl.style.visibility = 'hidden';
-                testEl.style.fontSize = '16px';
-                testEl.style.whiteSpace = 'nowrap';
-                document.body.appendChild(testEl);
-                
-                // Check if emoji renders as single character or multiple (old Android shows as "UA")
-                var emojiWidth = testEl.offsetWidth;
-                
-                // Compare with text "UA" width
-                var textEl = document.createElement('span');
-                textEl.textContent = 'UA';
-                textEl.style.position = 'absolute';
-                textEl.style.visibility = 'hidden';
-                textEl.style.fontSize = '16px';
-                textEl.style.whiteSpace = 'nowrap';
-                document.body.appendChild(textEl);
-                var textWidth = textEl.offsetWidth;
-                
-                // Clean up test elements
-                document.body.removeChild(testEl);
-                document.body.removeChild(textEl);
-                
-                // If flag emoji width is similar to "UA" text width, emoji not supported
-                // Flag emoji should be wider than "UA" text (usually 2x or more)
-                if (emojiWidth <= textWidth * 1.3) {
-                    // Flag emoji not properly supported - use fallback
-                    donateBtn.classList.add('flag-not-supported');
-                    console.log('Flag emoji not supported, using fallback');
+                var flagEmoji = donateBtn.querySelector('.flag-emoji');
+                if (flagEmoji) {
+                    // Check immediately and after a short delay
+                    function checkFlagSupport() {
+                        var emojiText = flagEmoji.textContent || flagEmoji.innerText || '';
+                        // Check if emoji rendered as country code (old Android)
+                        // On old Android, flag emojis render as "UA" text
+                        // On modern browsers, they render as actual emoji characters
+                        var isCountryCode = emojiText.trim() === 'UA' || emojiText.trim() === 'ua' || emojiText.trim() === '';
+                        var hasFlagChars = emojiText.indexOf('🇺') !== -1 || emojiText.indexOf('🇦') !== -1;
+                        
+                        // If it's showing as country code or empty, use fallback
+                        if (isCountryCode || (!hasFlagChars && emojiText.length < 3)) {
+                            // Use helper functions for classList
+                            if (donateBtn.classList) {
+                                donateBtn.classList.add('flag-not-supported');
+                            } else {
+                                var className = donateBtn.className || '';
+                                if (className.indexOf('flag-not-supported') === -1) {
+                                    donateBtn.className = className + ' flag-not-supported';
+                                }
+                            }
+                            console.log('Flag emoji not supported, using fallback. Emoji text:', emojiText);
+                        } else {
+                            console.log('Flag emoji supported. Emoji text:', emojiText);
+                        }
+                    }
+                    
+                    // Check immediately
+                    checkFlagSupport();
+                    
+                    // Check again after rendering
+                    setTimeout(checkFlagSupport, 200);
                 }
             }
         })();
@@ -2217,7 +2218,7 @@
                         return response.json();
                     }).then(function(data) {
                         if (data.success && data.city && data.country) {
-                            // Set city
+            // Set city
                             cityInput.value = data.city;
                             if (data.region) {
                                 if (cityInput.dataset) {
@@ -2227,12 +2228,12 @@
                                 }
                                 stateInput.value = data.region;
                             }
-                            
-                            // Set country
+            
+            // Set country
                             var countryName = data.country;
-                            countryInput.value = countryName;
-                            
-                            // Find and select the country in the dropdown
+            countryInput.value = countryName;
+            
+            // Find and select the country in the dropdown
                             var countryOption = null;
                             var options = Array.from ? Array.from(countrySelect.options) : [];
                             if (!Array.from) {
@@ -2250,7 +2251,7 @@
                                 }
                             }
                             
-                            if (!countryOption) {
+            if (!countryOption) {
                                 for (var k = 0; k < options.length; k++) {
                                     var opt2 = options[k];
                                     if (opt2.textContent.trim().toLowerCase() === countryName.toLowerCase()) {
@@ -2260,7 +2261,7 @@
                                 }
                             }
                             
-                            if (!countryOption) {
+            if (!countryOption) {
                                 for (var m = 0; m < options.length; m++) {
                                     var opt3 = options[m];
                                     var optText = opt3.textContent.trim().toLowerCase();
@@ -2270,10 +2271,10 @@
                                         break;
                                     }
                                 }
-                            }
-                            
-                            if (countryOption) {
-                                countrySelect.value = countryOption.value;
+            }
+            
+            if (countryOption) {
+                countrySelect.value = countryOption.value;
                             }
                             
                             // Show auto-detected badge
@@ -2288,7 +2289,7 @@
                             setTimeout(function() {
                                 locationIndicator.remove();
                             }, 2000);
-                        } else {
+            } else {
                             // Browser geolocation succeeded but geocoding failed - fallback to IP
                             locationIndicator.textContent = '📍 Trying IP-based location...';
                             requestLocationFromIP();
@@ -2336,7 +2337,7 @@
                 locationIndicator.style.cssText = 'position: fixed; top: 20px; right: 20px; background: rgba(52, 152, 219, 0.9); color: white; padding: 0.75rem 1rem; border-radius: 5px; z-index: 10000; font-size: 0.9rem; box-shadow: 0 2px 10px rgba(0,0,0,0.3); max-width: 300px;';
                 locationIndicator.textContent = '📍 Detecting location...';
                 document.body.appendChild(locationIndicator);
-            } else {
+                } else {
                 locationIndicator.textContent = '📍 Detecting location...';
             }
             
@@ -2565,7 +2566,7 @@
             option.value = country;
             option.textContent = country;
             if (countrySelect) {
-                countrySelect.appendChild(option);
+            countrySelect.appendChild(option);
             }
         }
         
@@ -2601,36 +2602,36 @@
                             if (filtered.length >= 10) break; // Limit to 10 results
                         }
                     }
-                    
-                    countryDropdown.innerHTML = '';
-                    if (filtered.length === 0) {
+                
+                countryDropdown.innerHTML = '';
+                if (filtered.length === 0) {
                         hideDropdown(countryDropdown);
-                        return;
-                    }
-                    
+                    return;
+                }
+                
                     for (var j = 0; j < filtered.length; j++) {
                         var country = filtered[j];
                         var div = document.createElement('div');
-                        div.className = 'country-option';
-                        div.textContent = country;
-                        
-                        // Function to select this country (used by both click and keyboard)
+                    div.className = 'country-option';
+                    div.textContent = country;
+                    
+                    // Function to select this country (used by both click and keyboard)
                         var selectCountry = function(countryName) {
                             return function() {
                                 countryInput.value = countryName;
                                 countrySelect.value = countryName;
                                 hideDropdown(countryDropdown);
-                                selectedCountryIndex = -1; // Reset selection
-                            };
+                        selectedCountryIndex = -1; // Reset selection
+                    };
                         }(country);
-                        
-                        div.addEventListener('click', selectCountry);
-                        countryDropdown.appendChild(div);
-                    }
                     
+                    div.addEventListener('click', selectCountry);
+                    countryDropdown.appendChild(div);
+                    }
+                
                     showDropdown(countryDropdown);
-                    selectedCountryIndex = -1; // Reset selection when new suggestions are shown
-                }, 200);
+                selectedCountryIndex = -1; // Reset selection when new suggestions are shown
+            }, 200);
             }
         
         if (!useNativeSelect && countryInput) {
@@ -2765,7 +2766,7 @@
             try {
                 fetch(url).then(function(response) {
                     console.log('Fetch response received, status:', response.status);
-                    if (!response.ok) {
+                if (!response.ok) {
                         console.error('API error:', response.status, response.statusText);
                         if (citySuggestions) {
                             hideDropdown(citySuggestions);
@@ -2779,9 +2780,9 @@
                         if (citySuggestions) {
                             hideDropdown(citySuggestions);
                         }
-                        return;
-                    }
-                    
+                    return;
+                }
+                
                     console.log('Received', results.length, 'results from API');
                     console.log('Query was:', query);
                     if (results.length > 0) {
@@ -2853,8 +2854,6 @@
                             if (allMatch) {
                                 return true;
                             }
-                        } else if (matchesFirstWord) {
-                            return true;
                         }
                     }
                     
@@ -2873,8 +2872,38 @@
                     var cityMatches = queryMatches(cityName, query);
                     var displayMatches = queryMatches(displayName, query);
                     
+                    // Be more strict: require at least a partial match
+                    // If neither city name nor display name matches, return 0
                     if (!cityMatches && !displayMatches) {
-                        return 0;
+                        // Last chance: check if first query word matches any word in the name
+                        var queryWords = queryLower.split(/\s+/).filter(function(w) { return w.length > 0; });
+                        var cityWords = cityLower.split(/\s+/);
+                        var displayWords = displayLower.split(/\s+/);
+                        
+                        var cityWordMatch = false;
+                        var displayWordMatch = false;
+                        
+                        if (queryWords.length > 0) {
+                            // Check if first query word matches any city word (prefix match)
+                            for (var i = 0; i < cityWords.length; i++) {
+                                if (cityWords[i].indexOf(queryWords[0]) === 0) {
+                                    cityWordMatch = true;
+                                    break;
+                                }
+                            }
+                            
+                            // Check if first query word matches any display word (prefix match)
+                            for (var j = 0; j < displayWords.length; j++) {
+                                if (displayWords[j].indexOf(queryWords[0]) === 0) {
+                                    displayWordMatch = true;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (!cityWordMatch && !displayWordMatch) {
+                            return 0;
+                        }
                     }
                     
                     var score = 0;
@@ -2956,24 +2985,22 @@
                         placeType.indexOf('village') !== -1 || 
                         placeType.indexOf('municipality') !== -1 ||
                         placeType.indexOf('administrative') !== -1 ||
-                        placeClass === 'place' ||
+                           placeClass === 'place' ||
                         (result.address && (result.address.city || result.address.town || result.address.village || result.address.municipality))) {
                         shouldInclude = true;
                     }
                     
                     if (shouldInclude) {
                         var score = calculateMatchScore(result, query);
-                        // Include all results, but give non-matching ones a very low score
-                        // This ensures we show something even if Nominatim returns unexpected results
-                        if (score === 0) {
-                            // Give a small score so it appears at the bottom
-                            score = 1;
+                        // Only include results that actually match the query
+                        // This prevents showing random cities that don't match
+                        if (score > 0) {
+                            scoredResults.push({
+                                result: result,
+                                score: score,
+                                cityName: getCityName(result)
+                            });
                         }
-                        scoredResults.push({
-                            result: result,
-                            score: score,
-                            cityName: getCityName(result)
-                        });
                     }
                 }
                 
@@ -3007,7 +3034,7 @@
                 console.log('Displaying', displayResults.length, 'city suggestions (sorted by relevance)');
                 displayCitySuggestions(displayResults);
                 }).catch(function(e) {
-                    console.error('Autocomplete error:', e);
+                console.error('Autocomplete error:', e);
                     console.error('Error details:', e.message, e.stack);
                     console.error('Error type:', typeof e);
                     if (citySuggestions) {
@@ -3140,15 +3167,15 @@
                         
                         // Set city name (this will trigger input event, but dataset.state is already set)
                         cityInput.value = city;
-                        
-                        // Try to match and select the country
-                        // First, normalize country name (remove common suffixes, handle abbreviations)
+                    
+                    // Try to match and select the country
+                    // First, normalize country name (remove common suffixes, handle abbreviations)
                         function normalizeCountryName(name) {
-                            return name.toLowerCase()
-                                .replace(/\s+/g, ' ')
-                                .trim();
+                        return name.toLowerCase()
+                            .replace(/\s+/g, ' ')
+                            .trim();
                         }
-                        
+                    
                         var countryLower = normalizeCountryName(country);
                     
                     // Common country name mappings (API might return different names)
@@ -3300,14 +3327,14 @@
                         console.log('✓ State stored: "' + stateName + '"');
                     }
                     
-                        // Log summary for debugging
+                    // Log summary for debugging
                         console.log('Selected location: City="' + cityName + '", State="' + (stateName || '(none)') + '", Country="' + (matchedCountry || countryName) + '"');
-                        
-                        // Close suggestions
+                    
+                    // Close suggestions
                         hideDropdown(citySuggestions);
                     if (citySuggestions) citySuggestions.style.display = 'none';
-                        selectedSuggestionIndex = -1;
-                    };
+                    selectedSuggestionIndex = -1;
+                };
                 }(cityName, stateName, countryName));
                 
                 div.addEventListener('click', selectSuggestion);
@@ -3548,50 +3575,50 @@
                 }
                 
                 // Location is valid, proceed with search
-                currentCity = city;
-                currentCountry = country;
-                
-                showLoadingSkeleton();
-                
-                // First, check if data is already available before triggering a scrape
+            currentCity = city;
+            currentCountry = country;
+            
+            showLoadingSkeleton();
+            
+            // First, check if data is already available before triggering a scrape
                 var locationId = state ? city + ', ' + state + ', ' + country : city + ', ' + country;
-                
-                // ALWAYS check status first to see if there's an error (even on second search)
+            
+            // ALWAYS check status first to see if there's an error (even on second search)
                 fetch('/api/scrape/status/' + encodeURIComponent(locationId)).then(function(statusResponse) {
-                    if (statusResponse.ok) {
+                if (statusResponse.ok) {
                         return statusResponse.json().then(function(statusData) {
-                            // If status is error, show error immediately and STOP
-                            if (statusData.status === 'error') {
-                                hideLoadingOverlay();
+                    // If status is error, show error immediately and STOP
+                    if (statusData.status === 'error') {
+                        hideLoadingOverlay();
                                 var errorMsg = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
                                 showErrorState(errorMsg, function() {
-                                    // Retry will trigger a new scrape attempt
-                                    fetchShowtimes(city, country, state);
-                                });
-                                return; // STOP here, don't continue
-                            }
-                            
-                            // Only check for existing showtimes if status is not error
+                            // Retry will trigger a new scrape attempt
+                            fetchShowtimes(city, country, state);
+                        });
+                        return; // STOP here, don't continue
+            }
+            
+            // Only check for existing showtimes if status is not error
                             var params = 'city_name=' + encodeURIComponent(locationId);
                             if (formatFilter.value) params += '&format=' + encodeURIComponent(formatFilter.value);
                             if (languageFilter.value) params += '&language=' + encodeURIComponent(languageFilter.value);
                             
                             return fetch('/api/showtimes?' + params).then(function(existingDataResponse) {
                                 return existingDataResponse.json().then(function(existingShowtimes) {
-                                    // If we have showtimes available, display them immediately (no need to scrape)
-                                    if (existingShowtimes && Array.isArray(existingShowtimes) && existingShowtimes.length > 0) {
-                                        hideLoadingOverlay(); // Stop animation
-                                        showtimes = applyFilters(existingShowtimes);
-                                        renderShowtimes();
-                                        return; // Data is available, no need to trigger scrape
-                                    }
+                // If we have showtimes available, display them immediately (no need to scrape)
+                if (existingShowtimes && Array.isArray(existingShowtimes) && existingShowtimes.length > 0) {
+                    hideLoadingOverlay(); // Stop animation
+                    showtimes = applyFilters(existingShowtimes);
+                    renderShowtimes();
+                    return; // Data is available, no need to trigger scrape
+                }
                                     
                                     // Data not available - trigger scraping
                                     fetchShowtimes(city, country, state);
                                 });
                             }).catch(function(e) {
-                                // If checking existing data fails, continue to scrape
-                                console.log('Could not check existing data, proceeding with scrape...');
+                // If checking existing data fails, continue to scrape
+                console.log('Could not check existing data, proceeding with scrape...');
                                 fetchShowtimes(city, country, state);
                             });
                         });
@@ -3814,14 +3841,14 @@
             if (stateValue) {
                 // Store in dataset if supported, otherwise use attribute
                 if (cityInput && cityInput.dataset) {
-                    cityInput.dataset.state = stateValue;
+                cityInput.dataset.state = stateValue;
                 } else if (cityInput) {
                     cityInput.setAttribute('data-state', stateValue);
                 }
             } else {
                 // Clear state
                 if (cityInput && cityInput.dataset) {
-                    delete cityInput.dataset.state;
+                delete cityInput.dataset.state;
                 } else if (cityInput) {
                     cityInput.removeAttribute('data-state');
                 }
@@ -3843,13 +3870,13 @@
             if (!state) state = '';
             
             fetch('/api/scrape', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    city: city, 
-                    country: country,
-                    state: state
-                })
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        city: city, 
+                        country: country,
+                        state: state
+                    })
             }).then(function(scrapeResponse) {
                 // Check HTTP status first - if it's an error status, handle it
                 if (!scrapeResponse.ok && scrapeResponse.status !== 202) {
@@ -3864,7 +3891,7 @@
                     }).catch(function(e) {
                         // If JSON parsing fails, use default message
                         errorMsg = 'Server error (' + scrapeResponse.status + '). Please check your API key configuration.';
-                        hideLoadingOverlay();
+                    hideLoadingOverlay();
                         showErrorState(errorMsg, function() {
                             fetchShowtimes(city, country, state);
                         });
@@ -3872,48 +3899,48 @@
                 }
                 
                 return scrapeResponse.json().then(function(data) {
-                    if (scrapeResponse.status === 202) {
-                        // Scraping in progress by another request - start polling
+                if (scrapeResponse.status === 202) {
+                    // Scraping in progress by another request - start polling
                         var locationId = state ? city + ', ' + state + ', ' + country : city + ', ' + country;
-                        showLoadingState('Scraping showtimes');
-                        startPolling(locationId);
-                        return;
-                    }
-                    
-                    // FIRST: Check for error status BEFORE checking showtimes
-                    if (data.status === 'error') {
-                        // Error occurred - stop animation and show error
-                        hideLoadingOverlay();
+                    showLoadingState('Scraping showtimes');
+                    startPolling(locationId);
+                    return;
+                }
+                
+                // FIRST: Check for error status BEFORE checking showtimes
+                if (data.status === 'error') {
+                    // Error occurred - stop animation and show error
+                    hideLoadingOverlay();
                         var errorMsg = data.message || data.error_message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
                         showErrorState(errorMsg, function() {
                             fetchShowtimes(city, country, state);
                         });
-                        return;
-                    }
-                    
-                    // If we get showtimes directly, render them immediately (stop animation)
-                    if (data.showtimes && Array.isArray(data.showtimes) && data.showtimes.length > 0) {
-                        hideLoadingOverlay(); // Stop animation immediately
-                        showtimes = applyFilters(data.showtimes);
-                        renderShowtimes();
-                        return;
-                    }
-                    
-                    // Check if response contains showtimes (even if empty array) - but only if not error
-                    if (data.showtimes && Array.isArray(data.showtimes)) {
-                        // Before showing empty showtimes, check status for errors
+                    return;
+                }
+                
+                // If we get showtimes directly, render them immediately (stop animation)
+                if (data.showtimes && Array.isArray(data.showtimes) && data.showtimes.length > 0) {
+                    hideLoadingOverlay(); // Stop animation immediately
+                    showtimes = applyFilters(data.showtimes);
+                    renderShowtimes();
+                    return;
+                }
+                
+                // Check if response contains showtimes (even if empty array) - but only if not error
+                if (data.showtimes && Array.isArray(data.showtimes)) {
+                    // Before showing empty showtimes, check status for errors
                         var locationId = state ? city + ', ' + state + ', ' + country : city + ', ' + country;
                         fetch('/api/scrape/status/' + encodeURIComponent(locationId)).then(function(statusCheck) {
-                            if (statusCheck.ok) {
+                        if (statusCheck.ok) {
                                 return statusCheck.json().then(function(statusData) {
-                                    if (statusData.status === 'error') {
-                                        hideLoadingOverlay();
+                            if (statusData.status === 'error') {
+                                hideLoadingOverlay();
                                         var errorMsg = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
                                         showErrorState(errorMsg, function() {
                                             fetchShowtimes(city, country, state);
                                         });
-                                        return;
-                                    }
+                                return;
+                            }
                                     
                                     // Use showtimes from response immediately! (stop animation)
                                     hideLoadingOverlay(); // Stop animation
@@ -3922,26 +3949,26 @@
                                 });
                             }
                         }).catch(function(e) {
-                            // If status check fails, continue with showtimes
-                            console.log('Status check failed, continuing with showtimes...', e);
-                            // Use showtimes from response immediately! (stop animation)
-                            hideLoadingOverlay(); // Stop animation
-                            showtimes = applyFilters(data.showtimes);
-                            renderShowtimes();
+                        // If status check fails, continue with showtimes
+                        console.log('Status check failed, continuing with showtimes...', e);
+                    // Use showtimes from response immediately! (stop animation)
+                    hideLoadingOverlay(); // Stop animation
+                    showtimes = applyFilters(data.showtimes);
+                    renderShowtimes();
                         });
-                        return;
-                    } else if (data.status === 'success' || data.status === 'fresh') {
-                        // Fallback: fetch showtimes separately (shouldn't happen with new API)
+                    return;
+                } else if (data.status === 'success' || data.status === 'fresh') {
+                    // Fallback: fetch showtimes separately (shouldn't happen with new API)
                         var locationId2 = state ? city + ', ' + state + ', ' + country : city + ', ' + country;
-                        hideLoadingOverlay(); // Stop animation before loading
+                    hideLoadingOverlay(); // Stop animation before loading
                         loadShowtimes(locationId2);
-                    } else {
-                        // If we get here and no showtimes, no success status, and no error status,
-                        // it might be a processing state - start polling to check status
+                } else {
+                    // If we get here and no showtimes, no success status, and no error status,
+                    // it might be a processing state - start polling to check status
                         var locationId3 = state ? city + ', ' + state + ', ' + country : city + ', ' + country;
-                        showLoadingState('Processing request...');
+                    showLoadingState('Processing request...');
                         startPolling(locationId3);
-                    }
+                }
                 });
             }).catch(function(e) {
                 console.error('Scrape error:', e);
@@ -3957,11 +3984,11 @@
             var pollCount = 0;
             // Poll every 2 seconds for status updates
             pollingInterval = setInterval(function() {
-                pollCount++;
+                    pollCount++;
                 var dataLoaded = false;
-                
-                // FIRST: Check if showtimes are available (even during daily refresh)
-                // Always try to load data first - if it exists, show it immediately
+                    
+                    // FIRST: Check if showtimes are available (even during daily refresh)
+                    // Always try to load data first - if it exists, show it immediately
                 var params = 'city_name=' + encodeURIComponent(locationId);
                 if (formatFilter.value) params += '&format=' + encodeURIComponent(formatFilter.value);
                 if (languageFilter.value) params += '&language=' + encodeURIComponent(languageFilter.value);
@@ -3973,67 +4000,67 @@
                     // Also fetch status
                     return fetch('/api/scrape/status/' + encodeURIComponent(locationId)).then(function(statusResponse) {
                         return statusResponse.json().then(function(statusData) {
-                            // If we got showtimes (even if daily refresh is running), display them immediately
-                            // BUT: Check status first - if status is 'error', show error instead of empty state
-                            if (testShowtimes && Array.isArray(testShowtimes)) {
-                                // Check status to see if there was an error BEFORE checking showtimes
-                                if (statusData.status === 'error') {
-                                    clearInterval(pollingInterval);
-                                    pollingInterval = null;
-                                    hideLoadingOverlay();
+                        // If we got showtimes (even if daily refresh is running), display them immediately
+                        // BUT: Check status first - if status is 'error', show error instead of empty state
+                        if (testShowtimes && Array.isArray(testShowtimes)) {
+                            // Check status to see if there was an error BEFORE checking showtimes
+                            if (statusData.status === 'error') {
+                                clearInterval(pollingInterval);
+                                pollingInterval = null;
+                                hideLoadingOverlay();
                                     var errorMsg = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
                                     showErrorState(errorMsg, function() {
                                         var city = cityInput.value.trim();
                                         var country = countrySelect.value;
                                         var state = stateInput.value.trim() || (cityInput.dataset && cityInput.dataset.state) || '';
-                                        if (city && country) {
-                                            fetchShowtimes(city, country, state);
-                                        }
-                                    });
-                                    return;
-                                }
-                                
-                                clearInterval(pollingInterval);
-                                pollingInterval = null;
-                                hideLoadingOverlay(); // Stop animation immediately
-                                if (testShowtimes.length > 0) {
-                                    showtimes = applyFilters(testShowtimes);
-                                    renderShowtimes(); // Display available data
-                                } else {
-                                    // Data is ready but no showtimes found (only if not error status)
-                                    showEmptyState('{{ translations.no_showtimes or "No showtimes found" }}', '🎬');
-                                }
-                                return; // Exit, don't continue polling
+                                    if (city && country) {
+                                        fetchShowtimes(city, country, state);
+                                    }
+                                });
+                                return;
                             }
                             
-                            // If data was loaded, we already returned above
-                            // Now check status for fresh/ready data
-                            if (statusData.status === 'fresh' || statusData.ready) {
-                                // Data is ready! Stop polling and load showtimes immediately
-                                clearInterval(pollingInterval);
-                                pollingInterval = null;
-                                hideLoadingOverlay(); // Stop animation before loading
+                            clearInterval(pollingInterval);
+                            pollingInterval = null;
+                            hideLoadingOverlay(); // Stop animation immediately
+                            if (testShowtimes.length > 0) {
+                                showtimes = applyFilters(testShowtimes);
+                                renderShowtimes(); // Display available data
+                            } else {
+                                // Data is ready but no showtimes found (only if not error status)
+                                showEmptyState('{{ translations.no_showtimes or "No showtimes found" }}', '🎬');
+                            }
+                            return; // Exit, don't continue polling
+                    }
+                    
+                    // If data was loaded, we already returned above
+                    // Now check status for fresh/ready data
+                    if (statusData.status === 'fresh' || statusData.ready) {
+                        // Data is ready! Stop polling and load showtimes immediately
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
+                        hideLoadingOverlay(); // Stop animation before loading
                                 loadShowtimes(locationId);
-                                return; // Exit early, don't continue polling
-                            }
-                            
-                            // Only show loading state if we're still waiting (no data available yet)
-                            // Update UI with current status (dots will be animated)
+                        return; // Exit early, don't continue polling
+                    }
+                    
+                    // Only show loading state if we're still waiting (no data available yet)
+                        // Update UI with current status (dots will be animated)
                             var statusMessage = statusData.processing_by === 'on-demand' 
-                                ? 'Scraping showtimes' 
-                                : (statusData.processing_by === 'daily-refresh' 
-                                    ? 'Daily refresh in progress' 
-                                    : 'Processing');
-                            showLoadingState(statusMessage);
-                            
-                            if (statusData.status === 'stale' || statusData.status === 'error') {
-                                // Scraping failed, stop polling
-                                clearInterval(pollingInterval);
-                                pollingInterval = null;
-                                hideLoadingOverlay();
-                                
-                                // Always show error state for 'error' status, never show "no showtimes"
-                                if (statusData.status === 'error') {
+                            ? 'Scraping showtimes' 
+                            : (statusData.processing_by === 'daily-refresh' 
+                                ? 'Daily refresh in progress' 
+                                : 'Processing');
+                        showLoadingState(statusMessage);
+                    
+                    if (statusData.status === 'stale' || statusData.status === 'error') {
+                        // Scraping failed, stop polling
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
+                        hideLoadingOverlay();
+                        
+                        // Always show error state for 'error' status, never show "no showtimes"
+                        if (statusData.status === 'error') {
                                     var errorMsg2 = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
                                     showErrorState(errorMsg2, function() {
                                         var city2 = cityInput.value.trim();
@@ -4041,15 +4068,15 @@
                                         var state2 = (cityInput.dataset && cityInput.dataset.state) || '';
                                         if (city2 && country2) {
                                             fetchShowtimes(city2, country2, state2);
-                                        }
-                                    });
-                                } else {
-                                    // Only show "no showtimes" for 'stale' status (not error)
+                                }
+                            });
+                        } else {
+                            // Only show "no showtimes" for 'stale' status (not error)
                                     var errorMsg3 = statusData.message || '{{ translations.no_showtimes or "No showtimes found" }}';
                                     showEmptyState(errorMsg3, '🎬');
-                                }
-                            }
-                            // Otherwise keep polling (status is 'processing')
+                        }
+                    }
+                    // Otherwise keep polling (status is 'processing')
                         });
                     });
                 }).catch(function(e) {
@@ -4078,31 +4105,31 @@
             if (formatFilter.value) params += '&format=' + encodeURIComponent(formatFilter.value);
             if (languageFilter.value) params += '&language=' + encodeURIComponent(languageFilter.value);
             
-            // First check status to see if there's an error
+                // First check status to see if there's an error
             fetch('/api/scrape/status/' + encodeURIComponent(locationId)).then(function(statusResponse) {
                 return statusResponse.json().then(function(statusData) {
-                    // If status is error, show error message instead of loading showtimes
-                    if (statusData.status === 'error') {
-                        hideLoadingOverlay();
+                // If status is error, show error message instead of loading showtimes
+                if (statusData.status === 'error') {
+                    hideLoadingOverlay();
                         var errorMsg = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
                         showErrorState(errorMsg, function() {
                             var city = cityInput.value.trim();
                             var country = countrySelect.value;
                             var state = (cityInput.dataset && cityInput.dataset.state) || '';
-                            if (city && country) {
-                                fetchShowtimes(city, country, state);
-                            }
-                        });
-                        return;
-                    }
-                    
+                        if (city && country) {
+                            fetchShowtimes(city, country, state);
+                        }
+                    });
+                    return;
+                }
+                
                     // Load showtimes
                     return fetch('/api/showtimes?' + params).then(function(response) {
                         return response.json().then(function(showtimesData) {
                             showtimes = showtimesData;
-                            // Stop animation and render results
-                            hideLoadingOverlay();
-                            renderShowtimes();
+                // Stop animation and render results
+                hideLoadingOverlay();
+                renderShowtimes();
                         });
                     });
                 });
@@ -4565,28 +4592,28 @@
             };
             
             fetch('/api/feedback', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(formData)
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
             }).then(function(response) {
                 return response.json().then(function(data) {
-                    feedbackMessageDisplay.style.display = 'block';
+                feedbackMessageDisplay.style.display = 'block';
+                
+                if (data.success) {
+                    feedbackMessageDisplay.className = 'success';
+                    feedbackMessageDisplay.textContent = '{{ translations.feedback_sent }}';
+                    feedbackForm.reset();
                     
-                    if (data.success) {
-                        feedbackMessageDisplay.className = 'success';
-                        feedbackMessageDisplay.textContent = '{{ translations.feedback_sent }}';
-                        feedbackForm.reset();
-                        
-                        // Close modal after 2 seconds
+                    // Close modal after 2 seconds
                         setTimeout(function() {
-                            closeFeedbackModal();
-                        }, 2000);
-                    } else {
-                        feedbackMessageDisplay.className = 'error';
-                        feedbackMessageDisplay.textContent = data.error || '{{ translations.feedback_error }}';
-                    }
+                        closeFeedbackModal();
+                    }, 2000);
+                } else {
+                    feedbackMessageDisplay.className = 'error';
+                    feedbackMessageDisplay.textContent = data.error || '{{ translations.feedback_error }}';
+                }
                     
                     submitBtn.disabled = false;
                     submitBtn.textContent = originalText;

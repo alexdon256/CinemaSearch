@@ -803,7 +803,9 @@ def api_city_suggestions():
         import json
         import urllib.parse
         
-        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=10&addressdetails=1&extratags=1&accept-language={lang}"
+        # Increase limit to get better matches, but don't restrict by featuretype
+        # This allows Nominatim to return the best matches regardless of type
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=20&addressdetails=1&extratags=1&accept-language={lang}"
         
         try:
             req = urllib.request.Request(url, headers={
