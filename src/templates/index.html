@@ -1765,7 +1765,12 @@
                             },
                             onRejected: function(error) {
                                 try {
-                                    resolve(onRejected ? onRejected(error) : reject(error));
+                                    if (onRejected) {
+                                        var result = onRejected(error);
+                                        resolve(result);
+                                    } else {
+                                        reject(error);
+                                    }
                                 } catch (ex) {
                                     reject(ex);
                                 }
@@ -2749,50 +2754,103 @@
                 return;
             }
             
-            // Search globally - don't restrict by country
-            // Request address details for better structured data
-            // Remove featuretype=city restriction to get all city-like places (cities, towns, villages, etc.)
-            // This ensures we get results for major cities like Los Angeles, New York, etc.
-            var url = 'https://nominatim.openstreetmap.org/search?q=' + encodeURIComponent(query) + '&format=json&limit=10&addressdetails=1&extratags=1';
-            
-            // Note: We intentionally don't use countrycodes parameter here to allow global city search
-            // The country selection is only used when submitting the search, not for autocomplete
-            // This allows users to search for any city worldwide regardless of country filter
+            // Use backend proxy to avoid CORS issues on old browsers
+            var url = '/api/city-suggestions?q=' + encodeURIComponent(query) + '&lang={{ lang }}';
             
             console.log('Fetching city suggestions for:', query);
             console.log('Fetch available:', typeof fetch !== 'undefined');
             console.log('Promise available:', typeof Promise !== 'undefined');
+            console.log('Using backend proxy URL:', url);
             
             try {
-                fetch(url, {
-                    headers: { 
-                        'Accept-Language': '{{ lang }}',
-                        'User-Agent': 'CineStream/1.0' // Required by Nominatim
-                    }
-                }).then(function(response) {
+                fetch(url).then(function(response) {
                     console.log('Fetch response received, status:', response.status);
                     if (!response.ok) {
-                        console.error('Nominatim API error:', response.status, response.statusText);
+                        console.error('API error:', response.status, response.statusText);
                         if (citySuggestions) {
                             hideDropdown(citySuggestions);
                         }
-                        return null;
+                        return [];
                     }
                     return response.json();
                 }).then(function(results) {
-                if (!results || results.length === 0) {
-                    console.log('No results from Nominatim');
-                    if (citySuggestions) {
-                        hideDropdown(citySuggestions);
+                    if (!results || results.length === 0) {
+                        console.log('No results from API');
+                        if (citySuggestions) {
+                            hideDropdown(citySuggestions);
+                        }
+                        return;
                     }
-                    return;
+                    
+                    console.log('Received', results.length, 'results from API');
+                
+                // Helper function to extract city name from result
+                function getCityName(result) {
+                    var address = result.address || {};
+                    var displayName = result.display_name || '';
+                    
+                    // Try to get city name from address first
+                    var cityName = address.city || address.town || address.village || address.municipality || '';
+                    
+                    // If no city in address, try to extract from display_name (format: "City, State, Country")
+                    if (!cityName && displayName) {
+                        var parts = displayName.split(',');
+                        if (parts.length > 0) {
+                            cityName = parts[0].trim();
+                        }
+                    }
+                    
+                    return cityName || displayName;
                 }
                 
-                console.log('Received', results.length, 'results from Nominatim');
+                // Helper function to calculate match score (higher = better match)
+                function calculateMatchScore(result, query) {
+                    var cityName = getCityName(result);
+                    var cityLower = cityName.toLowerCase();
+                    var queryLower = query.toLowerCase();
+                    
+                    var score = 0;
+                    
+                    // Exact prefix match gets highest score (1000+)
+                    if (cityLower.indexOf(queryLower) === 0) {
+                        score = 1000;
+                        // Shorter names with prefix match rank higher (exact matches first)
+                        score += (100 - cityName.length);
+                    }
+                    // Contains match gets medium score (500+)
+                    else if (cityLower.indexOf(queryLower) !== -1) {
+                        score = 500;
+                        // Earlier position in name gets higher score
+                        var position = cityLower.indexOf(queryLower);
+                        score += (100 - position);
+                    }
+                    // Fuzzy match (word boundary or similar) gets lower score (100+)
+                    else {
+                        var words = cityLower.split(/\s+/);
+                        for (var w = 0; w < words.length; w++) {
+                            if (words[w].indexOf(queryLower) === 0) {
+                                score = 100;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Boost score for city/town types
+                    var placeType = (result.type || '').toLowerCase();
+                    var placeClass = (result.class || '').toLowerCase();
+                    if (placeType.indexOf('city') !== -1) {
+                        score += 50;
+                    } else if (placeType.indexOf('town') !== -1) {
+                        score += 30;
+                    } else if (placeClass === 'place') {
+                        score += 20;
+                    }
+                    
+                    return score;
+                }
                 
-                // Filter results to prioritize cities, towns, and municipalities
-                // But include other place types if they're the best match
-                var filteredResults = [];
+                // Filter and score results
+                var scoredResults = [];
                 for (var i = 0; i < results.length; i++) {
                     var result = results[i];
                     var placeType = result.type || '';
@@ -2811,13 +2869,36 @@
                     }
                     
                     if (shouldInclude) {
-                        filteredResults.push(result);
-                        if (filteredResults.length >= 5) break; // Limit to 5 results
+                        var score = calculateMatchScore(result, query);
+                        scoredResults.push({
+                            result: result,
+                            score: score,
+                            cityName: getCityName(result)
+                        });
                     }
                 }
                 
-                var displayResults = filteredResults.length > 0 ? filteredResults : results.slice(0, 5);
-                console.log('Displaying', displayResults.length, 'city suggestions');
+                // Sort by score (highest first), then by city name length (shorter first for same score)
+                scoredResults.sort(function(a, b) {
+                    if (b.score !== a.score) {
+                        return b.score - a.score; // Higher score first
+                    }
+                    // If same score, shorter name first (more precise match)
+                    return a.cityName.length - b.cityName.length;
+                });
+                
+                // Extract results and limit to top 10
+                var displayResults = [];
+                for (var j = 0; j < scoredResults.length && j < 10; j++) {
+                    displayResults.push(scoredResults[j].result);
+                }
+                
+                // If no filtered results, use first 5 from original results
+                if (displayResults.length === 0) {
+                    displayResults = results.slice(0, 5);
+                }
+                
+                console.log('Displaying', displayResults.length, 'city suggestions (sorted by relevance)');
                 displayCitySuggestions(displayResults);
                 }).catch(function(e) {
                     console.error('Autocomplete error:', e);

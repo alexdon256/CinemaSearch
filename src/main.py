@@ -788,6 +788,39 @@ def api_geocode():
         print(f"Error in geocode endpoint: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/city-suggestions', methods=['GET'])
+def api_city_suggestions():
+    """Proxy Nominatim city search requests to avoid CORS issues on old browsers"""
+    try:
+        query = request.args.get('q', '').strip()
+        lang = request.args.get('lang', 'en')
+        
+        if not query or len(query) < 2:
+            return jsonify([]), 200
+        
+        # Use Nominatim for city search
+        import urllib.request
+        import json
+        import urllib.parse
+        
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=10&addressdetails=1&extratags=1&accept-language={lang}"
+        
+        try:
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'CineStream/1.0'  # Required by Nominatim
+            })
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode())
+                return jsonify(data), 200
+                
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
+            print(f"City suggestions error: {e}")
+            return jsonify([]), 200  # Return empty array on error
+            
+    except Exception as e:
+        print(f"Error in city suggestions endpoint: {e}")
+        return jsonify([]), 200  # Return empty array on error
+
 @app.route('/api/geocode-ip', methods=['GET'])
 def api_geocode_ip():
     """Fallback: Get location from IP address (when browser geolocation fails)"""
