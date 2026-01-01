@@ -1816,51 +1816,74 @@
             document.body.appendChild(locationIndicator);
             
             navigator.geolocation.getCurrentPosition(
-                async function(position) {
-                    const lat = position.coords.latitude;
-                    const lon = position.coords.longitude;
+                function(position) {
+                    var lat = position.coords.latitude;
+                    var lon = position.coords.longitude;
                     
-                    try {
-                        // Reverse geocode coordinates to get city/country
-                        const response = await fetch('/api/geocode', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({ lat, lon })
-                        });
-                        
-                        const data = await response.json();
-                        
+                    // Reverse geocode coordinates to get city/country
+                    fetch('/api/geocode', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ lat: lat, lon: lon })
+                    }).then(function(response) {
+                        return response.json();
+                    }).then(function(data) {
                         if (data.success && data.city && data.country) {
                             // Set city
                             cityInput.value = data.city;
                             if (data.region) {
-                                cityInput.dataset.state = data.region;
+                                if (cityInput.dataset) {
+                                    cityInput.dataset.state = data.region;
+                                } else {
+                                    cityInput.setAttribute('data-state', data.region);
+                                }
                                 stateInput.value = data.region;
                             }
                             
                             // Set country
-                            const countryName = data.country;
+                            var countryName = data.country;
                             countryInput.value = countryName;
                             
                             // Find and select the country in the dropdown
-                            let countryOption = Array.from(countrySelect.options).find(opt => 
-                                opt.textContent.trim() === countryName
-                            );
+                            var countryOption = null;
+                            var options = Array.from ? Array.from(countrySelect.options) : [];
+                            if (!Array.from) {
+                                // Fallback for old browsers
+                                for (var i = 0; i < countrySelect.options.length; i++) {
+                                    options.push(countrySelect.options[i]);
+                                }
+                            }
                             
-                            if (!countryOption) {
-                                countryOption = Array.from(countrySelect.options).find(opt => 
-                                    opt.textContent.trim().toLowerCase() === countryName.toLowerCase()
-                                );
+                            for (var j = 0; j < options.length; j++) {
+                                var opt = options[j];
+                                if (opt.textContent.trim() === countryName) {
+                                    countryOption = opt;
+                                    break;
+                                }
                             }
                             
                             if (!countryOption) {
-                                countryOption = Array.from(countrySelect.options).find(opt => {
-                                    const optText = opt.textContent.trim().toLowerCase();
-                                    const countryLower = countryName.toLowerCase();
-                                    return optText.includes(countryLower) || countryLower.includes(optText);
-                                });
+                                for (var k = 0; k < options.length; k++) {
+                                    var opt2 = options[k];
+                                    if (opt2.textContent.trim().toLowerCase() === countryName.toLowerCase()) {
+                                        countryOption = opt2;
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            if (!countryOption) {
+                                for (var m = 0; m < options.length; m++) {
+                                    var opt3 = options[m];
+                                    var optText = opt3.textContent.trim().toLowerCase();
+                                    var countryLower = countryName.toLowerCase();
+                                    if (optText.indexOf(countryLower) !== -1 || countryLower.indexOf(optText) !== -1) {
+                                        countryOption = opt3;
+                                        break;
+                                    }
+                                }
                             }
                             
                             if (countryOption) {
@@ -1868,7 +1891,7 @@
                             }
                             
                             // Show auto-detected badge
-                            const badge = document.getElementById('auto-detected-badge');
+                            var badge = document.getElementById('auto-detected-badge');
                             if (badge) {
                                 badge.style.display = 'inline-block';
                             }
@@ -1876,110 +1899,26 @@
                             // Update indicator
                             locationIndicator.textContent = '✓ Location detected';
                             locationIndicator.style.background = 'rgba(39, 174, 96, 0.9)';
-                            setTimeout(() => {
+                            setTimeout(function() {
                                 locationIndicator.remove();
                             }, 2000);
                         } else {
-                            locationIndicator.textContent = '⚠ Could not determine location';
-                            locationIndicator.style.background = 'rgba(243, 156, 18, 0.9)';
-                            setTimeout(() => {
-                                locationIndicator.remove();
-                            }, 3000);
+                            // Browser geolocation succeeded but geocoding failed - fallback to IP
+                            locationIndicator.textContent = '📍 Trying IP-based location...';
+                            requestLocationFromIP();
                         }
-                    } catch (error) {
+                    }).catch(function(error) {
                         console.error('Geocoding error:', error);
-                        locationIndicator.textContent = '⚠ Location error';
-                        locationIndicator.style.background = 'rgba(231, 76, 60, 0.9)';
-                        setTimeout(() => {
-                            locationIndicator.remove();
-                        }, 3000);
-                    }
-                },
-                async function(error) {
-                    // User denied or error occurred - try IP-based fallback
-                    if (error.code === error.PERMISSION_DENIED) {
+                        // Geocoding failed - fallback to IP
                         locationIndicator.textContent = '📍 Trying IP-based location...';
-                        locationIndicator.style.background = 'rgba(52, 152, 219, 0.9)';
-                        
-                        // Fallback to IP-based geolocation
-                        try {
-                            const ipResponse = await fetch('/api/geocode-ip');
-                            const ipData = await ipResponse.json();
-                            
-                            if (ipData.success && ipData.city && ipData.country) {
-                                // Set city
-                                cityInput.value = ipData.city;
-                                if (ipData.region) {
-                                    cityInput.dataset.state = ipData.region;
-                                    stateInput.value = ipData.region;
-                                }
-                                
-                                // Set country
-                                const countryName = ipData.country;
-                                countryInput.value = countryName;
-                                
-                                // Find and select the country in the dropdown
-                                let countryOption = Array.from(countrySelect.options).find(opt => 
-                                    opt.textContent.trim() === countryName
-                                );
-                                
-                                if (!countryOption) {
-                                    countryOption = Array.from(countrySelect.options).find(opt => 
-                                        opt.textContent.trim().toLowerCase() === countryName.toLowerCase()
-                                    );
-                                }
-                                
-                                if (!countryOption) {
-                                    countryOption = Array.from(countrySelect.options).find(opt => {
-                                        const optText = opt.textContent.trim().toLowerCase();
-                                        const countryLower = countryName.toLowerCase();
-                                        return optText.includes(countryLower) || countryLower.includes(optText);
-                                    });
-                                }
-                                
-                                if (countryOption) {
-                                    countrySelect.value = countryOption.value;
-                                }
-                                
-                                // Show auto-detected badge
-                                const badge = document.getElementById('auto-detected-badge');
-                                if (badge) {
-                                    badge.style.display = 'inline-block';
-                                }
-                                
-                                locationIndicator.textContent = '✓ Location detected (IP-based)';
-                                locationIndicator.style.background = 'rgba(39, 174, 96, 0.9)';
-                                setTimeout(() => {
-                                    locationIndicator.remove();
-                                }, 2000);
-                                return;
-                            }
-                        } catch (ipError) {
-                            console.error('IP geolocation fallback error:', ipError);
-                        }
-                    }
-                    
-                    // Show error message
-                    let message = 'Location access denied';
-                    let helpText = '';
-                    
-                    if (error.code === error.PERMISSION_DENIED) {
-                        message = 'Location permission denied';
-                        helpText = 'Tap the location icon in your browser\'s address bar to allow location access, or go to Chrome Settings > Site Settings > Location to reset permissions.';
-                    } else if (error.code === error.POSITION_UNAVAILABLE) {
-                        message = 'Location unavailable';
-                        helpText = 'Make sure location services are enabled on your device.';
-                    } else if (error.code === error.TIMEOUT) {
-                        message = 'Location request timeout';
-                        helpText = 'Please try again.';
-                    }
-                    
-                    locationIndicator.innerHTML = `<div>⚠ ${message}</div>${helpText ? '<div style="font-size: 0.8rem; margin-top: 0.5rem; opacity: 0.9;">' + helpText + '</div>' : ''}`;
-                    locationIndicator.style.background = 'rgba(231, 76, 60, 0.9)';
-                    locationIndicator.style.maxWidth = '350px';
-                    setTimeout(() => {
-                        locationIndicator.remove();
-                    }, 8000);
+                        requestLocationFromIP();
+                    });
+                },
+                function(error) {
+                    // User denied or error occurred - always try IP-based fallback
+                    locationIndicator.textContent = '📍 Trying IP-based location...';
+                    locationIndicator.style.background = 'rgba(52, 152, 219, 0.9)';
+                    requestLocationFromIP();
                 },
                 {
                     enableHighAccuracy: true,
@@ -2001,47 +1940,77 @@
             }, 5000);
         }
         
-        // Primary method: IP-based geolocation (no permission needed, works automatically)
-        async function requestLocationFromIP() {
-            const locationIndicator = document.createElement('div');
-            locationIndicator.id = 'location-request-indicator';
-            locationIndicator.style.cssText = 'position: fixed; top: 20px; right: 20px; background: rgba(52, 152, 219, 0.9); color: white; padding: 0.75rem 1rem; border-radius: 5px; z-index: 10000; font-size: 0.9rem; box-shadow: 0 2px 10px rgba(0,0,0,0.3); max-width: 300px;';
-            locationIndicator.textContent = '📍 Detecting location...';
-            document.body.appendChild(locationIndicator);
+        // IP-based geolocation fallback (no permission needed, works automatically)
+        function requestLocationFromIP() {
+            // Check if indicator already exists (from previous attempt)
+            var locationIndicator = document.getElementById('location-request-indicator');
+            if (!locationIndicator) {
+                locationIndicator = document.createElement('div');
+                locationIndicator.id = 'location-request-indicator';
+                locationIndicator.style.cssText = 'position: fixed; top: 20px; right: 20px; background: rgba(52, 152, 219, 0.9); color: white; padding: 0.75rem 1rem; border-radius: 5px; z-index: 10000; font-size: 0.9rem; box-shadow: 0 2px 10px rgba(0,0,0,0.3); max-width: 300px;';
+                locationIndicator.textContent = '📍 Detecting location...';
+                document.body.appendChild(locationIndicator);
+            } else {
+                locationIndicator.textContent = '📍 Detecting location...';
+            }
             
-            try {
-                const response = await fetch('/api/geocode-ip');
-                const data = await response.json();
-                
+            fetch('/api/geocode-ip').then(function(response) {
+                return response.json();
+            }).then(function(data) {
                 if (data.success && data.city && data.country) {
                     // Set city
                     cityInput.value = data.city;
                     if (data.region) {
-                        cityInput.dataset.state = data.region;
+                        if (cityInput.dataset) {
+                            cityInput.dataset.state = data.region;
+                        } else {
+                            cityInput.setAttribute('data-state', data.region);
+                        }
                         stateInput.value = data.region;
                     }
                     
                     // Set country
-                    const countryName = data.country;
+                    var countryName = data.country;
                     countryInput.value = countryName;
                     
                     // Find and select the country in the dropdown
-                    let countryOption = Array.from(countrySelect.options).find(opt => 
-                        opt.textContent.trim() === countryName
-                    );
+                    var countryOption = null;
+                    var options = Array.from ? Array.from(countrySelect.options) : [];
+                    if (!Array.from) {
+                        // Fallback for old browsers
+                        for (var i = 0; i < countrySelect.options.length; i++) {
+                            options.push(countrySelect.options[i]);
+                        }
+                    }
                     
-                    if (!countryOption) {
-                        countryOption = Array.from(countrySelect.options).find(opt => 
-                            opt.textContent.trim().toLowerCase() === countryName.toLowerCase()
-                        );
+                    for (var j = 0; j < options.length; j++) {
+                        var opt = options[j];
+                        if (opt.textContent.trim() === countryName) {
+                            countryOption = opt;
+                            break;
+                        }
                     }
                     
                     if (!countryOption) {
-                        countryOption = Array.from(countrySelect.options).find(opt => {
-                            const optText = opt.textContent.trim().toLowerCase();
-                            const countryLower = countryName.toLowerCase();
-                            return optText.includes(countryLower) || countryLower.includes(optText);
-                        });
+                        for (var k = 0; k < options.length; k++) {
+                            var opt2 = options[k];
+                            if (opt2.textContent.trim().toLowerCase() === countryName.toLowerCase()) {
+                                countryOption = opt2;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (!countryOption) {
+                        for (var m = 0; m < options.length; m++) {
+                            var opt3 = options[m];
+                            var optText = opt3.textContent.trim().toLowerCase();
+                            var countryLower = countryName.toLowerCase();
+                            if (optText.indexOf(countryLower) !== -1 || countryLower.indexOf(optText) !== -1) {
+                                countryOption = opt3;
+                                break;
+                            }
+                        }
                     }
                     
                     if (countryOption) {
@@ -2049,7 +2018,7 @@
                     }
                     
                     // Show auto-detected badge
-                    const badge = document.getElementById('auto-detected-badge');
+                    var badge = document.getElementById('auto-detected-badge');
                     if (badge) {
                         badge.style.display = 'inline-block';
                     }
@@ -2057,22 +2026,57 @@
                     // Update indicator
                     locationIndicator.textContent = '✓ Location detected';
                     locationIndicator.style.background = 'rgba(39, 174, 96, 0.9)';
-                    setTimeout(() => {
+                    setTimeout(function() {
                         locationIndicator.remove();
                     }, 2000);
                 } else {
                     // Silently remove indicator if no location found
                     locationIndicator.remove();
                 }
-            } catch (error) {
+            }).catch(function(error) {
                 console.error('IP geolocation error:', error);
                 // Silently remove indicator on error
                 locationIndicator.remove();
+            });
+        }
+        
+        // Auto-detect location on page load: Try browser geolocation first, fallback to IP
+        function autoDetectLocation() {
+            // Check if browser geolocation is available and we're in a secure context
+            if (navigator.geolocation && isSecureContext()) {
+                // Try browser geolocation first (more accurate)
+                var locationIndicator = document.createElement('div');
+                locationIndicator.id = 'location-request-indicator';
+                locationIndicator.style.cssText = 'position: fixed; top: 20px; right: 20px; background: rgba(52, 152, 219, 0.9); color: white; padding: 0.75rem 1rem; border-radius: 5px; z-index: 10000; font-size: 0.9rem; box-shadow: 0 2px 10px rgba(0,0,0,0.3); max-width: 300px;';
+                locationIndicator.textContent = '📍 Detecting location...';
+                document.body.appendChild(locationIndicator);
+                
+                // Try browser geolocation with a short timeout
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        // Browser geolocation succeeded - remove indicator and let requestLocationAndGeocode handle it
+                        locationIndicator.remove();
+                        requestLocationAndGeocode(false);
+                    },
+                    function(error) {
+                        // Browser geolocation failed - fallback to IP
+                        locationIndicator.textContent = '📍 Trying IP-based location...';
+                        requestLocationFromIP();
+                    },
+                    {
+                        enableHighAccuracy: false,  // Faster, less accurate is fine for initial detection
+                        timeout: 5000,  // Short timeout - fallback quickly to IP
+                        maximumAge: 60000  // Accept cached position up to 1 minute old
+                    }
+                );
+            } else {
+                // Browser geolocation not available or not in secure context - use IP directly
+                requestLocationFromIP();
             }
         }
         
-        // Request location from IP on page load (primary method - no permission needed)
-        setTimeout(requestLocationFromIP, 500);
+        // Auto-detect location on page load
+        setTimeout(autoDetectLocation, 500);
         
         // Add manual location button next to city input (for precise GPS location)
         const cityGroup = document.querySelector('.city-group');
@@ -2275,7 +2279,7 @@
         // City autocomplete using OpenStreetMap Nominatim (free API)
         if (cityInput) {
             cityInput.addEventListener('input', function(e) {
-                const query = e.target.value.trim();
+                var query = e.target.value.trim();
                 
                 // Clear previous timeout
                 if (autocompleteTimeout) {
@@ -2297,6 +2301,11 @@
         }
         
         function fetchCitySuggestions(query) {
+            if (!citySuggestions) {
+                console.error('City suggestions element not found');
+                return;
+            }
+            
             // Search globally - don't restrict by country
             // Request address details for better structured data
             // Remove featuretype=city restriction to get all city-like places (cities, towns, villages, etc.)
@@ -2306,6 +2315,8 @@
             // Note: We intentionally don't use countrycodes parameter here to allow global city search
             // The country selection is only used when submitting the search, not for autocomplete
             // This allows users to search for any city worldwide regardless of country filter
+            
+            console.log('Fetching city suggestions for:', query);
             
             fetch(url, {
                 headers: { 
@@ -2322,7 +2333,12 @@
                 }
                 return response.json();
             }).then(function(results) {
-                if (!results) return;
+                if (!results) {
+                    console.log('No results from Nominatim');
+                    return;
+                }
+                
+                console.log('Received', results.length, 'results from Nominatim');
                 
                 // Filter results to prioritize cities, towns, and municipalities
                 // But include other place types if they're the best match
@@ -2351,9 +2367,11 @@
                 }
                 
                 var displayResults = filteredResults.length > 0 ? filteredResults : results.slice(0, 5);
+                console.log('Displaying', displayResults.length, 'city suggestions');
                 displayCitySuggestions(displayResults);
             }).catch(function(e) {
                 console.error('Autocomplete error:', e);
+                console.error('Error details:', e.message, e.stack);
                 if (citySuggestions) {
                     citySuggestions.classList.remove('show');
                 }
@@ -2361,9 +2379,15 @@
         }
         
         function displayCitySuggestions(results) {
-            if (!citySuggestions) return;
+            if (!citySuggestions) {
+                console.error('City suggestions element not found in displayCitySuggestions');
+                return;
+            }
+            
+            console.log('displayCitySuggestions called with', results.length, 'results');
             
             if (results.length === 0) {
+                console.log('No results to display, hiding suggestions');
                 citySuggestions.classList.remove('show');
                 selectedSuggestionIndex = -1;
                 return;
@@ -2371,6 +2395,8 @@
             
             citySuggestions.innerHTML = '';
             selectedSuggestionIndex = -1; // Reset selection when new suggestions are shown
+            
+            console.log('Creating', results.length, 'suggestion items');
             
             for (var i = 0; i < results.length; i++) {
                 var result = results[i];
@@ -2585,20 +2611,24 @@
                         console.log(`✓ State stored: "${stateName}"`);
                     }
                     
-                    // Log summary for debugging
-                    console.log(`Selected location: City="${cityName}", State="${stateName || '(none)'}", Country="${matchedCountry || countryName}"`);
-                    
-                    // Close suggestions
-                    citySuggestions.classList.remove('show');
-                    selectedSuggestionIndex = -1;
-                };
+                        // Log summary for debugging
+                        console.log('Selected location: City="' + cityName + '", State="' + (stateName || '(none)') + '", Country="' + (matchedCountry || countryName) + '"');
+                        
+                        // Close suggestions
+                        citySuggestions.classList.remove('show');
+                        selectedSuggestionIndex = -1;
+                    };
+                }(cityName, stateName, countryName));
                 
                 div.addEventListener('click', selectSuggestion);
                 
                 citySuggestions.appendChild(div);
-            });
+            }
             
+            // Show the suggestions dropdown
+            console.log('Showing suggestions dropdown');
             citySuggestions.classList.add('show');
+            console.log('Suggestions dropdown should now be visible');
         }
         
         // Complete ISO 3166-1 alpha-2 country codes for Nominatim (matches all countries in list)
