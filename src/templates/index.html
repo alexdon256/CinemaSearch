@@ -1683,22 +1683,41 @@
         }
         
         // Polyfill for classList.add/remove if not fully supported (old Android)
-        if (typeof Element !== 'undefined' && Element.prototype) {
-            if (!Element.prototype.classList || !Element.prototype.classList.add) {
-                // Basic classList polyfill
+        // Use try-catch to safely check for classList support
+        var classListSupported = false;
+        try {
+            if (typeof Element !== 'undefined' && Element.prototype) {
+                var testDiv = document.createElement('div');
+                if (testDiv.classList && typeof testDiv.classList.add === 'function') {
+                    classListSupported = true;
+                }
+            }
+        } catch (e) {
+            // classList not supported, will use polyfill
+            classListSupported = false;
+        }
+        
+        if (!classListSupported) {
+            // Basic classList polyfill
+            if (typeof Element !== 'undefined' && Element.prototype) {
                 Element.prototype.classList = {
                     add: function(className) {
-                        if (this.className.indexOf(className) === -1) {
-                            this.className += (this.className ? ' ' : '') + className;
+                        if (!this || typeof this.className === 'undefined') return;
+                        var currentClasses = this.className || '';
+                        if (currentClasses.indexOf(className) === -1) {
+                            this.className = currentClasses + (currentClasses ? ' ' : '') + className;
                         }
                     },
                     remove: function(className) {
-                        this.className = this.className.replace(new RegExp('(^|\\s)' + className + '(\\s|$)', 'g'), ' ').trim();
+                        if (!this || typeof this.className === 'undefined') return;
+                        this.className = (this.className || '').replace(new RegExp('(^|\\s)' + className + '(\\s|$)', 'g'), ' ').trim();
                     },
                     contains: function(className) {
-                        return this.className.indexOf(className) !== -1;
+                        if (!this || typeof this.className === 'undefined') return false;
+                        return (this.className || '').indexOf(className) !== -1;
                     },
                     toggle: function(className) {
+                        if (!this || typeof this.className === 'undefined') return;
                         if (this.classList.contains(className)) {
                             this.classList.remove(className);
                         } else {
@@ -1712,10 +1731,20 @@
         // Helper function to safely add/remove classes (works on all browsers)
         function addClass(element, className) {
             if (!element) return;
-            if (element.classList && element.classList.add) {
-                element.classList.add(className);
-            } else {
-                // Fallback for browsers without classList
+            // Check if element is actually an Element/DOM node
+            if (typeof element.nodeType === 'undefined') return;
+            try {
+                if (element.classList && typeof element.classList.add === 'function') {
+                    element.classList.add(className);
+                } else {
+                    // Fallback for browsers without classList
+                    var currentClasses = element.className || '';
+                    if (currentClasses.indexOf(className) === -1) {
+                        element.className = currentClasses + (currentClasses ? ' ' : '') + className;
+                    }
+                }
+            } catch (e) {
+                // If classList fails, use className fallback
                 var currentClasses = element.className || '';
                 if (currentClasses.indexOf(className) === -1) {
                     element.className = currentClasses + (currentClasses ? ' ' : '') + className;
@@ -1725,10 +1754,18 @@
         
         function removeClass(element, className) {
             if (!element) return;
-            if (element.classList && element.classList.remove) {
-                element.classList.remove(className);
-            } else {
-                // Fallback for browsers without classList
+            // Check if element is actually an Element/DOM node
+            if (typeof element.nodeType === 'undefined') return;
+            try {
+                if (element.classList && typeof element.classList.remove === 'function') {
+                    element.classList.remove(className);
+                } else {
+                    // Fallback for browsers without classList
+                    var currentClasses = element.className || '';
+                    element.className = currentClasses.replace(new RegExp('(^|\\s)' + className + '(\\s|$)', 'g'), ' ').trim();
+                }
+            } catch (e) {
+                // If classList fails, use className fallback
                 var currentClasses = element.className || '';
                 element.className = currentClasses.replace(new RegExp('(^|\\s)' + className + '(\\s|$)', 'g'), ' ').trim();
             }
@@ -1736,9 +1773,17 @@
         
         function hasClass(element, className) {
             if (!element) return false;
-            if (element.classList && element.classList.contains) {
-                return element.classList.contains(className);
-            } else {
+            // Check if element is actually an Element/DOM node
+            if (typeof element.nodeType === 'undefined') return false;
+            try {
+                if (element.classList && typeof element.classList.contains === 'function') {
+                    return element.classList.contains(className);
+                } else {
+                    var currentClasses = element.className || '';
+                    return currentClasses.indexOf(className) !== -1;
+                }
+            } catch (e) {
+                // If classList fails, use className fallback
                 var currentClasses = element.className || '';
                 return currentClasses.indexOf(className) !== -1;
             }
@@ -1919,6 +1964,11 @@
         // Request browser geolocation and reverse geocode
         function requestLocationAndGeocode(showManualButton) {
             if (showManualButton === undefined) showManualButton = false;
+            // Make sure elements exist
+            if (!cityInput || !countryInput || !countrySelect) {
+                console.error('Required elements not found for location geocoding');
+                return;
+            }
             if (!navigator.geolocation) {
                 console.log('Geolocation is not supported by this browser');
                 return;
@@ -2201,14 +2251,24 @@
             }
         }
         
-        // Auto-detect location on page load - wait for DOM to be ready
+        // Auto-detect location on page load - wait for DOM to be ready and elements to exist
+        function initAutoDetect() {
+            // Make sure elements exist before trying to use them
+            if (!cityInput || !countryInput) {
+                console.log('Waiting for elements to be available...');
+                setTimeout(initAutoDetect, 100);
+                return;
+            }
+            setTimeout(autoDetectLocation, 500);
+        }
+        
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', function() {
-                setTimeout(autoDetectLocation, 500);
+                initAutoDetect();
             });
         } else {
             // DOM is already ready
-            setTimeout(autoDetectLocation, 500);
+            initAutoDetect();
         }
         
         // Add manual location button next to city input (for precise GPS location)
@@ -2350,7 +2410,7 @@
                                 countryInput.value = countryName;
                                 countrySelect.value = countryName;
                                 removeClass(countryDropdown, 'show');
-                    if (countryDropdown) countryDropdown.style.display = 'none';
+                                if (countryDropdown) countryDropdown.style.display = 'none';
                                 selectedCountryIndex = -1; // Reset selection
                             };
                         }(country);
@@ -3004,7 +3064,8 @@
             var state = stateInput.value.trim() || (cityInput.dataset && cityInput.dataset.state) || '';
             
             // Hide suggestions
-            citySuggestions.classList.remove('show');
+            removeClass(citySuggestions, 'show');
+            if (citySuggestions) citySuggestions.style.display = 'none';
             
             // Clear any existing polling
             if (pollingInterval) {
