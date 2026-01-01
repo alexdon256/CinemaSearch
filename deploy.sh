@@ -1367,8 +1367,15 @@ EOF
         log_warn "Database not initialized. Update ANTHROPIC_API_KEY in ${app_dir}/.env and run: ${app_dir}/venv/bin/python ${app_dir}/src/scripts/init_db.py"
     fi
     
-    # Enable autostart
+    # Enable autostart for all services (including all 20 workers 8001-8020)
     enable_autostart
+    
+    # Start all services (MongoDB, Nginx, and all 20 workers 8001-8020)
+    start_all
+    
+    # Reconfigure Nginx to ensure it's properly set up after services are started
+    log_info "Reconfiguring Nginx to ensure proper setup..."
+    configure_nginx "${APP_NAME}"
     
     log_info "Server initialization complete!"
     log_info "Application is accessible at: http://localhost/${APP_NAME}/"
@@ -2140,7 +2147,35 @@ start_all() {
                 create_worker_services "${app_name}"
                 services_created=true
             else
-                # Services exist, try to start them
+                # Services exist, explicitly start all worker services (ports 8001-8020)
+                log_info "Starting all ${WORKER_COUNT} worker services for ${app_name} (ports ${START_PORT}-${END_PORT})..."
+                local started=0
+                local failed=0
+                for port in $(seq ${START_PORT} ${END_PORT}); do
+                    local service_name="${app_name}@${port}.service"
+                    if systemctl start "${service_name}" 2>/dev/null; then
+                        # Wait a moment and check if it's actually running
+                        sleep 0.2
+                        if systemctl is-active --quiet "${service_name}" 2>/dev/null; then
+                            ((started++))
+                        else
+                            ((failed++))
+                            log_warn "Service ${service_name} started but is not active"
+                        fi
+                    else
+                        ((failed++))
+                        log_warn "Failed to start ${service_name}"
+                    fi
+                done
+                
+                if [[ $started -gt 0 ]]; then
+                    log_info "Started ${started} worker services for ${app_name}"
+                fi
+                if [[ $failed -gt 0 ]]; then
+                    log_warn "${failed} worker services failed to start for ${app_name}"
+                fi
+                
+                # Also start the target (for dependency management)
                 for target in /etc/systemd/system/${app_name}.target; do
                     if [[ -f "$target" ]] && grep -q "Application Target" "$target" 2>/dev/null; then
                         local target_name=$(basename "$target" .target)
