@@ -1810,7 +1810,9 @@
             try {
                 const countryCode = getCountryCode(countrySelect.value);
                 // Request address details for better structured data
-                let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&featuretype=city&addressdetails=1`;
+                // Remove featuretype=city restriction to get all city-like places (cities, towns, villages, etc.)
+                // This ensures we get results for major cities like Los Angeles, New York, etc.
+                let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=10&addressdetails=1&extratags=1`;
                 
                 if (countryCode) {
                     url += `&countrycodes=${countryCode}`;
@@ -1823,8 +1825,30 @@
                     }
                 });
                 
+                if (!response.ok) {
+                    console.error('Nominatim API error:', response.status, response.statusText);
+                    citySuggestions.classList.remove('show');
+                    return;
+                }
+                
                 const results = await response.json();
-                displayCitySuggestions(results);
+                
+                // Filter results to prioritize cities, towns, and municipalities
+                // But include other place types if they're the best match
+                const filteredResults = results.filter(result => {
+                    const placeType = result.type || '';
+                    const placeClass = result.class || '';
+                    // Include cities, towns, villages, municipalities, and administrative areas
+                    return placeType.includes('city') || 
+                           placeType.includes('town') || 
+                           placeType.includes('village') || 
+                           placeType.includes('municipality') ||
+                           placeType.includes('administrative') ||
+                           placeClass === 'place' ||
+                           (result.address && (result.address.city || result.address.town || result.address.village || result.address.municipality));
+                }).slice(0, 5); // Limit to 5 results
+                
+                displayCitySuggestions(filteredResults.length > 0 ? filteredResults : results.slice(0, 5));
             } catch (e) {
                 console.error('Autocomplete error:', e);
                 citySuggestions.classList.remove('show');
@@ -2162,21 +2186,31 @@
             
             // First, check if data is already available before triggering a scrape
             const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
+            
+            // ALWAYS check status first to see if there's an error (even on second search)
             try {
-                // First check status to see if there's an error
                 const statusResponse = await fetch(`/api/scrape/status/${encodeURIComponent(locationId)}`);
-                const statusData = await statusResponse.json();
-                
-                // If status is error, show error immediately
-                if (statusData.status === 'error') {
-                    hideLoadingOverlay();
-                    const errorMsg = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
-                    showErrorState(errorMsg, () => {
-                        fetchShowtimes(city, country, state);
-                    });
-                    return;
+                if (statusResponse.ok) {
+                    const statusData = await statusResponse.json();
+                    
+                    // If status is error, show error immediately and STOP
+                    if (statusData.status === 'error') {
+                        hideLoadingOverlay();
+                        const errorMsg = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
+                        showErrorState(errorMsg, () => {
+                            // Retry will trigger a new scrape attempt
+                            fetchShowtimes(city, country, state);
+                        });
+                        return; // STOP here, don't continue
+                    }
                 }
-                
+            } catch (e) {
+                // If status check fails, log but continue (might be first time)
+                console.log('Status check failed, continuing...', e);
+            }
+            
+            // Only check for existing showtimes if status is not error
+            try {
                 const params = new URLSearchParams({city_name: locationId});
                 if (formatFilter.value) params.append('format', formatFilter.value);
                 if (languageFilter.value) params.append('language', languageFilter.value);
@@ -2403,6 +2437,24 @@
                 
                 // Check if response contains showtimes (even if empty array) - but only if not error
                 if (data.showtimes && Array.isArray(data.showtimes)) {
+                    // Before showing empty showtimes, check status for errors
+                    const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
+                    try {
+                        const statusCheck = await fetch(`/api/scrape/status/${encodeURIComponent(locationId)}`);
+                        if (statusCheck.ok) {
+                            const statusData = await statusCheck.json();
+                            if (statusData.status === 'error') {
+                                hideLoadingOverlay();
+                                const errorMsg = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
+                                showErrorState(errorMsg, () => fetchShowtimes(city, country, state));
+                                return;
+                            }
+                        }
+                    } catch (e) {
+                        // If status check fails, continue with showtimes
+                        console.log('Status check failed, continuing with showtimes...', e);
+                    }
+                    
                     // Use showtimes from response immediately! (stop animation)
                     hideLoadingOverlay(); // Stop animation
                     showtimes = applyFilters(data.showtimes);
@@ -2413,6 +2465,12 @@
                     const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
                     hideLoadingOverlay(); // Stop animation before loading
                     await loadShowtimes(locationId);
+                } else {
+                    // If we get here and no showtimes, no success status, and no error status,
+                    // it might be a processing state - start polling to check status
+                    const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
+                    showLoadingState('Processing request...');
+                    startPolling(locationId);
                 }
             } catch (e) {
                 console.error('Scrape error:', e);

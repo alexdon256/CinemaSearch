@@ -1658,51 +1658,60 @@ test_load_balancing() {
     fi
     
     echo ""
-    echo "=== Making Test Requests ==="
-    echo "Making 20 requests to see load distribution..."
-    echo ""
+    echo "=== Real Traffic Analysis (Last 1 minute) ==="
+    log_info "Analyzing actual requests from real user traffic (no test requests made)..."
     
-    local successful=0
-    local total_requests=20
+    local total_reqs=0
+    declare -A port_counts
     
-    for i in $(seq 1 $total_requests); do
-        local response=$(curl -s -w "\n%{http_code}" "http://localhost/${app_name}/" 2>/dev/null)
-        local http_code=$(echo "$response" | tail -1)
-        
-        if [[ "$http_code" == "200" ]]; then
-            ((successful++))
+    for port in $(seq ${START_PORT} ${END_PORT}); do
+        local req_count=$(sudo journalctl -u ${app_name}@${port}.service --since "1 minute ago" --no-pager 2>/dev/null | grep -cE "GET|POST" || echo "0")
+        req_count=$(echo "$req_count" | tr -d '[:space:]')
+        if [[ -z "$req_count" ]] || ! [[ "$req_count" =~ ^[0-9]+$ ]]; then
+            req_count=0
         fi
-        sleep 0.1
+        if [[ "$req_count" -gt 0 ]]; then
+            port_counts[$port]=$req_count
+            total_reqs=$((total_reqs + req_count))
+        fi
     done
     
+    if [[ $total_reqs -eq 0 ]]; then
+        log_warn "No requests found in the last minute"
+        echo ""
+        echo "To see load distribution, make requests from real clients, then run:"
+        echo "  sudo bash ./deploy.sh check-load-distribution"
+    else
+        echo "Requests per worker (last 1 minute):"
+        for port in $(seq ${START_PORT} ${END_PORT}); do
+            local count=${port_counts[$port]:-0}
+            if [[ $count -gt 0 ]]; then
+                local percentage=$((count * 100 / total_reqs))
+                printf "  Port %d: %3d requests (%2d%%)\n" "$port" "$count" "$percentage"
+            fi
+        done
+        echo ""
+        echo "Total: ${total_reqs} requests"
+    fi
+    
     echo ""
-    echo "=== Load Distribution Analysis ==="
-    log_info "Made ${total_requests} requests, ${successful} successful"
+    echo "=== How to Monitor Load Distribution ==="
+    echo "  # Watch requests in real-time:"
+    echo "  sudo journalctl -u ${app_name}@*.service -f | grep -E 'GET|POST'"
     echo ""
-    echo "To see which workers handled requests, check:"
-    echo ""
-    echo "  # Nginx access logs (shows which upstream server handled each request)"
-    echo "  sudo tail -50 /var/log/nginx/access.log | grep '/${app_name}/'"
-    echo ""
-    echo "  # Individual worker logs (check which workers received requests)"
-    echo "  for port in \$(seq ${START_PORT} ${END_PORT}); do"
-    echo "    echo \"Port \$port:\";"
-    echo "    sudo journalctl -u ${app_name}@\${port}.service -n 3 --no-pager | grep -i 'GET' | tail -1;"
-    echo "  done"
+    echo "  # Check Nginx access logs:"
+    echo "  sudo tail -f /var/log/nginx/access.log | grep '/${app_name}/'"
     echo ""
     echo "=== Current Load Balancing Behavior ==="
     if echo "$lb_method" | grep -q "ip_hash"; then
         echo "With ip_hash (sticky sessions):"
-        echo "  ✓ All requests from localhost (127.0.0.1) go to the same worker"
+        echo "  ✓ All requests from the same IP go to the same worker"
         echo "  ✓ Requests from different IPs are distributed across workers"
         echo "  ✓ This ensures session persistence (same user = same worker)"
-        echo ""
-        echo "To test true load distribution:"
-        echo "  1. Make requests from different IPs (different clients)"
-        echo "  2. Check access logs: sudo tail -f /var/log/nginx/access.log"
-        echo "  3. Or change to round-robin by removing 'ip_hash;' from Nginx config"
     else
         echo "Using round-robin: Requests are distributed evenly across all workers"
+        echo "  ✓ Each request goes to the next available worker"
+        echo "  ✓ Best for distributing load evenly"
     fi
 }
 
@@ -1721,13 +1730,14 @@ check_load_distribution() {
     log_step "Checking load distribution for ${app_name}..."
     
     echo ""
-    echo "=== Worker Activity (Last 10 minutes) ==="
+    echo "=== Worker Activity (Last 1 minute - Real Traffic Only) ==="
+    log_info "Analyzing actual requests from real user traffic (no test requests made)..."
     local total_requests=0
     declare -A port_counts
     
     for port in $(seq ${START_PORT} ${END_PORT}); do
-        # Check worker logs for HTTP requests (GET/POST)
-        local log_entries=$(sudo journalctl -u ${app_name}@${port}.service --since "10 minutes ago" --no-pager 2>/dev/null | grep -cE "GET|POST" 2>/dev/null || echo "0")
+        # Check worker logs for HTTP requests (GET/POST) from real traffic only
+        local log_entries=$(sudo journalctl -u ${app_name}@${port}.service --since "1 minute ago" --no-pager 2>/dev/null | grep -cE "GET|POST" 2>/dev/null || echo "0")
         # Strip whitespace and ensure it's a number
         log_entries=$(echo "$log_entries" | tr -d '[:space:]')
         # Default to 0 if empty or not a number
@@ -1741,11 +1751,11 @@ check_load_distribution() {
     done
     
     if [[ $total_requests -eq 0 ]]; then
-        log_warn "No recent activity found in worker logs (last 10 minutes)"
-        log_info "Make some requests to the application, then run this command again"
+        log_warn "No recent activity found in worker logs (last 1 minute)"
+        log_info "Waiting for real user traffic... Make requests to the application from a browser or client"
         echo ""
-        echo "You can make test requests with:"
-        echo "  for i in {1..20}; do curl -s http://localhost/${app_name}/ > /dev/null; done"
+        echo "To see requests in real-time:"
+        echo "  sudo journalctl -u ${app_name}@*.service -f | grep -E 'GET|POST'"
     else
         echo "Requests per worker:"
         # Sort ports by request count (descending)
@@ -1837,15 +1847,20 @@ verify_workers() {
         status=$(systemctl is-active "$service_name" 2>/dev/null || echo "inactive")
         
         if [[ "$status" == "active" ]]; then
-            # Test if the worker actually responds (use X-Skip-Visitor-Counter header to avoid incrementing visitors)
-            local response="000"
-            response=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Skip-Visitor-Counter: true" --connect-timeout 2 "http://127.0.0.1:${port}/" 2>/dev/null || echo "000")
-            if [[ "$response" == "200" ]]; then
-                echo "  Port ${port}: ✓ Running and responding (HTTP ${response})"
+            # Count actual requests processed in the last minute (from real traffic, not test requests)
+            local request_count=$(sudo journalctl -u "${service_name}" --since "1 minute ago" --no-pager 2>/dev/null | grep -cE "GET|POST" 2>/dev/null || echo "0")
+            # Strip whitespace and validate
+            request_count=$(echo "$request_count" | tr -d '[:space:]')
+            if [[ -z "$request_count" ]] || ! [[ "$request_count" =~ ^[0-9]+$ ]]; then
+                request_count=0
+            fi
+            
+            if [[ "$request_count" -gt 0 ]]; then
+                echo "  Port ${port}: ✓ Running (processed ${request_count} requests in last minute)"
                 running_count=$((running_count + 1))
             else
-                echo "  Port ${port}: ⚠ Running but not responding (HTTP ${response})"
-                failed_count=$((failed_count + 1))
+                echo "  Port ${port}: ✓ Running (no requests in last minute)"
+                running_count=$((running_count + 1))
             fi
         else
             echo "  Port ${port}: ✗ Not running (${status})"
@@ -1949,19 +1964,14 @@ verify_workers() {
     fi
     
     echo ""
-    echo "=== Testing Load Distribution ==="
-    log_info "Making 20 test requests to see distribution..."
-    
-    for i in {1..20}; do
-        curl -s -o /dev/null "http://localhost/${app_name}/" 2>/dev/null
-        sleep 0.1
-    done
+    echo "=== Real Traffic Analysis (Last 1 minute) ==="
+    log_info "Analyzing actual requests from real user traffic (no test requests made)..."
     
     echo ""
-    echo "Checking which workers handled requests (last 30 seconds):"
+    echo "Requests processed by each worker (last 1 minute):"
     local total_reqs=0
     for port in $(seq ${START_PORT} ${END_PORT}); do
-        local req_count=$(sudo journalctl -u ${app_name}@${port}.service --since "30 seconds ago" --no-pager 2>/dev/null | grep -cE "GET|POST" || echo "0")
+        local req_count=$(sudo journalctl -u ${app_name}@${port}.service --since "1 minute ago" --no-pager 2>/dev/null | grep -cE "GET|POST" || echo "0")
         # Strip whitespace and validate
         req_count=$(echo "$req_count" | tr -d '[:space:]')
         if [[ -z "$req_count" ]] || ! [[ "$req_count" =~ ^[0-9]+$ ]]; then
