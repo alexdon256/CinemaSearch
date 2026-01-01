@@ -1071,72 +1071,19 @@ server {
     }
 }
 
-# HTTP server - catch-all for IP and other hostnames
+# HTTP server - catch-all for IP and other hostnames (blocked when domain is configured)
 server {
     listen 80 default_server;
     server_name _ localhost 127.0.0.1;
     
-    # Redirect root to /${app_name}/ for localhost access
-    location = / {
-        return 301 /${app_name}/;
-    }
-    
-    # Handle /${app_name} without trailing slash - redirect to with slash
-    location = /${app_name} {
-        return 301 /${app_name}/;
-    }
-    
-    # Serve application at /${app_name}/ subpath (must be before any default location /)
-    location ^~ /${app_name}/ {
-        # Explicitly rewrite to strip /${app_name}/ prefix before proxying
-        rewrite ^/${app_name}/(.*) /\$1 break;
-        proxy_pass http://${app_name}_backend;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-    
-    # Proxy application routes that don't have /${app_name}/ prefix
-    # Language switching
-    location ^~ /set-language/ {
-        proxy_pass http://${app_name}_backend;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-    
-    # API endpoints
-    location ^~ /api/ {
-        proxy_pass http://${app_name}_backend;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-    
-    # Terms page
-    location = /terms {
-        proxy_pass http://${app_name}_backend;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-    
-    # Static files (movie images)
-    location ^~ /static/ {
-        proxy_pass http://${app_name}_backend;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-    
-    # Allow Let's Encrypt ACME challenge
+    # Allow Let's Encrypt ACME challenge (required for SSL certificate generation)
     location /.well-known/acme-challenge/ {
         root /var/www/html;
+    }
+    
+    # Block all direct IP access - redirect to domain root (HTTPS)
+    location / {
+        return 301 https://${domain}/;
     }
 }
 
