@@ -810,7 +810,8 @@ def api_city_suggestions():
         try:
             # Geonames search API - using demo account (limited requests)
             # For production, register at geonames.org for free account (1000 requests/hour)
-            geonames_url = f"http://api.geonames.org/searchJSON?name_startsWith={urllib.parse.quote(query)}&maxRows=15&lang={lang}&style=FULL&username=demo&featureClass=P"
+            # Use 'q' parameter for better partial matching (fuzzy search) instead of name_startsWith
+            geonames_url = f"http://api.geonames.org/searchJSON?q={urllib.parse.quote(query)}&maxRows=20&lang={lang}&style=FULL&username=demo&featureClass=P&orderby=relevance"
             
             geonames_req = urllib.request.Request(geonames_url, headers={
                 'User-Agent': 'CineStream/1.0'
@@ -832,12 +833,17 @@ def api_city_suggestions():
                     lat = item.get('lat', '')
                     lon = item.get('lng', '')
                     
-                    # Strict matching
+                    # Flexible matching - Geonames already does fuzzy matching, so we just need to verify relevance
                     city_lower = city_name.lower()
                     matches = False
                     
+                    # Direct prefix match (best) - "ankar" matches "ankara"
                     if city_lower.startswith(query_lower):
                         matches = True
+                    # Contains match for single word queries - "ankar" in "ankara"
+                    elif len(query_words) == 1 and query_lower in city_lower:
+                        matches = True
+                    # Word-by-word prefix match for multi-word queries
                     elif len(query_words) > 1:
                         city_words = city_lower.split()
                         if len(city_words) >= len(query_words):
@@ -848,7 +854,8 @@ def api_city_suggestions():
                                     break
                             if all_match:
                                 matches = True
-                    elif len(query_words) == 1 and query_lower in city_lower:
+                    # Last resort: check if query is a substring (for cases like "ankar" -> "ankara")
+                    elif query_lower in city_lower and len(query_lower) >= 4:  # Only for queries 4+ chars to avoid false positives
                         matches = True
                     
                     if matches:
@@ -936,8 +943,11 @@ def api_city_suggestions():
                                     break
                             if all_match:
                                 matches = True
-                    # Contains match (only if single word query)
+                    # Contains match (only if single word query) - "ankar" in "ankara"
                     elif len(query_words) == 1 and query_lower in city_lower:
+                        matches = True
+                    # Last resort: check if query is a substring (for cases like "ankar" -> "ankara")
+                    elif query_lower in city_lower and len(query_lower) >= 4:  # Only for queries 4+ chars to avoid false positives
                         matches = True
                     
                     if matches:
@@ -1052,6 +1062,9 @@ def api_city_suggestions():
                                 matches = True
                     # Contains match - only for single word queries to avoid false positives like "Accra" for "los angel"
                     elif len(query_words) == 1 and (query_lower in city_lower or query_lower in display_name):
+                        matches = True
+                    # Last resort: check if query is a substring (for cases like "ankar" -> "ankara")
+                    elif (query_lower in city_lower or query_lower in display_name) and len(query_lower) >= 4:  # Only for queries 4+ chars
                         matches = True
                     
                     # Only include if it matches
