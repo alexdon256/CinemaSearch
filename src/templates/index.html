@@ -1781,6 +1781,35 @@
         var languageFilter = document.getElementById('language-filter');
         var container = document.getElementById('showtimes-container');
         
+        // Debug: Check if elements are found
+        if (!cityInput) {
+            console.error('city-input not found');
+        } else {
+            console.log('✓ city-input found');
+        }
+        if (!countryInput) {
+            console.error('country-input not found');
+        } else {
+            console.log('✓ country-input found');
+        }
+        if (!citySuggestions) {
+            console.error('city-suggestions not found');
+        } else {
+            console.log('✓ city-suggestions found');
+        }
+        if (!countryDropdown) {
+            console.error('country-dropdown not found');
+        } else {
+            console.log('✓ country-dropdown found');
+        }
+        
+        // Verify fetch is available
+        if (typeof fetch === 'undefined') {
+            console.error('fetch is not available - polyfill may not have loaded');
+        } else {
+            console.log('✓ fetch is available');
+        }
+        
         // For old devices: Show native select instead of custom dropdown
         // Since we have polyfills for fetch, only check for async/await support
         // But allow custom dropdowns even on old devices since we've converted everything to ES5
@@ -2100,8 +2129,15 @@
             }
         }
         
-        // Auto-detect location on page load
-        setTimeout(autoDetectLocation, 500);
+        // Auto-detect location on page load - wait for DOM to be ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() {
+                setTimeout(autoDetectLocation, 500);
+            });
+        } else {
+            // DOM is already ready
+            setTimeout(autoDetectLocation, 500);
+        }
         
         // Add manual location button next to city input (for precise GPS location)
         var cityGroup = document.querySelector('.city-group');
@@ -2193,8 +2229,10 @@
         
         // Country search functionality (only for modern browsers)
         if (!useNativeSelect && countryInput) {
+            console.log('✓ Country input event listener attached');
             var countrySearchTimeout = null;
             countryInput.addEventListener('input', function(e) {
+                console.log('Country input event triggered, value:', e.target.value);
                 var query = e.target.value.trim().toLowerCase();
                 
                 if (countrySearchTimeout) {
@@ -2303,7 +2341,9 @@
         
         // City autocomplete using OpenStreetMap Nominatim (free API)
         if (cityInput) {
+            console.log('✓ City input event listener attached');
             cityInput.addEventListener('input', function(e) {
+                console.log('City input event triggered, value:', e.target.value);
                 var query = e.target.value.trim();
                 
                 // Clear previous timeout
@@ -2320,9 +2360,12 @@
                 
                 // Debounce API calls (500ms delay)
                 autocompleteTimeout = setTimeout(function() {
+                    console.log('Calling fetchCitySuggestions for:', query);
                     fetchCitySuggestions(query);
                 }, 500);
             });
+        } else {
+            console.error('City input not found - cannot attach event listener');
         }
         
         function fetchCitySuggestions(query) {
@@ -2354,7 +2397,7 @@
                     if (citySuggestions) {
                         citySuggestions.classList.remove('show');
                     }
-                    return;
+                    return null;
                 }
                 return response.json();
             }).then(function(results) {
