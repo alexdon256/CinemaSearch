@@ -1461,6 +1461,11 @@
             </div>
             
             <div class="filter-group">
+                <label for="state-input">State/Province (optional)</label>
+                <input type="text" id="state-input" placeholder="State/Province..." autocomplete="off" aria-label="State or Province input">
+            </div>
+            
+            <div class="filter-group">
                 <label for="country-input">{{ translations.country or 'Country' }}</label>
                 <div class="country-input-group">
                     <input type="text" id="country-input" placeholder="Search or select country..." autocomplete="off" aria-label="Country selector">
@@ -1551,6 +1556,7 @@
     
     <script>
         const cityInput = document.getElementById('city-input');
+        const stateInput = document.getElementById('state-input');
         const countrySelect = document.getElementById('country-select');
         const countryInput = document.getElementById('country-input');
         const countryDropdown = document.getElementById('country-dropdown');
@@ -1574,6 +1580,7 @@
             cityInput.value = '{{ detected_city }}';
             {% if detected_region %}
             cityInput.dataset.state = '{{ detected_region }}';
+            stateInput.value = '{{ detected_region }}';
             {% endif %}
             
             // Set country
@@ -1929,7 +1936,16 @@
                 
                 // Function to select this suggestion (used by both click and keyboard)
                 const selectSuggestion = () => {
-                    // Set city name
+                    // Set state in dataset and input FIRST to prevent input event listener from clearing it
+                    if (stateName && stateName.length > 0) {
+                        cityInput.dataset.state = stateName;
+                        stateInput.value = stateName;
+                    } else {
+                        delete cityInput.dataset.state;
+                        stateInput.value = '';
+                    }
+                    
+                    // Set city name (this will trigger input event, but dataset.state is already set)
                     cityInput.value = cityName;
                     
                     // Try to match and select the country
@@ -2053,12 +2069,9 @@
                         console.log(`   Set country to API value: "${countryName}"`);
                     }
                     
-                    // Store state for later use (always check if stateName is not empty)
+                    // State is already set above before cityInput.value was set
                     if (stateName && stateName.length > 0) {
-                        cityInput.dataset.state = stateName;
                         console.log(`✓ State stored: "${stateName}"`);
-                    } else {
-                        delete cityInput.dataset.state;
                     }
                     
                     // Log summary for debugging
@@ -2158,7 +2171,8 @@
                     country = countryInputValue;
                 }
             }
-            const state = cityInput.dataset.state || '';  // Get state from autocomplete if available
+            // Get state from input field first, fallback to dataset
+            const state = stateInput.value.trim() || cityInput.dataset.state || '';
             
             // Hide suggestions
             citySuggestions.classList.remove('show');
@@ -2273,7 +2287,16 @@
                         const stateName = selectedItem.dataset.state || '';
                         const countryName = selectedItem.dataset.country;
                         
-                        // Set city name
+                        // Set state in dataset and input FIRST to prevent input event listener from clearing it
+                        if (stateName && stateName.length > 0) {
+                            cityInput.dataset.state = stateName;
+                            stateInput.value = stateName;
+                        } else {
+                            delete cityInput.dataset.state;
+                            stateInput.value = '';
+                        }
+                        
+                        // Set city name (this will trigger input event, but dataset.state is already set)
                         cityInput.value = cityName;
                         
                         // Use the same country matching logic as click handler
@@ -2339,12 +2362,7 @@
                             console.warn(`Could not match country "${countryName}" to country list`);
                         }
                         
-                        // Store state
-                        if (stateName) {
-                            cityInput.dataset.state = stateName;
-                        } else {
-                            delete cityInput.dataset.state;
-                        }
+                        // State is already set above before cityInput.value was set
                         
                         citySuggestions.classList.remove('show');
                         selectedSuggestionIndex = -1;
@@ -2376,6 +2394,17 @@
         cityInput.addEventListener('input', (e) => {
             if (!e.target.dataset.state) {
                 // Only clear if user is typing (not from autocomplete selection)
+                delete cityInput.dataset.state;
+                stateInput.value = '';
+            }
+        });
+        
+        // Sync state input with dataset when manually changed
+        stateInput.addEventListener('input', (e) => {
+            const stateValue = e.target.value.trim();
+            if (stateValue) {
+                cityInput.dataset.state = stateValue;
+            } else {
                 delete cityInput.dataset.state;
             }
         });
@@ -2512,7 +2541,7 @@
                                 showErrorState(errorMsg, () => {
                                     const city = cityInput.value.trim();
                                     const country = countrySelect.value;
-                                    const state = cityInput.dataset.state || '';
+                                    const state = stateInput.value.trim() || cityInput.dataset.state || '';
                                     if (city && country) {
                                         fetchShowtimes(city, country, state);
                                     }
@@ -2815,7 +2844,7 @@
                 try {
                     const city = cityInput.value.trim();
                     const country = countrySelect.value;
-                    const state = cityInput.dataset.state || '';
+                    const state = stateInput.value.trim() || cityInput.dataset.state || '';
                     if (city && country) {
                         const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
                         const statusResponse = await fetch(`/api/scrape/status/${encodeURIComponent(locationId)}`);
@@ -2860,7 +2889,7 @@
                 try {
                     const city = cityInput.value.trim();
                     const country = countrySelect.value;
-                    const state = cityInput.dataset.state || '';
+                    const state = stateInput.value.trim() || cityInput.dataset.state || '';
                     if (city && country) {
                         const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
                         const statusResponse = await fetch(`/api/scrape/status/${encodeURIComponent(locationId)}`);
@@ -3082,6 +3111,17 @@
                 submitBtn.textContent = originalText;
             }
         });
+    </script>
+    
+    <!-- Ko-fi Widget -->
+    <script src='https://storage.ko-fi.com/cdn/scripts/overlay-widget.js'></script>
+    <script>
+      kofiWidgetOverlay.draw('oleksandrdon', {
+        'type': 'floating-chat',
+        'floating-chat.donateButton.text': 'Support Us',
+        'floating-chat.donateButton.background-color': '#fcbf47',
+        'floating-chat.donateButton.text-color': '#323842'
+      });
     </script>
 </body>
 </html>
