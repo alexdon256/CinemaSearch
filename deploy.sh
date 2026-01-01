@@ -787,15 +787,43 @@ EOF
     
     # Start all workers
     local started=0
+    local failed=0
     for port in $(seq ${START_PORT} ${END_PORT}); do
-        if systemctl enable "${app_name}@${port}.service" 2>/dev/null; then
-            if systemctl start "${app_name}@${port}.service" 2>/dev/null; then
-                ((started++))
+        local service_name="${app_name}@${port}.service"
+        log_info "Starting ${service_name}..."
+        
+        if systemctl enable "${service_name}" 2>/dev/null; then
+            if systemctl start "${service_name}" 2>/dev/null; then
+                # Wait a moment and check if it's actually running
+                sleep 0.5
+                if systemctl is-active --quiet "${service_name}" 2>/dev/null; then
+                    ((started++))
+                    log_info "  ✓ ${service_name} started successfully"
+                else
+                    ((failed++))
+                    log_warn "  ✗ ${service_name} started but is not active"
+                    # Check why it failed
+                    local status=$(systemctl status "${service_name}" --no-pager -l 2>/dev/null | grep -E "Active:|Main PID:|Error" | head -3 || echo "")
+                    if [[ -n "$status" ]]; then
+                        echo "$status" | while read line; do
+                            log_warn "    $line"
+                        done
+                    fi
+                fi
             else
-                log_warn "Failed to start ${app_name}@${port}.service"
+                ((failed++))
+                log_warn "  ✗ Failed to start ${service_name}"
+                # Get error details
+                local error=$(systemctl status "${service_name}" --no-pager -l 2>/dev/null | grep -i "error\|failed" | head -2 || echo "")
+                if [[ -n "$error" ]]; then
+                    echo "$error" | while read line; do
+                        log_warn "    $line"
+                    done
+                fi
             fi
         else
-            log_warn "Failed to enable ${app_name}@${port}.service"
+            ((failed++))
+            log_warn "  ✗ Failed to enable ${service_name}"
         fi
     done
     
@@ -803,8 +831,13 @@ EOF
     systemctl enable "${app_name}-startup.service" 2>/dev/null || log_warn "Failed to enable ${app_name}-startup.service"
     systemctl start "${app_name}.target" 2>/dev/null || log_warn "Failed to start ${app_name}.target"
     
+    echo ""
     if [[ $started -gt 0 ]]; then
         log_info "Successfully started ${started}/${WORKER_COUNT} worker services (ports ${START_PORT}-${END_PORT})"
+        if [[ $failed -gt 0 ]]; then
+            log_warn "${failed} workers failed to start. Check logs:"
+            echo "  sudo journalctl -u ${app_name}@8002.service -n 30 --no-pager"
+        fi
     else
         log_error "Failed to start any worker services"
         log_error "Check service status: systemctl status ${app_name}@${START_PORT}.service"
@@ -1779,6 +1812,7 @@ verify_workers() {
     local running_count=0
     local failed_count=0
     
+    # Check all ports
     for port in $(seq ${START_PORT} ${END_PORT}); do
         local service_name="${app_name}@${port}.service"
         local status=$(systemctl is-active "$service_name" 2>/dev/null || echo "inactive")
@@ -1795,6 +1829,18 @@ verify_workers() {
             fi
         else
             echo "  Port ${port}: ✗ Not running (${status})"
+            # Check if service exists
+            if systemctl list-unit-files | grep -q "${service_name}"; then
+                # Service exists but isn't running - check why
+                local service_status=$(systemctl status "$service_name" --no-pager -l 2>/dev/null | grep -E "Active:|Main PID:" | head -2 || echo "")
+                if [[ -n "$service_status" ]]; then
+                    echo "$service_status" | while read line; do
+                        echo "    → $(echo "$line" | sed 's/^[[:space:]]*//')"
+                    done
+                fi
+            else
+                echo "    → Service file not found"
+            fi
             ((failed_count++))
         fi
     done
