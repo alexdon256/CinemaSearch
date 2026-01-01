@@ -1812,38 +1812,49 @@ verify_workers() {
     local running_count=0
     local failed_count=0
     
-    # Check all ports
-    for port in $(seq ${START_PORT} ${END_PORT}); do
+    # Check all ports - use while loop to avoid issues with set -e and seq
+    # Temporarily disable set -e for this function to prevent early exit
+    set +e
+    local port=${START_PORT}
+    while [[ $port -le ${END_PORT} ]]; do
         local service_name="${app_name}@${port}.service"
-        local status=$(systemctl is-active "$service_name" 2>/dev/null || echo "inactive")
+        local status="inactive"
+        
+        # Safely check status (don't fail on error due to set -e)
+        status=$(systemctl is-active "$service_name" 2>/dev/null || echo "inactive")
         
         if [[ "$status" == "active" ]]; then
             # Test if the worker actually responds
-            local response=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://127.0.0.1:${port}/" 2>/dev/null || echo "000")
+            local response="000"
+            response=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://127.0.0.1:${port}/" 2>/dev/null || echo "000")
             if [[ "$response" == "200" ]]; then
                 echo "  Port ${port}: ✓ Running and responding (HTTP ${response})"
-                ((running_count++))
+                running_count=$((running_count + 1))
             else
                 echo "  Port ${port}: ⚠ Running but not responding (HTTP ${response})"
-                ((failed_count++))
+                failed_count=$((failed_count + 1))
             fi
         else
             echo "  Port ${port}: ✗ Not running (${status})"
             # Check if service exists
-            if systemctl list-unit-files | grep -q "${service_name}"; then
+            if systemctl list-unit-files 2>/dev/null | grep -q "${service_name}"; then
                 # Service exists but isn't running - check why
                 local service_status=$(systemctl status "$service_name" --no-pager -l 2>/dev/null | grep -E "Active:|Main PID:" | head -2 || echo "")
                 if [[ -n "$service_status" ]]; then
-                    echo "$service_status" | while read line; do
-                        echo "    → $(echo "$line" | sed 's/^[[:space:]]*//')"
-                    done
+                    echo "$service_status" | while IFS= read -r line || true; do
+                        if [[ -n "$line" ]]; then
+                            echo "    → $(echo "$line" | sed 's/^[[:space:]]*//')"
+                        fi
+                    done || true
                 fi
             else
                 echo "    → Service file not found"
             fi
-            ((failed_count++))
+            failed_count=$((failed_count + 1))
         fi
+        port=$((port + 1))
     done
+    set -e
     
     echo ""
     echo "Summary: ${running_count} workers running and responding, ${failed_count} workers failed or not running"
@@ -2188,7 +2199,7 @@ main() {
             
             # Verify the config was created correctly
             if [[ -f "/etc/nginx/conf.d/${app_name}.conf" ]]; then
-                if grep -q "location /${app_name}/" "/etc/nginx/conf.d/${app_name}.conf"; then
+                if grep -qE "location.*/${app_name}/" "/etc/nginx/conf.d/${app_name}.conf"; then
                     log_info "Nginx config regenerated successfully with /${app_name}/ location block"
                 else
                     log_error "Config file exists but location block is missing!"
@@ -2202,7 +2213,7 @@ main() {
             # Check what Nginx actually sees
             echo ""
             log_step "Verifying Nginx can see the config..."
-            if nginx -T 2>/dev/null | grep -q "location /${app_name}/"; then
+            if nginx -T 2>/dev/null | grep -qE "location.*/${app_name}/"; then
                 log_info "✓ Nginx can see the location block"
             else
                 log_warn "✗ Nginx cannot see the location block"
