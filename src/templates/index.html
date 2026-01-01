@@ -3114,14 +3114,51 @@
     </script>
     
     <!-- Ko-fi Widget -->
-    <script src='https://storage.ko-fi.com/cdn/scripts/overlay-widget.js'></script>
+    <!-- 
+      If widget appears empty, check browser console for errors.
+      Common issues:
+      1. Content Security Policy (CSP) blocking - Add to nginx/security headers:
+         script-src 'self' 'unsafe-inline' https://storage.ko-fi.com https://*.ko-fi.com;
+         frame-src 'self' https://*.ko-fi.com;
+         img-src 'self' data: https://*.ko-fi.com;
+      2. Ad blockers - Test in incognito mode
+      3. Script loading - Check Network tab for 404 errors
+    -->
     <script>
-      kofiWidgetOverlay.draw('oleksandrdon', {
-        'type': 'floating-chat',
-        'floating-chat.donateButton.text': 'Support Us',
-        'floating-chat.donateButton.background-color': '#fcbf47',
-        'floating-chat.donateButton.text-color': '#323842'
-      });
+      // Initialize Ko-fi widget after script loads
+      function initKofiWidget() {
+        if (typeof kofiWidgetOverlay !== 'undefined') {
+          try {
+            kofiWidgetOverlay.draw('oleksandrdon', {
+              'type': 'floating-chat',
+              'floating-chat.donateButton.text': 'Support Us',
+              'floating-chat.donateButton.background-color': '#fcbf47',
+              'floating-chat.donateButton.text-color': '#323842'
+            });
+            console.log('✓ Ko-fi widget initialized successfully');
+          } catch (error) {
+            console.error('✗ Ko-fi widget error:', error);
+            console.error('Error details:', error.message, error.stack);
+          }
+        } else {
+          console.error('✗ kofiWidgetOverlay is not defined. Script may not have loaded correctly.');
+        }
+      }
+      
+      // Load Ko-fi script and initialize when ready
+      (function() {
+        const script = document.createElement('script');
+        script.src = 'https://storage.ko-fi.com/cdn/scripts/overlay-widget.js';
+        script.async = true;
+        script.onload = function() {
+          // Wait a tiny bit for the script to fully initialize
+          setTimeout(initKofiWidget, 100);
+        };
+        script.onerror = function() {
+          console.error('✗ Failed to load Ko-fi widget script. Check Network tab for errors.');
+        };
+        document.head.appendChild(script);
+      })();
     </script>
 </body>
 </html>
