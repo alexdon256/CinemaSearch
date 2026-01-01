@@ -805,8 +805,97 @@ def api_city_suggestions():
         query_lower = query.lower().strip()
         query_words = query_lower.split()
         
-        # Try Photon API first (better for autocomplete, free, no API key needed)
-        # Photon is specifically designed for autocomplete and handles partial matches better
+        # Try Geonames API first (better for city resolution, free tier available)
+        # Geonames has excellent city database - use it to find cities, then Nominatim to resolve state
+        try:
+            # Geonames search API - using demo account (limited requests)
+            # For production, register at geonames.org for free account (1000 requests/hour)
+            geonames_url = f"http://api.geonames.org/searchJSON?name_startsWith={urllib.parse.quote(query)}&maxRows=15&lang={lang}&style=FULL&username=demo&featureClass=P"
+            
+            geonames_req = urllib.request.Request(geonames_url, headers={
+                'User-Agent': 'CineStream/1.0'
+            })
+            with urllib.request.urlopen(geonames_req, timeout=8) as geonames_response:
+                geonames_data = json.loads(geonames_response.read().decode())
+                
+                filtered_data = []
+                for item in geonames_data.get('geonames', []):
+                    # Geonames feature codes for populated places
+                    fcode = item.get('fcode', '')
+                    if fcode not in ['PPL', 'PPLA', 'PPLA2', 'PPLA3', 'PPLA4', 'PPLC', 'PPLG', 'PPLS']:
+                        continue
+                    
+                    city_name = item.get('name', '')
+                    country_code = item.get('countryCode', '')
+                    admin_name1 = item.get('adminName1', '')  # State/province from Geonames
+                    country_name = item.get('countryName', '')
+                    lat = item.get('lat', '')
+                    lon = item.get('lng', '')
+                    
+                    # Strict matching
+                    city_lower = city_name.lower()
+                    matches = False
+                    
+                    if city_lower.startswith(query_lower):
+                        matches = True
+                    elif len(query_words) > 1:
+                        city_words = city_lower.split()
+                        if len(city_words) >= len(query_words):
+                            all_match = True
+                            for i in range(len(query_words)):
+                                if i >= len(city_words) or not city_words[i].startswith(query_words[i]):
+                                    all_match = False
+                                    break
+                            if all_match:
+                                matches = True
+                    elif len(query_words) == 1 and query_lower in city_lower:
+                        matches = True
+                    
+                    if matches:
+                        # Use Nominatim to resolve and normalize state name
+                        state = admin_name1
+                        if state and lat and lon:
+                            try:
+                                # Use Nominatim reverse geocoding to get normalized state name
+                                nominatim_reverse_url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&addressdetails=1&accept-language=en"
+                                reverse_req = urllib.request.Request(nominatim_reverse_url, headers={
+                                    'User-Agent': 'CineStream/1.0'
+                                })
+                                with urllib.request.urlopen(reverse_req, timeout=5) as reverse_response:
+                                    reverse_data = json.loads(reverse_response.read().decode())
+                                    if reverse_data and 'address' in reverse_data:
+                                        address = reverse_data.get('address', {})
+                                        # Get normalized state name from Nominatim
+                                        state = (address.get('state') or 
+                                                address.get('province') or 
+                                                address.get('region') or 
+                                                address.get('state_district') or 
+                                                state)
+                            except Exception as e:
+                                print(f"Error resolving state from Nominatim for {city_name}: {e}")
+                        
+                        converted_item = {
+                            'display_name': city_name,
+                            'lat': str(lat),
+                            'lon': str(lon),
+                            'type': 'city' if fcode in ['PPLC', 'PPLA'] else 'town',
+                            'class': 'place',
+                            'address': {
+                                'city': city_name,
+                                'state': state,
+                                'province': state,
+                                'region': state,
+                                'country': country_name
+                            }
+                        }
+                        filtered_data.append(converted_item)
+                
+                if filtered_data:
+                    return jsonify(filtered_data[:10]), 200
+        except Exception as e:
+            print(f"Geonames API error: {e}, trying Photon")
+        
+        # Try Photon API as second option (better for autocomplete)
         try:
             photon_url = f"https://photon.komoot.io/api/?q={urllib.parse.quote(query)}&limit=15&lang={lang}"
             req = urllib.request.Request(photon_url, headers={
@@ -854,6 +943,31 @@ def api_city_suggestions():
                     if matches:
                         # Convert to Nominatim-like format
                         coords = geometry.get('coordinates', [])
+                        country = props.get('country', '')
+                        
+                        # Get state/region from Photon if available
+                        state = props.get('state', '') or props.get('region', '')
+                        
+                        # If state not in Photon response, use Nominatim reverse geocoding to get it
+                        if not state and len(coords) >= 2:
+                            try:
+                                lat = coords[1]
+                                lon = coords[0]
+                                nominatim_reverse_url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&addressdetails=1&accept-language=en"
+                                reverse_req = urllib.request.Request(nominatim_reverse_url, headers={
+                                    'User-Agent': 'CineStream/1.0'
+                                })
+                                with urllib.request.urlopen(reverse_req, timeout=5) as reverse_response:
+                                    reverse_data = json.loads(reverse_response.read().decode())
+                                    if reverse_data and 'address' in reverse_data:
+                                        address = reverse_data.get('address', {})
+                                        state = (address.get('state') or 
+                                                address.get('province') or 
+                                                address.get('region') or 
+                                                address.get('state_district') or '')
+                            except Exception as e:
+                                print(f"Error getting state from Nominatim reverse geocoding: {e}")
+                        
                         converted_item = {
                             'display_name': city_name,
                             'lat': str(coords[1]) if len(coords) > 1 else '',
@@ -865,7 +979,10 @@ def api_city_suggestions():
                                 'town': city_name if place_type == 'town' else None,
                                 'village': city_name if place_type == 'village' else None,
                                 'municipality': city_name if place_type == 'municipality' else None,
-                                'country': props.get('country', '')
+                                'state': state,
+                                'province': state,
+                                'region': state,
+                                'country': country
                             }
                         }
                         filtered_data.append(converted_item)
