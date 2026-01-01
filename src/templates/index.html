@@ -161,9 +161,23 @@
             font-weight: 600;
             color: var(--accent);
             display: flex;
-            align-items: center;
+            align-items: flex-start; /* Align to top to prevent misalignment */
             gap: 0.5rem;
             flex-wrap: wrap;
+            min-height: 2.5rem; /* Reserve space for 2 lines of text to keep inputs aligned */
+            line-height: 1.25;
+        }
+        
+        /* Ensure all filter groups in the location search row have consistent alignment */
+        .location-search-row .filter-group {
+            justify-content: flex-start;
+        }
+        
+        /* Keep inputs aligned at the same vertical position */
+        .location-search-row .filter-group input,
+        .location-search-row .filter-group select,
+        .location-search-row .filter-group .country-input-group {
+            margin-top: 0; /* Remove any top margin to keep alignment consistent */
         }
         
         .auto-detected-badge {
@@ -1768,7 +1782,9 @@
         var container = document.getElementById('showtimes-container');
         
         // For old devices: Show native select instead of custom dropdown
-        var useNativeSelect = !supportsFetch || !supportsAsyncAwait;
+        // Since we have polyfills for fetch, only check for async/await support
+        // But allow custom dropdowns even on old devices since we've converted everything to ES5
+        var useNativeSelect = false; // Always use custom dropdowns - they work with polyfills
         if (useNativeSelect) {
             // Hide custom country input, show native select
             if (countryInput && countryInput.parentElement) {
@@ -1776,6 +1792,14 @@
             }
             if (countrySelect) {
                 countrySelect.style.display = 'block';
+            }
+        } else {
+            // Ensure custom dropdowns are visible
+            if (countryInput && countryInput.parentElement) {
+                countryInput.parentElement.style.display = '';
+            }
+            if (countrySelect) {
+                countrySelect.style.display = 'none'; // Hide native select, use custom
             }
         }
         
@@ -1792,7 +1816,8 @@
         }
         
         // Request browser geolocation and reverse geocode
-        function requestLocationAndGeocode(showManualButton = false) {
+        function requestLocationAndGeocode(showManualButton) {
+            if (showManualButton === undefined) showManualButton = false;
             if (!navigator.geolocation) {
                 console.log('Geolocation is not supported by this browser');
                 return;
@@ -2333,8 +2358,11 @@
                 }
                 return response.json();
             }).then(function(results) {
-                if (!results) {
+                if (!results || results.length === 0) {
                     console.log('No results from Nominatim');
+                    if (citySuggestions) {
+                        citySuggestions.classList.remove('show');
+                    }
                     return;
                 }
                 
@@ -2636,12 +2664,12 @@
                     // Ensure country is always set (fallback to countryName if nothing else worked)
                     if (!countryInput.value || countryInput.value.trim() === '') {
                         countryInput.value = countryName;
-                        console.log(`   Set country to API value: "${countryName}"`);
+                        console.log('   Set country to API value: "' + countryName + '"');
                     }
                     
                     // State is already set above before cityInput.value was set
                     if (stateName && stateName.length > 0) {
-                        console.log(`✓ State stored: "${stateName}"`);
+                        console.log('✓ State stored: "' + stateName + '"');
                     }
                     
                         // Log summary for debugging
@@ -2666,7 +2694,7 @@
         
         // Complete ISO 3166-1 alpha-2 country codes for Nominatim (matches all countries in list)
         function getCountryCode(countryName) {
-            const codes = {
+            var codes = {
                 "Afghanistan": "af", "Albania": "al", "Algeria": "dz", "Andorra": "ad", 
                 "Angola": "ao", "Argentina": "ar", "Armenia": "am", "Australia": "au", 
                 "Austria": "at", "Azerbaijan": "az", "Bahamas": "bs", "Bahrain": "bh", 
@@ -2720,7 +2748,7 @@
         }
         
         // Hide suggestions when clicking outside
-        document.addEventListener('click', (e) => {
+        document.addEventListener('click', function(e) {
             if (!cityInput.contains(e.target) && !citySuggestions.contains(e.target)) {
                 citySuggestions.classList.remove('show');
             }
