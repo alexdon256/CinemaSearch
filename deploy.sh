@@ -785,47 +785,58 @@ EOF
     log_info "Service files created successfully"
     log_info "Starting ${WORKER_COUNT} worker services (ports ${START_PORT}-${END_PORT})..."
     
-    # Start all workers
+    # Start all workers - use while loop to avoid issues with set -e
+    # Temporarily disable set -e for this function to prevent early exit
+    set +e
     local started=0
     local failed=0
-    for port in $(seq ${START_PORT} ${END_PORT}); do
+    local port=${START_PORT}
+    while [[ $port -le ${END_PORT} ]]; do
         local service_name="${app_name}@${port}.service"
         log_info "Starting ${service_name}..."
         
+        # Enable service (don't fail on error)
         if systemctl enable "${service_name}" 2>/dev/null; then
+            # Start service (don't fail on error)
             if systemctl start "${service_name}" 2>/dev/null; then
                 # Wait a moment and check if it's actually running
                 sleep 0.5
                 if systemctl is-active --quiet "${service_name}" 2>/dev/null; then
-                    ((started++))
+                    started=$((started + 1))
                     log_info "  ✓ ${service_name} started successfully"
                 else
-                    ((failed++))
+                    failed=$((failed + 1))
                     log_warn "  ✗ ${service_name} started but is not active"
                     # Check why it failed
                     local status=$(systemctl status "${service_name}" --no-pager -l 2>/dev/null | grep -E "Active:|Main PID:|Error" | head -3 || echo "")
                     if [[ -n "$status" ]]; then
-                        echo "$status" | while read line; do
-                            log_warn "    $line"
-                        done
+                        echo "$status" | while IFS= read -r line || true; do
+                            if [[ -n "$line" ]]; then
+                                log_warn "    $line"
+                            fi
+                        done || true
                     fi
                 fi
             else
-                ((failed++))
+                failed=$((failed + 1))
                 log_warn "  ✗ Failed to start ${service_name}"
                 # Get error details
                 local error=$(systemctl status "${service_name}" --no-pager -l 2>/dev/null | grep -i "error\|failed" | head -2 || echo "")
                 if [[ -n "$error" ]]; then
-                    echo "$error" | while read line; do
-                        log_warn "    $line"
-                    done
+                    echo "$error" | while IFS= read -r line || true; do
+                        if [[ -n "$line" ]]; then
+                            log_warn "    $line"
+                        fi
+                    done || true
                 fi
             fi
         else
-            ((failed++))
+            failed=$((failed + 1))
             log_warn "  ✗ Failed to enable ${service_name}"
         fi
+        port=$((port + 1))
     done
+    set -e
     
     systemctl enable "${app_name}.target" 2>/dev/null || log_warn "Failed to enable ${app_name}.target"
     systemctl enable "${app_name}-startup.service" 2>/dev/null || log_warn "Failed to enable ${app_name}-startup.service"
@@ -1367,14 +1378,16 @@ EOF
         log_warn "Database not initialized. Update ANTHROPIC_API_KEY in ${app_dir}/.env and run: ${app_dir}/venv/bin/python ${app_dir}/src/scripts/init_db.py"
     fi
     
-    # Enable autostart for all services (including all 20 workers 8001-8020)
-    enable_autostart
-    
     # Start all services (MongoDB, Nginx, and all 20 workers 8001-8020)
     start_all
     
+    # Enable autostart for all services (including all 20 workers 8001-8020)
+    # This must be done AFTER services are started to ensure they're properly configured
+    log_info "Enabling autostart for all services..."
+    enable_autostart
+    
     # Reconfigure Nginx to ensure it's properly set up after services are started
-    log_info "Reconfiguring Nginx to ensure proper setup..."
+    log_info "Reconfiguring Nginx after services are started..."
     configure_nginx "${APP_NAME}"
     
     log_info "Server initialization complete!"
