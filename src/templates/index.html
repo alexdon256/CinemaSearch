@@ -2344,6 +2344,22 @@
                     })
                 });
                 
+                // Check HTTP status first - if it's an error status, handle it
+                if (!scrapeResponse.ok && scrapeResponse.status !== 202) {
+                    // HTTP error (400, 500, etc.) - try to get error message from response
+                    let errorMsg = 'An error occurred while fetching showtimes.';
+                    try {
+                        const errorData = await scrapeResponse.json();
+                        errorMsg = errorData.message || errorData.error_message || errorData.error || errorMsg;
+                    } catch (e) {
+                        // If JSON parsing fails, use default message
+                        errorMsg = `Server error (${scrapeResponse.status}). Please check your API key configuration.`;
+                    }
+                    hideLoadingOverlay();
+                    showErrorState(errorMsg, () => fetchShowtimes(city, country, state));
+                    return;
+                }
+                
                 const data = await scrapeResponse.json();
                 
                 if (scrapeResponse.status === 202) {
@@ -2719,10 +2735,35 @@
             }
         }
         
-        function renderShowtimes() {
+        async function renderShowtimes() {
             hideLoadingOverlay();
             clearLoadingSkeleton(); // Clear skeleton when rendering showtimes
             if (!showtimes || showtimes.length === 0) {
+                // Before showing "No showtimes", check if there's an error status
+                try {
+                    const city = cityInput.value.trim();
+                    const country = countrySelect.value;
+                    const state = cityInput.dataset.state || '';
+                    if (city && country) {
+                        const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
+                        const statusResponse = await fetch(`/api/scrape/status/${encodeURIComponent(locationId)}`);
+                        const statusData = await statusResponse.json();
+                        
+                        // If status is error, show error message instead of "no showtimes"
+                        if (statusData.status === 'error') {
+                            const errorMsg = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
+                            showErrorState(errorMsg, () => {
+                                if (city && country) {
+                                    fetchShowtimes(city, country, state);
+                                }
+                            });
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    // If status check fails, continue to show empty state
+                    console.log('Could not check status:', e);
+                }
                 showEmptyState('{{ translations.no_showtimes or "No showtimes found" }}', '🎬');
                 return;
             }
@@ -2743,6 +2784,31 @@
             });
             
             if (futureShowtimes.length === 0) {
+                // Before showing "No upcoming showtimes", check if there's an error status
+                try {
+                    const city = cityInput.value.trim();
+                    const country = countrySelect.value;
+                    const state = cityInput.dataset.state || '';
+                    if (city && country) {
+                        const locationId = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
+                        const statusResponse = await fetch(`/api/scrape/status/${encodeURIComponent(locationId)}`);
+                        const statusData = await statusResponse.json();
+                        
+                        // If status is error, show error message instead of "no showtimes"
+                        if (statusData.status === 'error') {
+                            const errorMsg = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
+                            showErrorState(errorMsg, () => {
+                                if (city && country) {
+                                    fetchShowtimes(city, country, state);
+                                }
+                            });
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    // If status check fails, continue to show empty state
+                    console.log('Could not check status:', e);
+                }
                 showEmptyState('{{ translations.no_showtimes or "No upcoming showtimes found" }}', '🎬');
                 return;
             }
