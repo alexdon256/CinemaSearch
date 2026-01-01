@@ -17,6 +17,75 @@ from dotenv import load_dotenv
 from core.agent import ClaudeAgent
 from core.lock import acquire_lock, release_lock, get_lock_info
 from core.image_handler import cleanup_old_images
+import urllib.request
+import urllib.parse
+import json
+
+# Simple in-memory cache for normalization (not using Flask session)
+_normalization_cache = {}
+
+def normalize_location_name(name, location_type='city'):
+    """
+    Normalize location names to English to avoid duplicates from different languages.
+    Uses Nominatim to get the canonical English name.
+    Standalone version for scripts (doesn't use Flask session).
+    """
+    if not name or not name.strip():
+        return name
+    
+    name = name.strip()
+    
+    # Check cache first
+    cache_key = f"{location_type}_{name.lower()}"
+    if cache_key in _normalization_cache:
+        return _normalization_cache[cache_key]
+    
+    try:
+        # Use Nominatim to search for the location and get English name
+        search_query = name
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(search_query)}&format=json&limit=1&addressdetails=1&accept-language=en"
+        
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'CineStream/1.0'
+        })
+        
+        with urllib.request.urlopen(req, timeout=3) as response:
+            results = json.loads(response.read().decode())
+            
+            if results and len(results) > 0:
+                result = results[0]
+                address = result.get('address', {})
+                
+                # Get English name from address
+                if location_type == 'city':
+                    normalized = (address.get('city') or 
+                                 address.get('town') or 
+                                 address.get('village') or 
+                                 address.get('municipality') or
+                                 name)
+                elif location_type == 'country':
+                    normalized = address.get('country', name)
+                elif location_type == 'state':
+                    normalized = (address.get('state') or 
+                                 address.get('province') or 
+                                 address.get('region') or
+                                 name)
+                else:
+                    normalized = name
+                
+                # Cache the result
+                _normalization_cache[cache_key] = normalized
+                return normalized
+        
+        # If no results, return original name
+        _normalization_cache[cache_key] = name
+        return name
+        
+    except Exception as e:
+        print(f"  ⚠ Normalization error for {name}: {e}")
+        # Return original name if normalization fails
+        _normalization_cache[cache_key] = name
+        return name
 
 # Load environment variables
 load_dotenv()
@@ -82,9 +151,24 @@ def refresh_all_cities():
             print(f"  ⚠ Skipping {city_name} (missing country)")
             continue
         
+        # Normalize location names to English to avoid duplicates from different languages
+        # This ensures consistent scraping even if database has non-English names
+        original_city = city
+        original_state = state
+        original_country = country
+        
+        city = normalize_location_name(city, 'city')
+        country = normalize_location_name(country, 'country')
+        if state:
+            state = normalize_location_name(state, 'state')
+        
+        # Log if normalization changed the name
+        if city != original_city or country != original_country or (state and state != original_state):
+            print(f"  🔄 Normalized: '{original_city}, {original_state or ''}, {original_country}' → '{city}, {state or ''}, {country}'")
+        
         print(f"Refreshing {city_name}...")
         
-        # Build location_id early for error handling (use input values)
+        # Build location_id using normalized names to ensure consistency
         # Must be defined before any checks that use it
         if state:
             location_id = f"{city}, {state}, {country}"
@@ -194,12 +278,14 @@ def refresh_all_cities():
             result = agent.scrape_city_showtimes(city, country, state, date_start, date_end)
             
             if result.get('success'):
-                # Extract location components from result
-                result_city = result.get('city', city)
+                # Extract location components from result and normalize them
+                result_city = normalize_location_name(result.get('city', city), 'city')
                 result_state = result.get('state', state or '')
-                result_country = result.get('country', country)
+                if result_state:
+                    result_state = normalize_location_name(result_state, 'state')
+                result_country = normalize_location_name(result.get('country', country), 'country')
                 
-                # Build location identifier (use result values, fallback to input)
+                # Build location identifier using normalized result values
                 if result_state:
                     location_id = f"{result_city}, {result_state}, {result_country}"
                 else:

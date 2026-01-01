@@ -300,6 +300,176 @@ def index():
                              visitor_count=0,
                              donation_url=DONATION_URL), 500
 
+# Cache for location translations (key: lang_city_state_country)
+_translation_cache = {}
+
+def translate_address(address_text, target_lang='en'):
+    """
+    Translate address text to target language using Nominatim geocoding.
+    Uses the address to find the location and returns it in the target language.
+    """
+    if not address_text or not address_text.strip():
+        return address_text
+    
+    import urllib.request
+    import json
+    import urllib.parse
+    
+    address_text = address_text.strip()
+    
+    # Check cache first
+    cache_key = f"addr_{target_lang}_{address_text.lower()}"
+    if cache_key in _translation_cache:
+        return _translation_cache[cache_key]
+    
+    # Map language codes to Nominatim language codes
+    lang_map = {
+        'en': 'en',
+        'ua': 'uk',  # Ukrainian
+        'ru': 'ru'   # Russian
+    }
+    nominatim_lang = lang_map.get(target_lang, 'en')
+    
+    try:
+        # Use Nominatim to geocode the address and get it in target language
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(address_text)}&format=json&limit=1&addressdetails=1&accept-language={nominatim_lang}"
+        
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'CineStream/1.0'
+        })
+        
+        with urllib.request.urlopen(req, timeout=3) as response:
+            results = json.loads(response.read().decode())
+            
+            if results and len(results) > 0:
+                # Get the display_name in target language, or reconstruct from address components
+                result = results[0]
+                address = result.get('address', {})
+                
+                # Build address from components in target language
+                address_parts = []
+                
+                # Street address
+                if address.get('road'):
+                    road = address.get('road')
+                    if address.get('house_number'):
+                        road = f"{road} {address.get('house_number')}"
+                    address_parts.append(road)
+                
+                # City/town
+                city = (address.get('city') or 
+                       address.get('town') or 
+                       address.get('village') or 
+                       address.get('municipality') or
+                       '')
+                if city:
+                    address_parts.append(city)
+                
+                # State/region
+                state = (address.get('state') or 
+                        address.get('province') or 
+                        address.get('region') or
+                        '')
+                if state:
+                    address_parts.append(state)
+                
+                # Country
+                country = address.get('country', '')
+                if country:
+                    address_parts.append(country)
+                
+                if address_parts:
+                    translated_address = ', '.join(address_parts)
+                    _translation_cache[cache_key] = translated_address
+                    return translated_address
+        
+        # If geocoding fails, return original address
+        _translation_cache[cache_key] = address_text
+        return address_text
+        
+    except Exception as e:
+        print(f"Address translation error for {address_text}: {e}")
+        # Return original address if translation fails
+        _translation_cache[cache_key] = address_text
+        return address_text
+
+def translate_location_name(city, state, country, target_lang='en'):
+    """
+    Translate location names to target language using Nominatim.
+    Returns dict with translated city, state, country.
+    Uses caching to avoid repeated API calls.
+    """
+    import urllib.request
+    import json
+    import urllib.parse
+    
+    result = {'city': city, 'state': state, 'country': country}
+    
+    # Check cache first
+    cache_key = f"{target_lang}_{city}_{state}_{country}".lower()
+    if cache_key in _translation_cache:
+        return _translation_cache[cache_key]
+    
+    # Map language codes to Nominatim language codes
+    lang_map = {
+        'en': 'en',
+        'ua': 'uk',  # Ukrainian
+        'ru': 'ru'   # Russian
+    }
+    nominatim_lang = lang_map.get(target_lang, 'en')
+    
+    # Build search query with all location components
+    location_parts = []
+    if city:
+        location_parts.append(city)
+    if state:
+        location_parts.append(state)
+    if country:
+        location_parts.append(country)
+    
+    if not location_parts:
+        _translation_cache[cache_key] = result
+        return result
+    
+    search_query = ', '.join(location_parts)
+    
+    try:
+        # Use Nominatim to search and get translated names
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(search_query)}&format=json&limit=1&addressdetails=1&accept-language={nominatim_lang}"
+        
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'CineStream/1.0'
+        })
+        
+        with urllib.request.urlopen(req, timeout=3) as response:
+            results = json.loads(response.read().decode())
+            
+            if results and len(results) > 0:
+                address = results[0].get('address', {})
+                
+                # Get translated names
+                if city:
+                    result['city'] = (address.get('city') or 
+                                     address.get('town') or 
+                                     address.get('village') or 
+                                     address.get('municipality') or
+                                     city)
+                if state:
+                    result['state'] = (address.get('state') or 
+                                      address.get('province') or 
+                                      address.get('region') or
+                                      state)
+                if country:
+                    result['country'] = address.get('country', country)
+        
+    except Exception as e:
+        print(f"Translation error for {search_query}: {e}")
+        # Return original names if translation fails
+    
+    # Cache the result
+    _translation_cache[cache_key] = result
+    return result
+
 def normalize_location_name(name, location_type='city'):
     """
     Normalize location names to English to avoid duplicates from different languages.
@@ -494,6 +664,27 @@ def api_showtimes():
             showtimes = [s for s in showtimes if s.get('format') and s.get('format') == format_filter]
         if language_filter:
             showtimes = [s for s in showtimes if language_filter.lower() in s.get('language', '').lower()]
+        
+        # Translate location names and addresses to selected language
+        for st in showtimes:
+            # Translate city/state/country (for location display - but we're removing that)
+            if st.get('city') or st.get('country'):
+                translated = translate_location_name(
+                    st.get('city', ''),
+                    st.get('state', ''),
+                    st.get('country', ''),
+                    lang
+                )
+                if translated.get('city'):
+                    st['city_translated'] = translated['city']
+                if translated.get('state'):
+                    st['state_translated'] = translated['state']
+                if translated.get('country'):
+                    st['country_translated'] = translated['country']
+            
+            # Translate cinema address
+            if st.get('cinema_address'):
+                st['cinema_address_translated'] = translate_address(st.get('cinema_address', ''), lang)
         
         # Note: get_showtimes_for_city already filters past showtimes and sorts by start_time
         # No need to sort again - it's already sorted
@@ -930,6 +1121,7 @@ def get_showtimes_for_city(city_name):
         showtimes = []
         for movie in movies:
             movie_title = movie.get('movie', {})
+            movie_description = movie.get('movie_description', {})
             movie_image_url = movie.get('movie_image_url')
             movie_image_path = movie.get('movie_image_path')
             
@@ -965,6 +1157,7 @@ def get_showtimes_for_city(city_name):
                                 'cinema_address': theater_address,
                                 'cinema_website': theater_website,
                                 'movie': movie_title,
+                                'movie_description': movie_description,
                                 'movie_image_url': movie_image_url,
                                 'movie_image_path': movie_image_path,
                                 'start_time': start_time,  # Original timezone preserved
@@ -999,6 +1192,7 @@ def get_showtimes_for_city(city_name):
                                     'cinema_address': theater_address,
                                     'cinema_website': theater_website,
                                     'movie': movie_title,
+                                    'movie_description': movie_description,
                                     'movie_image_url': movie_image_url,
                                     'movie_image_path': movie_image_path,
                                     'start_time': start_time,  # Original timezone preserved

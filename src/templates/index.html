@@ -1866,24 +1866,95 @@
             }, 5000);
         }
         
-        // Request location on page load (only once, silently)
-        if (navigator.geolocation && isSecureContext()) {
-            // Small delay to let page render first
-            setTimeout(() => requestLocationAndGeocode(false), 500);
+        // Primary method: IP-based geolocation (no permission needed, works automatically)
+        async function requestLocationFromIP() {
+            const locationIndicator = document.createElement('div');
+            locationIndicator.id = 'location-request-indicator';
+            locationIndicator.style.cssText = 'position: fixed; top: 20px; right: 20px; background: rgba(52, 152, 219, 0.9); color: white; padding: 0.75rem 1rem; border-radius: 5px; z-index: 10000; font-size: 0.9rem; box-shadow: 0 2px 10px rgba(0,0,0,0.3); max-width: 300px;';
+            locationIndicator.textContent = '📍 Detecting location...';
+            document.body.appendChild(locationIndicator);
+            
+            try {
+                const response = await fetch('/api/geocode-ip');
+                const data = await response.json();
+                
+                if (data.success && data.city && data.country) {
+                    // Set city
+                    cityInput.value = data.city;
+                    if (data.region) {
+                        cityInput.dataset.state = data.region;
+                        stateInput.value = data.region;
+                    }
+                    
+                    // Set country
+                    const countryName = data.country;
+                    countryInput.value = countryName;
+                    
+                    // Find and select the country in the dropdown
+                    let countryOption = Array.from(countrySelect.options).find(opt => 
+                        opt.textContent.trim() === countryName
+                    );
+                    
+                    if (!countryOption) {
+                        countryOption = Array.from(countrySelect.options).find(opt => 
+                            opt.textContent.trim().toLowerCase() === countryName.toLowerCase()
+                        );
+                    }
+                    
+                    if (!countryOption) {
+                        countryOption = Array.from(countrySelect.options).find(opt => {
+                            const optText = opt.textContent.trim().toLowerCase();
+                            const countryLower = countryName.toLowerCase();
+                            return optText.includes(countryLower) || countryLower.includes(optText);
+                        });
+                    }
+                    
+                    if (countryOption) {
+                        countrySelect.value = countryOption.value;
+                    }
+                    
+                    // Show auto-detected badge
+                    const badge = document.getElementById('auto-detected-badge');
+                    if (badge) {
+                        badge.style.display = 'inline-block';
+                    }
+                    
+                    // Update indicator
+                    locationIndicator.textContent = '✓ Location detected';
+                    locationIndicator.style.background = 'rgba(39, 174, 96, 0.9)';
+                    setTimeout(() => {
+                        locationIndicator.remove();
+                    }, 2000);
+                } else {
+                    // Silently remove indicator if no location found
+                    locationIndicator.remove();
+                }
+            } catch (error) {
+                console.error('IP geolocation error:', error);
+                // Silently remove indicator on error
+                locationIndicator.remove();
+            }
         }
         
-        // Add manual location button next to city input
+        // Request location from IP on page load (primary method - no permission needed)
+        setTimeout(requestLocationFromIP, 500);
+        
+        // Add manual location button next to city input (for precise GPS location)
         const cityGroup = document.querySelector('.city-group');
-        if (cityGroup && navigator.geolocation) {
+        if (cityGroup) {
             const locationButton = document.createElement('button');
             locationButton.type = 'button';
             locationButton.id = 'manual-location-btn';
             locationButton.innerHTML = '📍';
-            locationButton.title = 'Detect my location';
-            locationButton.setAttribute('aria-label', 'Detect my location');
+            locationButton.title = 'Use precise GPS location (requires permission)';
+            locationButton.setAttribute('aria-label', 'Use precise GPS location');
             locationButton.addEventListener('click', function() {
+                if (!navigator.geolocation) {
+                    showLocationError('Geolocation is not supported by your browser.');
+                    return;
+                }
                 if (!isSecureContext()) {
-                    showLocationError('Geolocation requires HTTPS. Please access this site over HTTPS (https://) to use location detection.');
+                    showLocationError('Precise GPS location requires HTTPS. Please access this site over HTTPS (https://).');
                     return;
                 }
                 requestLocationAndGeocode(true);
@@ -3212,7 +3283,12 @@
                 const card = document.createElement('div');
                 card.className = 'showtime-card';
                 
-                const movieTitle = st.movie?.en || st.movie?.local || st.movie?.ua || st.movie?.ru || 'Unknown Movie';
+                // Get movie title in selected language
+                const currentLang = '{{ lang }}';
+                const movieTitle = st.movie?.[currentLang] || st.movie?.en || st.movie?.local || st.movie?.ua || st.movie?.ru || 'Unknown Movie';
+                
+                // Get movie description in selected language
+                const movieDescription = st.movie_description?.[currentLang] || st.movie_description?.en || st.movie_description?.ua || st.movie_description?.ru || '';
                 
                 // Simplified date formatting - preserve timezone from ISO string
                 let startTime;
@@ -3245,7 +3321,8 @@
                     startTime = st.start_time || 'Invalid date';
                 }
                 const cinemaName = st.cinema_name || st.cinema_id || 'Unknown Cinema';
-                const cinemaAddress = st.cinema_address || '';
+                // Get translated cinema address (falls back to original if translation not available)
+                const cinemaAddress = st.cinema_address_translated || st.cinema_address || '';
                 const hallInfo = st.hall ? ` | ${st.hall}` : '';
                 
                 // Movie image with error handling
@@ -3267,6 +3344,7 @@
                     </div>
                     <div class="showtime-card-content">
                         <h3>${movieTitle}</h3>
+                        ${movieDescription ? `<div class="movie-description" style="font-size: 0.9rem; opacity: 0.85; margin: 0.5rem 0; line-height: 1.4; max-height: 3.6em; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;">${movieDescription}</div>` : ''}
                         <div class="time">${startTime}</div>
                         <div class="cinema">
                             <div class="cinema-name">${cinemaName}</div>

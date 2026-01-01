@@ -116,7 +116,8 @@ Requirements:
    - DO NOT include past showtimes
    - Only include showtimes that are at least 1 hour in the future
 5. For each movie, extract:
-   - Movie title (in local language, English, and other available languages)
+   - Movie title (in local language, English, and other available languages: en, ua, ru)
+   - Movie description/synopsis (in multiple languages: en, ua, ru - extract from cinema websites or translate if needed)
    - Movie poster/image URL (high-quality poster image URL if available)
    - For each cinema showing this movie:
      * Cinema name and location/address (FULL address including street, building number, etc.)
@@ -136,7 +137,8 @@ Return your findings as a JSON structure with this format:
     "country": "{country}",
     "movies": [
         {{
-            "movie_title": {{"en": "English Title", "local": "Local Language Title"}},
+            "movie_title": {{"en": "English Title", "local": "Local Language Title", "ua": "Ukrainian Title", "ru": "Russian Title"}},
+            "movie_description": {{"en": "English description/synopsis", "ua": "Ukrainian description", "ru": "Russian description"}},
             "movie_image_url": "https://example.com/poster.jpg",
             "theaters": [
                 {{
@@ -243,6 +245,10 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
                 if not isinstance(movie_title, dict):
                     movie_title = {}
                 
+                movie_description = movie_data.get('movie_description', {})
+                if not isinstance(movie_description, dict):
+                    movie_description = {}
+                
                 movie_title_str = movie_title.get('en') or movie_title.get('local') or movie_title.get('ua') or ''
                 movie_image_url = movie_data.get('movie_image_url')
                 
@@ -347,6 +353,7 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
                         'country': result_country,
                         'city_id': location_id,
                         'movie': movie_title,
+                        'movie_description': movie_description,
                         'movie_image_url': movie_image_url,
                         'movie_image_path': movie_image_path,
                         'theaters': theaters,
