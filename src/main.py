@@ -63,6 +63,7 @@ TRANSLATIONS = {
         'feedback_sent': 'Thank you! Your feedback has been sent.',
         'feedback_error': 'Error sending feedback. Please try again.',
         'country': 'Country',
+        'state_province': 'State/Province (optional)',
     },
     'ua': {
         'title': 'CineStream - Розклад кіно',
@@ -82,6 +83,7 @@ TRANSLATIONS = {
         'feedback_sent': 'Дякуємо! Ваш відгук надіслано.',
         'feedback_error': 'Помилка відправки відгуку. Спробуйте ще раз.',
         'country': 'Країна',
+        'state_province': 'Штат/Провінція (необов\'язково)',
     },
     'ru': {
         'title': 'CineStream - Расписание кино',
@@ -101,6 +103,7 @@ TRANSLATIONS = {
         'feedback_sent': 'Спасибо! Ваш отзыв отправлен.',
         'feedback_error': 'Ошибка отправки отзыва. Попробуйте еще раз.',
         'country': 'Страна',
+        'state_province': 'Штат/Провинция (необязательно)',
     }
 }
 
@@ -470,6 +473,71 @@ def translate_location_name(city, state, country, target_lang='en'):
     _translation_cache[cache_key] = result
     return result
 
+def normalize_location_names_together(city, state, country):
+    """
+    Optimized: Normalize city, state, and country in a single Nominatim API call.
+    Returns tuple (normalized_city, normalized_state, normalized_country) or None if fails.
+    """
+    if not city or not country:
+        return None
+    
+    import urllib.request
+    import json
+    import urllib.parse
+    
+    # Build search query with all components
+    location_parts = [city]
+    if state:
+        location_parts.append(state)
+    location_parts.append(country)
+    search_query = ', '.join(location_parts)
+    
+    # Check cache first
+    cache_key = f"normalized_together_{search_query.lower()}"
+    cached = session.get(cache_key)
+    if cached:
+        return tuple(cached) if isinstance(cached, list) else None
+    
+    try:
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(search_query)}&format=json&limit=1&addressdetails=1&accept-language=en"
+        
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'CineStream/1.0'
+        })
+        
+        with urllib.request.urlopen(req, timeout=3) as response:
+            results = json.loads(response.read().decode())
+            
+            if results and len(results) > 0:
+                result = results[0]
+                address = result.get('address', {})
+                
+                # Extract all three components from the same result
+                normalized_city = (address.get('city') or 
+                                 address.get('town') or 
+                                 address.get('village') or 
+                                 address.get('municipality') or
+                                 city)
+                normalized_country = address.get('country', country)
+                normalized_state = None
+                if state:
+                    normalized_state = (address.get('state') or 
+                                       address.get('province') or 
+                                       address.get('region') or
+                                       state)
+                
+                normalized = (normalized_city, normalized_state, normalized_country)
+                # Cache the result
+                session[cache_key] = list(normalized)  # Store as list for JSON serialization
+                return normalized
+        
+        # If no results, return None to trigger fallback
+        return None
+        
+    except Exception as e:
+        print(f"Combined normalization error for {search_query}: {e}")
+        return None
+
 def normalize_location_name(name, location_type='city'):
     """
     Normalize location names to English to avoid duplicates from different languages.
@@ -770,16 +838,43 @@ def api_scrape():
     if not city or not country:
         return jsonify({'error': 'Invalid city or country'}), 400
     
-    # Reject potentially dangerous characters
+    # Reject potentially dangerous characters (security check - lightweight)
     dangerous_chars = ['<', '>', '{', '}', '[', ']', '$', '\\', '/']
     if any(char in city or char in country or (state and char in state) for char in dangerous_chars):
         return jsonify({'error': 'Invalid characters in input'}), 400
     
-    # Normalize location names to English to avoid duplicates from different languages
-    city = normalize_location_name(city, 'city')
-    country = normalize_location_name(country, 'country')
+    # Basic sanity checks (lightweight, no API calls)
+    if len(city) < 2:
+        return jsonify({'error': 'City name is too short'}), 400
+    if len(country) < 2:
+        return jsonify({'error': 'Country name is too short'}), 400
+    if state and len(state) < 2:
+        return jsonify({'error': 'State/Province name is too short'}), 400
+    
+    # Note: Location validation is done on the frontend to save API calls and reduce latency
+    # We trust the frontend validation and only normalize names here for consistency
+    
+    # Optimize: Normalize all location names in a single API call when possible
+    # This reduces Nominatim API calls from 3 to 1 when we have city, state, and country
     if state:
-        state = normalize_location_name(state, 'state')
+        # Try to normalize all three in one call
+        normalized = normalize_location_names_together(city, state, country)
+        if normalized:
+            city, state, country = normalized
+        else:
+            # Fallback to individual normalization if combined fails
+            city = normalize_location_name(city, 'city')
+            country = normalize_location_name(country, 'country')
+            state = normalize_location_name(state, 'state')
+    else:
+        # Only city and country - can still optimize
+        normalized = normalize_location_names_together(city, None, country)
+        if normalized:
+            city, _, country = normalized
+        else:
+            # Fallback to individual normalization
+            city = normalize_location_name(city, 'city')
+            country = normalize_location_name(country, 'country')
     
     # Build location identifier (city, state, country format) - using normalized names
     if state:
@@ -1367,26 +1462,64 @@ Message:
                 msg['Subject'] = subject
                 msg.attach(MIMEText(email_body, 'plain'))
                 
+                print(f"Attempting to send feedback email via SMTP...")
+                print(f"  SMTP Host: {smtp_host}:{smtp_port}")
+                print(f"  From: {smtp_user}")
+                print(f"  To: {recipient_email}")
+                
                 server = smtplib.SMTP(smtp_host, smtp_port)
                 server.starttls()
                 server.login(smtp_user, smtp_password)
                 server.send_message(msg)
                 server.quit()
+                
+                print(f"✓ Feedback email sent successfully to {recipient_email}")
             else:
-                # If SMTP not configured, just log it (for development)
+                # If SMTP not configured, log it with clear instructions
+                missing_vars = []
+                if not smtp_host:
+                    missing_vars.append('SMTP_HOST')
+                if not smtp_user:
+                    missing_vars.append('SMTP_USER')
+                if not smtp_password:
+                    missing_vars.append('SMTP_PASSWORD')
+                
                 print(f"\n{'='*60}")
-                print("FEEDBACK RECEIVED (SMTP not configured, logging instead):")
+                print("⚠ FEEDBACK RECEIVED (SMTP not configured)")
+                print(f"{'='*60}")
+                print(f"Missing environment variables: {', '.join(missing_vars)}")
+                print(f"To enable email delivery, set these in your .env file:")
+                print(f"  SMTP_HOST=smtp.gmail.com  # or your SMTP server")
+                print(f"  SMTP_PORT=587")
+                print(f"  SMTP_USER=your-email@gmail.com")
+                print(f"  SMTP_PASSWORD=your-app-password")
+                print(f"{'='*60}")
+                print("FEEDBACK CONTENT:")
                 print(f"{'='*60}")
                 print(email_body)
                 print(f"{'='*60}\n")
         except Exception as e:
-            # Log error but don't fail the request
-            print(f"Error sending feedback email: {e}")
+            # Log error with full details
             print(f"\n{'='*60}")
-            print("FEEDBACK RECEIVED (Email sending failed, logging instead):")
+            print("✗ ERROR SENDING FEEDBACK EMAIL")
+            print(f"{'='*60}")
+            print(f"Error type: {type(e).__name__}")
+            print(f"Error message: {str(e)}")
+            print(f"\nSMTP Configuration:")
+            print(f"  SMTP_HOST: {os.getenv('SMTP_HOST', 'NOT SET')}")
+            print(f"  SMTP_PORT: {os.getenv('SMTP_PORT', 'NOT SET')}")
+            print(f"  SMTP_USER: {os.getenv('SMTP_USER', 'NOT SET')}")
+            print(f"  SMTP_PASSWORD: {'SET' if os.getenv('SMTP_PASSWORD') else 'NOT SET'}")
+            print(f"\n{'='*60}")
+            print("FEEDBACK CONTENT (Email sending failed, logging instead):")
             print(f"{'='*60}")
             print(email_body)
             print(f"{'='*60}\n")
+            
+            # Also log full traceback for debugging
+            import traceback
+            print("Full traceback:")
+            traceback.print_exc()
         
         return jsonify({'success': True, 'message': 'Feedback sent successfully'})
     
