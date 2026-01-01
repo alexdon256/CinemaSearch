@@ -500,7 +500,8 @@ def verify_location_exists(city, country, state=None):
         return cached
     
     try:
-        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(search_query)}&format=json&limit=5&addressdetails=1&accept-language=en"
+        # Don't restrict language - allow multilingual search to verify locations in any language
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(search_query)}&format=json&limit=5&addressdetails=1"
         
         req = urllib.request.Request(url, headers={
             'User-Agent': 'CineStream/1.0'
@@ -521,6 +522,9 @@ def verify_location_exists(city, country, state=None):
             
             for result in results:
                 address = result.get('address', {})
+                # Also check display_name which contains multilingual names
+                display_name = result.get('display_name', '').lower()
+                
                 result_city = (address.get('city') or 
                              address.get('town') or 
                              address.get('village') or 
@@ -535,34 +539,37 @@ def verify_location_exists(city, country, state=None):
                     if country_lower not in result_country and result_country not in country_lower:
                         continue
                 
-                # Check if city matches (fuzzy matching)
+                # Check if city matches (fuzzy matching) - check both city name and display_name
+                city_matches = False
+                
+                # Check city name field
                 if result_city:
                     # Exact or substring match
                     if city_lower in result_city or result_city in city_lower:
-                        # If state is provided, check it matches too
-                        if state_lower:
-                            if result_state and (state_lower in result_state or result_state in state_lower):
-                                session[cache_key] = True
-                                return True
-                        else:
-                            # No state provided, city and country match is enough
+                        city_matches = True
+                    else:
+                        # Word-based matching (e.g., "New York" matches "New York City")
+                        city_words = [w for w in city_lower.split() if len(w) > 2]
+                        result_city_words = [w for w in result_city.split() if len(w) > 2]
+                        matching_words = sum(1 for w in city_words if w in result_city_words)
+                        if matching_words >= min(len(city_words), 2):
+                            city_matches = True
+                
+                # Also check display_name for multilingual matches (important for "одеса" -> "Одеса")
+                if not city_matches and display_name:
+                    if city_lower in display_name:
+                        city_matches = True
+                
+                if city_matches:
+                    # If state is provided, check it matches too
+                    if state_lower:
+                        if result_state and (state_lower in result_state or result_state in state_lower):
                             session[cache_key] = True
                             return True
-                    
-                    # Word-based matching (e.g., "New York" matches "New York City")
-                    city_words = [w for w in city_lower.split() if len(w) > 2]
-                    result_city_words = [w for w in result_city.split() if len(w) > 2]
-                    matching_words = sum(1 for w in city_words if w in result_city_words)
-                    
-                    if matching_words >= min(len(city_words), 2):
-                        # If state is provided, check it matches too
-                        if state_lower:
-                            if result_state and (state_lower in result_state or result_state in state_lower):
-                                session[cache_key] = True
-                                return True
-                        else:
-                            session[cache_key] = True
-                            return True
+                    else:
+                        # No state provided, city and country match is enough
+                        session[cache_key] = True
+                        return True
             
             # No matching result found
             session[cache_key] = False

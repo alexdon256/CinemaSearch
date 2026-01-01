@@ -3429,7 +3429,8 @@
             
             // Build search query
             var searchQuery = state && state.trim() ? city + ', ' + state + ', ' + country : city + ', ' + country;
-            var url = 'https://nominatim.openstreetmap.org/search?q=' + encodeURIComponent(searchQuery) + '&format=json&limit=5&addressdetails=1&accept-language=en';
+            // Don't restrict language - allow multilingual search to verify locations in any language
+            var url = 'https://nominatim.openstreetmap.org/search?q=' + encodeURIComponent(searchQuery) + '&format=json&limit=5&addressdetails=1';
             
             fetch(url, {
                 headers: { 
@@ -3457,6 +3458,8 @@
                 for (var i = 0; i < results.length; i++) {
                     var result = results[i];
                     var address = result.address || {};
+                    // Also check display_name which contains multilingual names
+                    var displayName = (result.display_name || '').toLowerCase();
                     var resultCity = (address.city || address.town || address.village || address.municipality || '').toLowerCase();
                     var resultCountry = (address.country || '').toLowerCase();
                     var resultState = (address.state || address.province || address.region || '').toLowerCase();
@@ -3466,28 +3469,40 @@
                         continue;
                     }
                     
-                    // Check if city matches (fuzzy)
+                    // Check if city matches (fuzzy) - check both city name and display_name
+                    var cityMatches = false;
+                    
+                    // Check city name field
                     if (resultCity) {
                         if (resultCity.indexOf(cityLower) !== -1 || cityLower.indexOf(resultCity) !== -1) {
-                            found = true;
-                            break;
-                        }
-                        // Check if words match (e.g., "New York" matches "New York City")
-                        var cityWords = cityLower.split(/\s+/);
-                        var resultCityWords = resultCity.split(/\s+/);
-                        var matchingWords = 0;
-                        for (var j = 0; j < cityWords.length; j++) {
-                            for (var k = 0; k < resultCityWords.length; k++) {
-                                if (cityWords[j] === resultCityWords[k] && cityWords[j].length > 2) {
-                                    matchingWords++;
-                                    break;
+                            cityMatches = true;
+                        } else {
+                            // Check if words match (e.g., "New York" matches "New York City")
+                            var cityWords = cityLower.split(/\s+/);
+                            var resultCityWords = resultCity.split(/\s+/);
+                            var matchingWords = 0;
+                            for (var j = 0; j < cityWords.length; j++) {
+                                for (var k = 0; k < resultCityWords.length; k++) {
+                                    if (cityWords[j] === resultCityWords[k] && cityWords[j].length > 2) {
+                                        matchingWords++;
+                                        break;
+                                    }
                                 }
                             }
+                            if (matchingWords >= Math.min(cityWords.length, 2)) {
+                                cityMatches = true;
+                            }
                         }
-                        if (matchingWords >= Math.min(cityWords.length, 2)) {
-                            found = true;
-                            break;
-                        }
+                    }
+                    
+                    // Also check display_name for multilingual matches (important for "одеса" -> "Одеса")
+                    if (!cityMatches && displayName && displayName.indexOf(cityLower) !== -1) {
+                        cityMatches = true;
+                    }
+                    
+                    if (cityMatches) {
+                        found = true;
+                        break;
                     }
                 }
                 
