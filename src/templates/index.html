@@ -134,8 +134,20 @@
             padding: 1.5rem;
             border-radius: 10px;
             margin: 2rem 0;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        
+        .location-search-row {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: 1rem;
+        }
+        
+        .additional-filters-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
             gap: 1rem;
         }
         
@@ -822,11 +834,10 @@
             
             .filters {
                 padding: 2rem;
-                grid-template-columns: repeat(4, 1fr);
             }
             
-            .filter-group[style*="grid-column: span 2"] {
-                grid-column: span 2;
+            .location-search-row {
+                grid-template-columns: 2fr 1fr 1fr 1fr;
             }
             
             .hero h1 {
@@ -844,12 +855,8 @@
                 grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
             }
             
-            .filters {
-                grid-template-columns: repeat(4, 1fr);
-            }
-            
-            .filter-group[style*="grid-column: span 2"] {
-                grid-column: span 2;
+            .location-search-row {
+                grid-template-columns: 2fr 1fr 1fr 1fr;
             }
         }
         
@@ -859,8 +866,17 @@
                 grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
             }
             
-            .filters {
-                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            .location-search-row {
+                grid-template-columns: 1fr 1fr;
+                gap: 1rem;
+            }
+            
+            .location-search-row .city-group {
+                grid-column: span 2;
+            }
+            
+            .location-search-row .search-group {
+                grid-column: span 2;
             }
         }
         
@@ -915,8 +931,15 @@
                 font-size: 1rem;
             }
             
-            .filters {
+            .location-search-row {
                 grid-template-columns: 1fr;
+            }
+            
+            .additional-filters-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .filters {
                 padding: 1.25rem;
                 gap: 1.25rem;
             }
@@ -1452,56 +1475,60 @@
         </div>
         
         <div class="filters">
-            <div class="filter-group" style="grid-column: span 2;">
-                <label for="city-input">{{ translations.select_city }}</label>
-                <div class="location-input-group">
-                    <input type="text" id="city-input" placeholder="Enter city name..." autocomplete="off" aria-label="City name input">
-                    <div id="city-suggestions" class="suggestions-dropdown" role="listbox" aria-label="City suggestions"></div>
+            <div class="location-search-row">
+                <div class="filter-group city-group">
+                    <label for="city-input">{{ translations.select_city }}</label>
+                    <div class="location-input-group">
+                        <input type="text" id="city-input" placeholder="Enter city name..." autocomplete="off" aria-label="City name input">
+                        <div id="city-suggestions" class="suggestions-dropdown" role="listbox" aria-label="City suggestions"></div>
+                    </div>
+                </div>
+                
+                <div class="filter-group state-group">
+                    <label for="state-input">State/Province (optional)</label>
+                    <input type="text" id="state-input" placeholder="State/Province..." autocomplete="off" aria-label="State or Province input">
+                </div>
+                
+                <div class="filter-group country-group">
+                    <label for="country-input">{{ translations.country or 'Country' }}</label>
+                    <div class="country-input-group">
+                        <input type="text" id="country-input" placeholder="Search or select country..." autocomplete="off" aria-label="Country selector">
+                        <div id="country-dropdown" class="country-dropdown"></div>
+                    </div>
+                    <select id="country-select" style="display: none;" aria-label="Country selector">
+                        <option value="">All Countries</option>
+                    </select>
+                </div>
+                
+                <div class="filter-group search-group">
+                    <label>&nbsp;</label>
+                    <button id="search-btn" class="search-btn" aria-label="Search for movie showtimes">🔍 Search Showtimes</button>
                 </div>
             </div>
             
-            <div class="filter-group">
-                <label for="state-input">State/Province (optional)</label>
-                <input type="text" id="state-input" placeholder="State/Province..." autocomplete="off" aria-label="State or Province input">
-            </div>
-            
-            <div class="filter-group">
-                <label for="country-input">{{ translations.country or 'Country' }}</label>
-                <div class="country-input-group">
-                    <input type="text" id="country-input" placeholder="Search or select country..." autocomplete="off" aria-label="Country selector">
-                    <div id="country-dropdown" class="country-dropdown"></div>
+            <div class="additional-filters-row">
+                <div class="filter-group">
+                    <label for="format-filter">{{ translations.filter_by_format }}</label>
+                    <select id="format-filter" aria-label="Filter by movie format">
+                        <option value="">All Formats</option>
+                        <option value="2D">2D</option>
+                        <option value="3D">3D</option>
+                        <option value="IMAX">IMAX</option>
+                        <option value="4DX">4DX</option>
+                        <option value="Dolby Atmos">Dolby Atmos</option>
+                    </select>
                 </div>
-                <select id="country-select" style="display: none;" aria-label="Country selector">
-                    <option value="">All Countries</option>
-                </select>
-            </div>
-            
-            <div class="filter-group">
-                <label>&nbsp;</label>
-                <button id="search-btn" class="search-btn" aria-label="Search for movie showtimes">🔍 Search Showtimes</button>
-            </div>
-            
-            <div class="filter-group">
-                <label for="format-filter">{{ translations.filter_by_format }}</label>
-                <select id="format-filter" aria-label="Filter by movie format">
-                    <option value="">All Formats</option>
-                    <option value="2D">2D</option>
-                    <option value="3D">3D</option>
-                    <option value="IMAX">IMAX</option>
-                    <option value="4DX">4DX</option>
-                    <option value="Dolby Atmos">Dolby Atmos</option>
-                </select>
-            </div>
-            
-            <div class="filter-group">
-                <label for="language-filter">{{ translations.filter_by_language }}</label>
-                <select id="language-filter" aria-label="Filter by language">
-                    <option value="">All Languages</option>
-                    <option value="Ukrainian">Ukrainian</option>
-                    <option value="English">English</option>
-                    <option value="Russian">Russian</option>
-                    <option value="Original">Original</option>
-                </select>
+                
+                <div class="filter-group">
+                    <label for="language-filter">{{ translations.filter_by_language }}</label>
+                    <select id="language-filter" aria-label="Filter by language">
+                        <option value="">All Languages</option>
+                        <option value="Ukrainian">Ukrainian</option>
+                        <option value="English">English</option>
+                        <option value="Russian">Russian</option>
+                        <option value="Original">Original</option>
+                    </select>
+                </div>
             </div>
         </div>
         
