@@ -340,6 +340,32 @@
         
         .location-input-group input {
             width: 100%;
+            padding-right: 3rem; /* Make room for location button */
+        }
+        
+        #manual-location-btn {
+            position: absolute;
+            right: 0.5rem;
+            top: 50%;
+            transform: translateY(-50%);
+            background: rgba(52, 152, 219, 0.2);
+            border: 1px solid var(--accent);
+            border-radius: 5px;
+            padding: 0.5rem 0.75rem;
+            cursor: pointer;
+            font-size: 1.2rem;
+            transition: all 0.2s ease;
+            color: var(--accent);
+            line-height: 1;
+        }
+        
+        #manual-location-btn:hover {
+            background: rgba(52, 152, 219, 0.4);
+            transform: translateY(-50%) scale(1.1);
+        }
+        
+        #manual-location-btn:active {
+            transform: translateY(-50%) scale(0.95);
         }
         
         .suggestions-dropdown {
@@ -1625,17 +1651,32 @@
         let autocompleteTimeout = null;
         let skeletonTimeout = null;
         
+        // Check if we're in a secure context (HTTPS required for geolocation)
+        function isSecureContext() {
+            return window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+        }
+        
         // Request browser geolocation and reverse geocode
-        function requestLocationAndGeocode() {
+        function requestLocationAndGeocode(showManualButton = false) {
             if (!navigator.geolocation) {
                 console.log('Geolocation is not supported by this browser');
+                return;
+            }
+            
+            // Check if we're in a secure context
+            if (!isSecureContext()) {
+                console.warn('Geolocation requires HTTPS. Current protocol:', location.protocol);
+                // Don't show error on initial load, only if manually triggered
+                if (showManualButton) {
+                    showLocationError('Geolocation requires HTTPS. Please access this site over HTTPS (https://) to use location detection.');
+                }
                 return;
             }
             
             // Show a subtle indicator that we're requesting location
             const locationIndicator = document.createElement('div');
             locationIndicator.id = 'location-request-indicator';
-            locationIndicator.style.cssText = 'position: fixed; top: 20px; right: 20px; background: rgba(52, 152, 219, 0.9); color: white; padding: 0.75rem 1rem; border-radius: 5px; z-index: 10000; font-size: 0.9rem; box-shadow: 0 2px 10px rgba(0,0,0,0.3);';
+            locationIndicator.style.cssText = 'position: fixed; top: 20px; right: 20px; background: rgba(52, 152, 219, 0.9); color: white; padding: 0.75rem 1rem; border-radius: 5px; z-index: 10000; font-size: 0.9rem; box-shadow: 0 2px 10px rgba(0,0,0,0.3); max-width: 300px;';
             locationIndicator.textContent = '📍 Requesting location...';
             document.body.appendChild(locationIndicator);
             
@@ -1722,19 +1763,25 @@
                 function(error) {
                     // User denied or error occurred
                     let message = 'Location access denied';
+                    let helpText = '';
+                    
                     if (error.code === error.PERMISSION_DENIED) {
                         message = 'Location permission denied';
+                        helpText = 'Tap the location icon in your browser\'s address bar to allow location access, or go to Chrome Settings > Site Settings > Location to reset permissions.';
                     } else if (error.code === error.POSITION_UNAVAILABLE) {
                         message = 'Location unavailable';
+                        helpText = 'Make sure location services are enabled on your device.';
                     } else if (error.code === error.TIMEOUT) {
                         message = 'Location request timeout';
+                        helpText = 'Please try again.';
                     }
                     
-                    locationIndicator.textContent = `⚠ ${message}`;
+                    locationIndicator.innerHTML = `<div>⚠ ${message}</div>${helpText ? '<div style="font-size: 0.8rem; margin-top: 0.5rem; opacity: 0.9;">' + helpText + '</div>' : ''}`;
                     locationIndicator.style.background = 'rgba(231, 76, 60, 0.9)';
+                    locationIndicator.style.maxWidth = '350px';
                     setTimeout(() => {
                         locationIndicator.remove();
-                    }, 3000);
+                    }, 8000);
                 },
                 {
                     enableHighAccuracy: true,
@@ -1744,10 +1791,45 @@
             );
         }
         
-        // Request location on page load (only once)
-        if (navigator.geolocation) {
+        // Helper function to show location error
+        function showLocationError(message) {
+            const locationIndicator = document.createElement('div');
+            locationIndicator.id = 'location-request-indicator';
+            locationIndicator.style.cssText = 'position: fixed; top: 20px; right: 20px; background: rgba(231, 76, 60, 0.9); color: white; padding: 0.75rem 1rem; border-radius: 5px; z-index: 10000; font-size: 0.9rem; box-shadow: 0 2px 10px rgba(0,0,0,0.3); max-width: 350px;';
+            locationIndicator.textContent = '⚠ ' + message;
+            document.body.appendChild(locationIndicator);
+            setTimeout(() => {
+                locationIndicator.remove();
+            }, 5000);
+        }
+        
+        // Request location on page load (only once, silently)
+        if (navigator.geolocation && isSecureContext()) {
             // Small delay to let page render first
-            setTimeout(requestLocationAndGeocode, 500);
+            setTimeout(() => requestLocationAndGeocode(false), 500);
+        }
+        
+        // Add manual location button next to city input
+        const cityGroup = document.querySelector('.city-group');
+        if (cityGroup && navigator.geolocation) {
+            const locationButton = document.createElement('button');
+            locationButton.type = 'button';
+            locationButton.id = 'manual-location-btn';
+            locationButton.innerHTML = '📍';
+            locationButton.title = 'Detect my location';
+            locationButton.setAttribute('aria-label', 'Detect my location');
+            locationButton.addEventListener('click', function() {
+                if (!isSecureContext()) {
+                    showLocationError('Geolocation requires HTTPS. Please access this site over HTTPS (https://) to use location detection.');
+                    return;
+                }
+                requestLocationAndGeocode(true);
+            });
+            
+            const locationInputGroup = cityGroup.querySelector('.location-input-group');
+            if (locationInputGroup) {
+                locationInputGroup.appendChild(locationButton);
+            }
         }
         
         // Clear auto-detected location when badge is clicked
