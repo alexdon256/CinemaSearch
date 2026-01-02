@@ -926,20 +926,29 @@ def api_scrape():
             'status': 'error'
         }), 500
     
-    # Check if location has a previous API key error - if so, return error immediately
+    # ALWAYS check for previous API key errors FIRST, before any early exits
     # This ensures that if the key was invalid before, we show the error even if data exists
     # This way, once the key is invalid, it will always show the error until the key is fixed
     location = db.locations.find_one({'city_name': location_id})
-    if location and location.get('status') == 'error':
+    if location:
+        # Check for API key errors regardless of current status (fresh, error, etc.)
+        # This is critical: even if location is 'fresh', if there was an API key error, we must show it
         error_message = location.get('error_message', '')
-        if 'api key' in error_message.lower() or 'anthropic' in error_message.lower() or 'authentication' in error_message.lower():
+        if error_message and ('api key' in error_message.lower() or 'anthropic' in error_message.lower() or 'authentication' in error_message.lower()):
             # Location has a previous API key error - return error immediately
             # We don't validate again here to avoid expensive API calls, but we show the error
-            return jsonify({
+            print(f"API key error detected for {location_id}: {error_message}")
+            response = jsonify({
                 'error': error_message,
                 'error_type': 'api_key_error',
                 'status': 'error'
-            }), 500
+            })
+            # Prevent HTTP caching for error responses
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+            return response, 500
+        print(f"Location {location_id} status: {location.get('status')}, error_message: {error_message}")
     
     # IMPORTANT: If location has no previous error, we still need to validate API key before early exits
     # This prevents returning 200 with cached data when API key is invalid
@@ -997,11 +1006,16 @@ def api_scrape():
                     }), 500
             # We have complete data (all 14 days) - just return it without scraping
             showtimes = get_showtimes_for_city(location_id)
-            return jsonify({
+            response = jsonify({
                 'status': 'fresh', 
                 'message': 'Data is up to date (2 weeks coverage)',
                 'showtimes': showtimes
             })
+            # Prevent HTTP caching to ensure fresh error checks
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+            return response
     
     # Check if location exists and is fresh (within last 24 hours) - also return without scraping
     location = db.locations.find_one({'city_name': location_id})
@@ -1036,11 +1050,16 @@ def api_scrape():
                         return response, 500
                 # Return existing showtimes immediately
                 showtimes = get_showtimes_for_city(location_id)
-                return jsonify({
+                response = jsonify({
                     'status': 'fresh', 
                     'message': 'Data already available',
                     'showtimes': showtimes
                 })
+                # Prevent HTTP caching to ensure fresh error checks
+                response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+                response.headers['Pragma'] = 'no-cache'
+                response.headers['Expires'] = '0'
+                return response
     
     # Try to acquire lock with priority (on-demand requests take precedence)
     # On-demand can override daily-refresh locks immediately
@@ -1082,11 +1101,16 @@ def api_scrape():
                     }), 500
             # All dates are already present - just return existing data
             showtimes = get_showtimes_for_city(location_id)
-            return jsonify({
+            response = jsonify({
                 'status': 'fresh',
                 'message': 'Data is up to date (all dates covered)',
                 'showtimes': showtimes
             })
+            # Prevent HTTP caching to ensure fresh error checks
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+            return response
         
         # Spawn AI agent to scrape only the missing date range
         agent = ClaudeAgent()
