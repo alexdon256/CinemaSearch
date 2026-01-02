@@ -649,6 +649,8 @@ def api_city_suggestions():
                 # This prevents irrelevant results like "Accra" for "los angel"
                 filtered_data = []
                 
+                print(f"City suggestions: Processing {len(data)} results for query '{query}'")
+                
                 for item in data:
                     # Extract city name
                     address = item.get('address', {})
@@ -669,6 +671,10 @@ def api_city_suggestions():
                     # Direct prefix match (best) - query starts the city name or display name
                     # Check display_name first as it often contains multilingual names
                     if display_name_lower.startswith(query_lower) or city_lower.startswith(query_lower):
+                        matches = True
+                    # Contains match in display_name (important for multilingual - "одеса" might be in display_name even if city_name is "Odesa")
+                    # Check this early for single-word queries like "odesa"
+                    elif query_lower in display_name_lower:
                         matches = True
                     # Word-by-word prefix match (e.g., "los angel" matches "los angeles")
                     # This is more important than contains match for multi-word queries
@@ -720,15 +726,20 @@ def api_city_suggestions():
                                         break
                             if all_match:
                                 matches = True
-                    # Contains match in display_name (important for multilingual - "одеса" might be in display_name even if city_name is "Odesa")
-                    elif query_lower in display_name_lower:
-                        matches = True
-                    # Contains match in city name - only for single word queries to avoid false positives
+                    # Contains match in city name - be lenient for single word queries
                     elif len(query_words) == 1 and query_lower in city_lower:
                         matches = True
                     # Last resort: check if query is a substring (for cases like "ankar" -> "ankara")
-                    elif query_lower in city_lower and len(query_lower) >= 4:  # Only for queries 4+ chars
+                    # Also check if city name contains query (for "odesa" -> "Odesa")
+                    elif query_lower in city_lower and len(query_lower) >= 3:  # Lowered threshold to 3 chars
                         matches = True
+                    # Also check reverse - if city name is in query (for partial matches)
+                    elif city_lower and len(city_lower) >= 3 and city_lower in query_lower:
+                        matches = True
+                    
+                    # Debug logging for "odesa" specifically
+                    if 'odesa' in query_lower or 'одеса' in display_name_lower.lower():
+                        print(f"  Checking item: city='{city_name}', display='{display_name[:50]}', matches={matches}")
                     
                     # Only include if it matches
                     if matches:
