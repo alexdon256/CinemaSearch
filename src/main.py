@@ -873,14 +873,6 @@ def api_scrape():
             'error_type': 'verification_error'
         }), 500
     
-    # Check Anthropic API key (after location verification)
-    anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
-    if not anthropic_api_key:
-        return jsonify({
-            'error': 'Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.',
-            'error_type': 'api_key_error'
-        }), 500
-    
     # Optimize: Normalize all location names in a single API call when possible
     # This reduces Nominatim API calls from 3 to 1 when we have city, state, and country
     try:
@@ -917,6 +909,14 @@ def api_scrape():
         import traceback
         traceback.print_exc()
         # Continue with original city, state, country names
+    
+    # Check Anthropic API key BEFORE any early exits (must check even if data exists)
+    anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
+    if not anthropic_api_key:
+        return jsonify({
+            'error': 'Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.',
+            'error_type': 'api_key_error'
+        }), 500
     
     # Build location identifier (city, state, country format) - using normalized names
     if state:

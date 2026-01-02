@@ -3137,43 +3137,9 @@
             
             showLoadingSkeleton();
             
-            // First, check if data is already available before triggering a scrape
-                var locationId = state ? city + ', ' + state + ', ' + country : city + ', ' + country;
-            
-            // ALWAYS check status first to see if there's an error (even on second search)
-                fetch('/api/scrape/status/' + encodeURIComponent(locationId)).then(function(statusResponse) {
-                if (statusResponse.ok) {
-                        return statusResponse.json().then(function(statusData) {
-                    // If status is error, show error immediately and STOP
-                    if (statusData.status === 'error') {
-                        hideLoadingOverlay();
-                                var errorMsg = statusData.message || 'An error occurred while fetching showtimes. Please check your API key configuration.';
-                                showErrorState(errorMsg, function() {
-                            // Retry will trigger a new scrape attempt
-                            fetchShowtimes(city, country, state);
-                        });
-                        return; // STOP here, don't continue
-                    }
-                    
-                    // Only check for existing showtimes if status is not error
-                    var params = 'city_name=' + encodeURIComponent(locationId);
-                    if (formatFilter.value) params += '&format=' + encodeURIComponent(formatFilter.value);
-                    if (languageFilter.value) params += '&language=' + encodeURIComponent(languageFilter.value);
-                    
-                    // Always trigger scrape to ensure API key check happens
-                    // Backend will return existing data if fresh, but API key validation still occurs
-                    fetchShowtimes(city, country, state);
-                });
-            } else {
-                // Status check failed, proceed with scraping
-                fetchShowtimes(city, country, state);
-            }
-        }).catch(function(e) {
-            // If status check fails, log but continue (might be first time)
-            console.log('Status check failed, continuing...', e);
-            // Proceed with scraping
+            // Always trigger scrape directly - backend will handle API key check and return existing data if fresh
+            // This ensures API key check happens on every search attempt
             fetchShowtimes(city, country, state);
-        });
         });
         
         // Keyboard navigation for city and country suggestions
