@@ -303,176 +303,6 @@ def index():
                              visitor_count=0,
                              donation_url=DONATION_URL), 500
 
-# Cache for location translations (key: lang_city_state_country)
-_translation_cache = {}
-
-def translate_address(address_text, target_lang='en'):
-    """
-    Translate address text to target language using Nominatim geocoding.
-    Uses the address to find the location and returns it in the target language.
-    """
-    if not address_text or not address_text.strip():
-        return address_text
-    
-    import urllib.request
-    import json
-    import urllib.parse
-    
-    address_text = address_text.strip()
-    
-    # Check cache first
-    cache_key = f"addr_{target_lang}_{address_text.lower()}"
-    if cache_key in _translation_cache:
-        return _translation_cache[cache_key]
-    
-    # Map language codes to Nominatim language codes
-    lang_map = {
-        'en': 'en',
-        'ua': 'uk',  # Ukrainian
-        'ru': 'ru'   # Russian
-    }
-    nominatim_lang = lang_map.get(target_lang, 'en')
-    
-    try:
-        # Use Nominatim to geocode the address and get it in target language
-        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(address_text)}&format=json&limit=1&addressdetails=1&accept-language={nominatim_lang}"
-        
-        req = urllib.request.Request(url, headers={
-            'User-Agent': 'CineStream/1.0'
-        })
-        
-        with urllib.request.urlopen(req, timeout=3) as response:
-            results = json.loads(response.read().decode())
-            
-            if results and len(results) > 0:
-                # Get the display_name in target language, or reconstruct from address components
-                result = results[0]
-                address = result.get('address', {})
-                
-                # Build address from components in target language
-                address_parts = []
-                
-                # Street address
-                if address.get('road'):
-                    road = address.get('road')
-                    if address.get('house_number'):
-                        road = f"{road} {address.get('house_number')}"
-                    address_parts.append(road)
-                
-                # City/town
-                city = (address.get('city') or 
-                       address.get('town') or 
-                       address.get('village') or 
-                       address.get('municipality') or
-                       '')
-                if city:
-                    address_parts.append(city)
-                
-                # State/region
-                state = (address.get('state') or 
-                        address.get('province') or 
-                        address.get('region') or
-                        '')
-                if state:
-                    address_parts.append(state)
-                
-                # Country
-                country = address.get('country', '')
-                if country:
-                    address_parts.append(country)
-                
-                if address_parts:
-                    translated_address = ', '.join(address_parts)
-                    _translation_cache[cache_key] = translated_address
-                    return translated_address
-        
-        # If geocoding fails, return original address
-        _translation_cache[cache_key] = address_text
-        return address_text
-        
-    except Exception as e:
-        print(f"Address translation error for {address_text}: {e}")
-        # Return original address if translation fails
-        _translation_cache[cache_key] = address_text
-        return address_text
-
-def translate_location_name(city, state, country, target_lang='en'):
-    """
-    Translate location names to target language using Nominatim.
-    Returns dict with translated city, state, country.
-    Uses caching to avoid repeated API calls.
-    """
-    import urllib.request
-    import json
-    import urllib.parse
-    
-    result = {'city': city, 'state': state, 'country': country}
-    
-    # Check cache first
-    cache_key = f"{target_lang}_{city}_{state}_{country}".lower()
-    if cache_key in _translation_cache:
-        return _translation_cache[cache_key]
-    
-    # Map language codes to Nominatim language codes
-    lang_map = {
-        'en': 'en',
-        'ua': 'uk',  # Ukrainian
-        'ru': 'ru'   # Russian
-    }
-    nominatim_lang = lang_map.get(target_lang, 'en')
-    
-    # Build search query with all location components
-    location_parts = []
-    if city:
-        location_parts.append(city)
-    if state:
-        location_parts.append(state)
-    if country:
-        location_parts.append(country)
-    
-    if not location_parts:
-        _translation_cache[cache_key] = result
-        return result
-    
-    search_query = ', '.join(location_parts)
-    
-    try:
-        # Use Nominatim to search and get translated names
-        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(search_query)}&format=json&limit=1&addressdetails=1&accept-language={nominatim_lang}"
-        
-        req = urllib.request.Request(url, headers={
-            'User-Agent': 'CineStream/1.0'
-        })
-        
-        with urllib.request.urlopen(req, timeout=3) as response:
-            results = json.loads(response.read().decode())
-            
-            if results and len(results) > 0:
-                address = results[0].get('address', {})
-                
-                # Get translated names
-                if city:
-                    result['city'] = (address.get('city') or 
-                                     address.get('town') or 
-                                     address.get('village') or 
-                                     address.get('municipality') or
-                                     city)
-                if state:
-                    result['state'] = (address.get('state') or 
-                                      address.get('province') or 
-                                      address.get('region') or
-                                      state)
-                if country:
-                    result['country'] = address.get('country', country)
-        
-    except Exception as e:
-        print(f"Translation error for {search_query}: {e}")
-        # Return original names if translation fails
-    
-    # Cache the result
-    _translation_cache[cache_key] = result
-    return result
-
 def verify_location_exists(city, country, state=None):
     """
     Verify that a location (city, state, country) actually exists using Nominatim API.
@@ -486,14 +316,21 @@ def verify_location_exists(city, country, state=None):
     import json
     import urllib.parse
     
-    # Simplified verification: Since Nominatim already returned these values in suggestions,
-    # we should trust them. Just verify that Nominatim can find the city (which we know works).
-    # This is much more lenient and avoids issues with multilingual state/country names.
+    # Search for the full location (city, state, country) and verify all components match
+    # Since Nominatim already returned these values in suggestions, we should be able to find them
     try:
+        # Build search query with all components
+        location_parts = [city]
+        if state:
+            location_parts.append(state)
+        location_parts.append(country)
+        search_query = ', '.join(location_parts)
+        
+        print(f"Location verification: Searching for '{search_query}'")
+        print(f"  Components: City='{city}', State='{state}', Country='{country}'")
+        
         # Use EXACT same format as city-suggestions endpoint for consistency
-        # Just search for the city name - if suggestions found it, this will too
-        print(f"Location verification: Verifying city='{city}' (state='{state}', country='{country}')")
-        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(city)}&format=json&limit=30&addressdetails=1&extratags=1&dedupe=1"
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(search_query)}&format=json&limit=30&addressdetails=1&extratags=1&dedupe=1"
         
         req = urllib.request.Request(url, headers={
             'User-Agent': 'CineStream/1.0'
@@ -502,25 +339,61 @@ def verify_location_exists(city, country, state=None):
         with urllib.request.urlopen(req, timeout=10) as response:
             results = json.loads(response.read().decode())
             
-            if results and len(results) > 0:
-                print(f"Location verification: Found {len(results)} results for city '{city}'")
-                print(f"  Input: City='{city}', State='{state}', Country='{country}'")
-                
-                # Log first result for debugging
-                first_result = results[0]
-                address = first_result.get('address', {})
-                display_name = first_result.get('display_name', '')
-                print(f"  First result: display_name='{display_name[:100]}'")
-                print(f"  First result address: city='{address.get('city', '')}', country='{address.get('country', '')}'")
-                
-                # If Nominatim found the city, accept it (very lenient)
-                # Since Nominatim returned these values in suggestions, we trust them
-                print(f"Location verification: Accepting location (Nominatim found city '{city}')")
-                return True
-            else:
-                print(f"Location verification: No results for city '{city}'")
-                print(f"  Input: City='{city}', State='{state}', Country='{country}'")
+            if not results or len(results) == 0:
+                print(f"Location verification: No results for '{search_query}'")
                 return False
+            
+            print(f"Location verification: Found {len(results)} results for '{search_query}'")
+            
+            # Check if any result matches all components (city, state optional, country)
+            city_lower = city.lower()
+            country_lower = country.lower()
+            state_lower = state.lower() if state else ''
+            
+            for result in results:
+                address = result.get('address', {})
+                display_name = result.get('display_name', '').lower()
+                
+                # Extract result components
+                result_city = (address.get('city') or 
+                             address.get('town') or 
+                             address.get('village') or 
+                             address.get('municipality') or '').lower()
+                result_country = (address.get('country') or '').lower()
+                result_state = (address.get('state') or 
+                              address.get('province') or 
+                              address.get('region') or '').lower()
+                
+                # Check if city matches (in display_name or address fields)
+                city_matches = (city_lower in display_name or 
+                              (result_city and (city_lower in result_city or result_city in city_lower)))
+                
+                # Check if country matches (in display_name or address fields)
+                country_matches = (country_lower in display_name or 
+                                 (result_country and (country_lower in result_country or result_country in country_lower)))
+                
+                # State is optional - if provided, try to match, but don't require it
+                state_matches = True  # Default to True if no state provided
+                if state_lower:
+                    state_matches = (state_lower in display_name or 
+                                   (result_state and (state_lower in result_state or result_state in state_lower)))
+                
+                # If city and country match (and state if provided), accept it
+                if city_matches and country_matches and state_matches:
+                    print(f"  Match found: city={city_matches}, country={country_matches}, state={state_matches}")
+                    print(f"  Result: city='{result_city}', country='{result_country}', state='{result_state}'")
+                    print(f"  Display: '{result.get('display_name', '')[:100]}'")
+                    print(f"Location verification: Accepting location (all components match)")
+                    return True
+            
+            # If no exact match found, location might be incorrect or user edited it
+            # Return False to prompt user to verify/reinput location
+            print(f"Location verification: No exact component match found")
+            print(f"  Searched for: City='{city}', State='{state}', Country='{country}'")
+            print(f"  First result: '{results[0].get('display_name', '')[:100]}'")
+            print(f"  First result components: city='{results[0].get('address', {}).get('city', '')}', country='{results[0].get('address', {}).get('country', '')}'")
+            print(f"  User may have edited location - returning False to prompt reinput")
+            return False
             
     except Exception as e:
         print(f"Location verification error for city='{city}': {e}")
@@ -1012,27 +885,6 @@ def api_showtimes():
             showtimes = [s for s in showtimes if s.get('format') and s.get('format') == format_filter]
         if language_filter:
             showtimes = [s for s in showtimes if language_filter.lower() in s.get('language', '').lower()]
-        
-        # Translate location names and addresses to selected language
-        for st in showtimes:
-            # Translate city/state/country (for location display - but we're removing that)
-            if st.get('city') or st.get('country'):
-                translated = translate_location_name(
-                    st.get('city', ''),
-                    st.get('state', ''),
-                    st.get('country', ''),
-                    lang
-                )
-                if translated.get('city'):
-                    st['city_translated'] = translated['city']
-                if translated.get('state'):
-                    st['state_translated'] = translated['state']
-                if translated.get('country'):
-                    st['country_translated'] = translated['country']
-            
-            # Translate cinema address
-            if st.get('cinema_address'):
-                st['cinema_address_translated'] = translate_address(st.get('cinema_address', ''), lang)
         
         # Note: get_showtimes_for_city already filters past showtimes and sorts by start_time
         # No need to sort again - it's already sorted
