@@ -306,9 +306,8 @@ def index():
 def verify_location_exists(city, country, state=None):
     """
     Verify that a location (city, state, country) actually exists using Nominatim API.
-    Works exactly like api_city_suggestions - iterates through results and finds matching city, state, country.
+    Simplified: Search for city, then iterate through results and compare city, state, country.
     Returns True if location is found, False otherwise.
-    This prevents scraping non-existent places.
     """
     if not city or not country:
         return False
@@ -316,156 +315,91 @@ def verify_location_exists(city, country, state=None):
     import urllib.request
     import json
     import urllib.parse
-    import re
     
-    # Build search query with all components (same as city-suggestions)
-    location_parts = [city]
-    if state:
-        location_parts.append(state)
-    location_parts.append(country)
-    search_query = ', '.join(location_parts)
+    # Search for just the city (simpler approach)
+    print(f"Location verification: Searching for city='{city}'")
+    print(f"  Verifying: City='{city}', State='{state}', Country='{country}'")
     
-    print(f"Location verification: Searching for '{search_query}'")
-    print(f"  Components: City='{city}', State='{state}', Country='{country}'")
-    
-    # Use EXACT same format as city-suggestions endpoint for consistency
-    url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(search_query)}&format=json&limit=30&addressdetails=1&extratags=1&dedupe=1"
+    # Use same format as city-suggestions endpoint
+    url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(city)}&format=json&limit=30&addressdetails=1&extratags=1&dedupe=1"
     
     try:
         req = urllib.request.Request(url, headers={
-            'User-Agent': 'CineStream/1.0'  # Required by Nominatim
+            'User-Agent': 'CineStream/1.0'
         })
         
         with urllib.request.urlopen(req, timeout=10) as response:
             data = json.loads(response.read().decode())
             
             if not data or len(data) == 0:
-                print(f"Location verification: No results for '{search_query}'")
+                print(f"Location verification: No results for city='{city}'")
                 return False
             
-            print(f"Location verification: Found {len(data)} results for '{search_query}'")
+            print(f"Location verification: Found {len(data)} results for city='{city}'")
             
-            # Iterate through results and find matching city, state, country (same logic as api_city_suggestions)
+            # Normalize input for comparison
             city_lower = city.lower().strip()
             country_lower = country.lower().strip()
-            state_lower = state.lower().strip() if state else ''
+            state_lower = state.lower().strip() if state else None
             
-            # Prepare query words for matching (like api_city_suggestions)
-            city_words = city_lower.split()
-            country_words = country_lower.split()
-            state_words = state_lower.split() if state_lower else []
-            
+            # Iterate through results and compare city, state, country
             for item in data:
-                # Extract components from result (same as api_city_suggestions)
                 address = item.get('address', {})
+                
+                # Extract result components
                 result_city = (address.get('city') or 
                              address.get('town') or 
                              address.get('village') or 
-                             address.get('municipality') or '')
-                result_country = address.get('country', '')
+                             address.get('municipality') or '').lower().strip()
+                result_country = (address.get('country') or '').lower().strip()
                 result_state = (address.get('state') or 
                               address.get('province') or 
-                              address.get('region') or '')
+                              address.get('region') or '').lower().strip()
                 
-                # Also check display_name (important for multilingual support)
-                display_name = item.get('display_name', '')
-                display_name_lower = display_name.lower()
+                # Also check display_name for multilingual support
+                display_name = item.get('display_name', '').lower()
                 
-                # Check city match (same logic as api_city_suggestions)
-                result_city_lower = result_city.lower()
-                city_matches = False
+                # Compare city (check both result_city and display_name)
+                city_match = (city_lower in result_city or 
+                            result_city in city_lower or
+                            city_lower in display_name)
                 
-                # Direct prefix match
-                if result_city_lower.startswith(city_lower) or display_name_lower.startswith(city_lower):
-                    city_matches = True
-                # Word-by-word prefix match for multi-word cities
-                elif len(city_words) > 1:
-                    result_city_words = [re.sub(r'[^\w]', '', w) for w in result_city_lower.split()]
-                    display_words = [re.sub(r'[^\w]', '', w) for w in display_name_lower.split()]
-                    # Check display words first
-                    if len(display_words) >= len(city_words):
-                        all_match = True
-                        for i in range(len(city_words)):
-                            word_clean = re.sub(r'[^\w]', '', city_words[i])
-                            if i >= len(display_words):
-                                all_match = False
-                                break
-                            if i == len(city_words) - 1:
-                                if word_clean not in display_words[i] and not display_words[i].startswith(word_clean):
-                                    all_match = False
-                                    break
-                            else:
-                                if not display_words[i].startswith(word_clean):
-                                    all_match = False
-                                    break
-                        if all_match:
-                            city_matches = True
-                    # Check city words if display didn't match
-                    if not city_matches and len(result_city_words) >= len(city_words):
-                        all_match = True
-                        for i in range(len(city_words)):
-                            word_clean = re.sub(r'[^\w]', '', city_words[i])
-                            if i >= len(result_city_words):
-                                all_match = False
-                                break
-                            if i == len(city_words) - 1:
-                                if word_clean not in result_city_words[i] and not result_city_words[i].startswith(word_clean):
-                                    all_match = False
-                                    break
-                            else:
-                                if not result_city_words[i].startswith(word_clean):
-                                    all_match = False
-                                    break
-                        if all_match:
-                            city_matches = True
-                # Contains match
-                elif city_lower in display_name_lower or (len(city_words) == 1 and city_lower in result_city_lower):
-                    city_matches = True
-                # Last resort substring match
-                elif city_lower in result_city_lower and len(city_lower) >= 4:
-                    city_matches = True
+                # Compare country (check both result_country and display_name)
+                country_match = (country_lower in result_country or 
+                               result_country in country_lower or
+                               country_lower in display_name)
                 
-                # Check country match (simpler - usually single word)
-                country_matches = False
-                result_country_lower = result_country.lower()
-                if (country_lower in display_name_lower or 
-                    country_lower in result_country_lower or 
-                    result_country_lower in country_lower):
-                    country_matches = True
-                
-                # Check state match (optional - only if state provided)
-                state_matches = True  # Default to True if no state provided
+                # Compare state (optional - only if state provided)
+                state_match = True  # Default to True if no state provided
                 if state_lower:
-                    result_state_lower = result_state.lower()
-                    state_matches = (state_lower in display_name_lower or 
-                                    state_lower in result_state_lower or 
-                                    result_state_lower in state_lower)
+                    state_match = (state_lower in result_state or 
+                                 result_state in state_lower or
+                                 state_lower in display_name)
                 
                 # If all components match, location is verified
-                if city_matches and country_matches and state_matches:
+                if city_match and country_match and state_match:
                     print(f"Location verification: Match found!")
-                    print(f"  City match: {city_matches} (input='{city}', result='{result_city}')")
-                    print(f"  Country match: {country_matches} (input='{country}', result='{result_country}')")
-                    print(f"  State match: {state_matches} (input='{state}', result='{result_state}')")
-                    print(f"  Display: '{display_name[:100]}'")
+                    print(f"  City: '{result_city}' matches '{city}'")
+                    print(f"  Country: '{result_country}' matches '{country}'")
+                    if state:
+                        print(f"  State: '{result_state}' matches '{state}'")
+                    print(f"  Display: '{item.get('display_name', '')[:100]}'")
                     return True
             
-            # No match found in any result
+            # No match found
             print(f"Location verification: No matching result found")
             print(f"  Searched for: City='{city}', State='{state}', Country='{country}'")
             if len(data) > 0:
-                first_result = data[0]
-                first_address = first_result.get('address', {})
+                first_address = data[0].get('address', {})
                 print(f"  First result: city='{first_address.get('city', '')}', country='{first_address.get('country', '')}', state='{first_address.get('state', '')}'")
-                print(f"  First result display: '{first_result.get('display_name', '')[:100]}'")
             return False
             
     except Exception as e:
-        print(f"Location verification error for city='{city}': {e}")
+        print(f"Location verification error: {e}")
         import traceback
         traceback.print_exc()
-        # On error, be lenient - if we can't verify, don't block scraping
-        print(f"Location verification: Exception occurred, but allowing location (error: {e})")
+        # On error, allow scraping (better to allow than block)
+        print(f"Location verification: Exception occurred, allowing location")
         return True
 
 def normalize_location_names_together(city, state, country):
