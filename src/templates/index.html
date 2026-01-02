@@ -2845,120 +2845,9 @@
                     return false;
                 }
                 
-                // Helper function to calculate match score (higher = better match)
-                function calculateMatchScore(result, query) {
-                    var cityName = getCityName(result);
-                    var displayName = result.display_name || '';
-                    var cityLower = cityName.toLowerCase();
-                    var displayLower = displayName.toLowerCase();
-                    var queryLower = query.toLowerCase().trim();
-                    
-                    // Check if query matches at all (using flexible matching)
-                    var cityMatches = queryMatches(cityName, query);
-                    var displayMatches = queryMatches(displayName, query);
-                    
-                    // Be more strict: require at least a partial match
-                    // If neither city name nor display name matches, return 0
-                    if (!cityMatches && !displayMatches) {
-                        // Last chance: check if first query word matches any word in the name
-                        var queryWords = queryLower.split(/\s+/).filter(function(w) { return w.length > 0; });
-                        var cityWords = cityLower.split(/\s+/);
-                        var displayWords = displayLower.split(/\s+/);
-                        
-                        var cityWordMatch = false;
-                        var displayWordMatch = false;
-                        
-                        if (queryWords.length > 0) {
-                            // Check if first query word matches any city word (prefix match)
-                            for (var i = 0; i < cityWords.length; i++) {
-                                if (cityWords[i].indexOf(queryWords[0]) === 0) {
-                                    cityWordMatch = true;
-                                    break;
-                                }
-                            }
-                            
-                            // Check if first query word matches any display word (prefix match)
-                            for (var j = 0; j < displayWords.length; j++) {
-                                if (displayWords[j].indexOf(queryWords[0]) === 0) {
-                                    displayWordMatch = true;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        if (!cityWordMatch && !displayWordMatch) {
-                            return 0;
-                        }
-                    }
-                    
-                    var score = 0;
-                    var isPrefixMatch = false;
-                    
-                    // Check city name first (most important)
-                    if (cityLower.indexOf(queryLower) === 0) {
-                        // Exact prefix match on city name gets highest score
-                        score = 10000;
-                        isPrefixMatch = true;
-                        // Shorter names with prefix match rank higher
-                        score += (1000 - cityName.length);
-                    } else if (cityLower.replace(/\s+/g, '').indexOf(queryLower.replace(/\s+/g, '')) === 0) {
-                        // Prefix match when spaces removed (e.g., "los ang" matches "los angeles")
-                        score = 9000;
-                        isPrefixMatch = true;
-                        score += (900 - cityName.length);
-                    } else if (cityMatches) {
-                        // Contains match in city name
-                        score = 1000;
-                        var position = cityLower.indexOf(queryLower);
-                        if (position === -1) {
-                            // Try with spaces removed
-                            position = cityLower.replace(/\s+/g, '').indexOf(queryLower.replace(/\s+/g, ''));
-                        }
-                        if (position !== -1) {
-                            score += (100 - position);
-                        }
-                    }
-                    
-                    // Also check display_name for prefix match (boost if found)
-                    if (displayLower.indexOf(queryLower) === 0 && !isPrefixMatch) {
-                        // Prefix match in display name (but not city name) - still very good
-                        score = 5000;
-                        score += (500 - displayName.length);
-                    } else if (displayLower.replace(/\s+/g, '').indexOf(queryLower.replace(/\s+/g, '')) === 0 && !isPrefixMatch) {
-                        // Prefix match in display name when spaces removed
-                        score = 4500;
-                        score += (450 - displayName.length);
-                    } else if (displayMatches && score < 1000) {
-                        // Contains match in display name (only if city name didn't match well)
-                        score = 500;
-                        var displayPosition = displayLower.indexOf(queryLower);
-                        if (displayPosition === -1) {
-                            displayPosition = displayLower.replace(/\s+/g, '').indexOf(queryLower.replace(/\s+/g, ''));
-                        }
-                        if (displayPosition !== -1) {
-                            score += (50 - displayPosition);
-                        }
-                    }
-                    
-                    // Boost score for city/town types (but only if we have a match)
-                    if (score > 0) {
-                        var placeType = (result.type || '').toLowerCase();
-                        var placeClass = (result.class || '').toLowerCase();
-                        if (placeType.indexOf('city') !== -1) {
-                            score += 50;
-                        } else if (placeType.indexOf('town') !== -1) {
-                            score += 30;
-                        } else if (placeClass === 'place') {
-                            score += 20;
-                        }
-                    }
-                    
-                    return score;
-                }
-                
-                // Filter and score results
-                var scoredResults = [];
-                for (var i = 0; i < results.length; i++) {
+                // Include all results from Nominatim - trust its relevance
+                var displayResults = [];
+                for (var i = 0; i < results.length && i < 10; i++) {
                     var result = results[i];
                     var placeType = result.type || '';
                     var placeClass = result.class || '';
@@ -2976,36 +2865,12 @@
                     }
                     
                     if (shouldInclude) {
-                        var score = calculateMatchScore(result, query);
-                        // Only include results that actually match the query
-                        // This prevents showing random cities that don't match
-                        if (score > 0) {
-                            scoredResults.push({
-                                result: result,
-                                score: score,
-                                cityName: getCityName(result)
-                            });
-                        }
+                        displayResults.push(result);
+                        console.log('Suggestion', displayResults.length, ':', getCityName(result), '- Display:', result.display_name);
                     }
                 }
                 
-                // Sort by score (highest first), then by city name length (shorter first for same score)
-                scoredResults.sort(function(a, b) {
-                    if (b.score !== a.score) {
-                        return b.score - a.score; // Higher score first
-                    }
-                    // If same score, shorter name first (more precise match)
-                    return a.cityName.length - b.cityName.length;
-                });
-                
-                // Extract results and limit to top 10
-                var displayResults = [];
-                console.log('Total scored results:', scoredResults.length);
-                for (var j = 0; j < scoredResults.length && j < 10; j++) {
-                    displayResults.push(scoredResults[j].result);
-                    // Debug logging
-                    console.log('Suggestion', j + 1, ':', getCityName(scoredResults[j].result), '- Score:', scoredResults[j].score, '- Display:', scoredResults[j].result.display_name);
-                }
+                console.log('Total results to display:', displayResults.length);
                 
                 // Always show results if we have any (even if scores are low)
                 if (displayResults.length === 0) {
