@@ -512,13 +512,17 @@ def verify_location_exists(city, country, state=None):
             
             if not results or len(results) == 0:
                 # No results found - location doesn't exist
+                print(f"Location verification: No results for query '{search_query}'")
                 session[cache_key] = False
                 return False
             
-            # Check if any result matches the location
+            # If Nominatim returned results, they're likely valid - be very lenient with matching
+            # The fact that Nominatim found something for our query is a good sign
             city_lower = city.lower()
             country_lower = country.lower()
             state_lower = state.lower() if state else ''
+            
+            print(f"Location verification: Found {len(results)} results for '{search_query}'")
             
             for result in results:
                 address = result.get('address', {})
@@ -534,26 +538,37 @@ def verify_location_exists(city, country, state=None):
                               address.get('province') or 
                               address.get('region') or '').lower()
                 
-                # Check if country matches (be flexible - country names can vary)
+                print(f"  Result: city='{result_city}', country='{result_country}', state='{result_state}', display='{display_name[:50]}'")
+                
+                # Very lenient country matching - if country is in display_name or address, accept it
                 country_matches = False
                 if result_country:
                     # Exact or substring match
                     if country_lower in result_country or result_country in country_lower:
                         country_matches = True
-                    # Also check if key words match (e.g., "ukraine" matches "Ukraine")
-                    country_words = [w for w in country_lower.split() if len(w) > 2]
-                    result_country_words = [w for w in result_country.split() if len(w) > 2]
-                    matching_country_words = sum(1 for w in country_words if any(w in rc or rc in w for rc in result_country_words))
-                    if matching_country_words > 0:
+                    # Also check display_name for country
+                    elif country_lower in display_name:
                         country_matches = True
+                    # Word-based matching
+                    else:
+                        country_words = [w for w in country_lower.split() if len(w) > 2]
+                        result_country_words = [w for w in result_country.split() if len(w) > 2]
+                        matching_country_words = sum(1 for w in country_words if any(w in rc or rc in w for rc in result_country_words))
+                        if matching_country_words > 0:
+                            country_matches = True
                 else:
-                    # No country in result - still check city (some results might not have country)
-                    country_matches = True
+                    # No country in result - check display_name
+                    if country_lower in display_name:
+                        country_matches = True
+                    else:
+                        # If no country found but we have results, still check city (very lenient)
+                        country_matches = True
                 
                 if not country_matches:
+                    print(f"    Country mismatch: '{country_lower}' not found in result")
                     continue
                 
-                # Check if city matches (fuzzy matching) - check both city name and display_name
+                # Very lenient city matching - check display_name first (most reliable for multilingual)
                 city_matches = False
                 
                 # First check display_name (most important for multilingual - contains names in all languages)
@@ -561,19 +576,22 @@ def verify_location_exists(city, country, state=None):
                     # Check if query city appears in display_name (most reliable for multilingual)
                     if city_lower in display_name:
                         city_matches = True
+                        print(f"    City match in display_name: '{city_lower}' found in display")
                     # Also check if any significant words from city appear in display_name
-                    elif len(city_lower) >= 4:
+                    elif len(city_lower) >= 3:
                         city_words = [w for w in city_lower.split() if len(w) >= 3]
                         if city_words:
                             matching_words = sum(1 for w in city_words if w in display_name)
                             if matching_words >= min(len(city_words), 1):  # At least one word matches
                                 city_matches = True
+                                print(f"    City word match in display_name: {matching_words} words matched")
                 
                 # Also check city name field (might be in different language)
                 if not city_matches and result_city:
                     # Exact or substring match
                     if city_lower in result_city or result_city in city_lower:
                         city_matches = True
+                        print(f"    City match in address.city: '{city_lower}' matches '{result_city}'")
                     else:
                         # Word-based matching (e.g., "New York" matches "New York City")
                         city_words = [w for w in city_lower.split() if len(w) > 2]
@@ -581,35 +599,26 @@ def verify_location_exists(city, country, state=None):
                         matching_words = sum(1 for w in city_words if w in result_city_words)
                         if matching_words >= min(len(city_words), 1):  # At least one word matches
                             city_matches = True
+                            print(f"    City word match: {matching_words} words matched")
+                
+                # If city appears anywhere in the query that Nominatim searched, accept it
+                # (Nominatim found it, so it's likely valid)
+                if not city_matches and city_lower in search_query.lower():
+                    # Check if the result seems relevant (has a city-like structure)
+                    if result_city or 'city' in display_name or 'town' in display_name or 'village' in display_name:
+                        city_matches = True
+                        print(f"    City match by query inclusion: '{city_lower}' was in search query")
                 
                 if city_matches:
+                    print(f"    City and country match! Accepting location.")
                     # State matching is optional - if city and country match, accept even if state differs
-                    # State names can vary significantly between languages (e.g., "одеська область" vs "Odesa Oblast")
-                    # So we only require state match if it's provided AND found in result
-                    if state_lower:
-                        # If state is in result, try to match it (but be very lenient)
-                        if result_state:
-                            # Check if state matches (fuzzy - substring match)
-                            if state_lower in result_state or result_state in state_lower:
-                                session[cache_key] = True
-                                return True
-                            # Also check if key words match (e.g., "одеська" matches "Odesa")
-                            state_words = [w for w in state_lower.split() if len(w) > 3]
-                            result_state_words = [w for w in result_state.split() if len(w) > 3]
-                            matching_state_words = sum(1 for w in state_words if any(w in rs or rs in w for rs in result_state_words))
-                            if matching_state_words > 0:
-                                session[cache_key] = True
-                                return True
-                        # If no state in result OR state doesn't match, still accept if city and country match
-                        # (state is less critical than city/country for location identification)
-                        session[cache_key] = True
-                        return True
-                    else:
-                        # No state provided, city and country match is enough
-                        session[cache_key] = True
-                        return True
+                    session[cache_key] = True
+                    return True
+                else:
+                    print(f"    City mismatch: '{city_lower}' not found in result")
             
             # No matching result found
+            print(f"Location verification: No matching result found for '{search_query}'")
             session[cache_key] = False
             return False
             
