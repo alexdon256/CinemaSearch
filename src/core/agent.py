@@ -167,16 +167,24 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
             if not prompt or not prompt.strip():
                 raise ValueError("Prompt is empty")
             
-            message = self.client.messages.create(
-                model=self.model,
-                max_tokens=8192,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
-            )
+            try:
+                message = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=8192,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ]
+                )
+            except Exception as api_error:
+                # Check if it's an API key/authentication error
+                error_str = str(api_error).lower()
+                if 'api key' in error_str or 'authentication' in error_str or '401' in error_str or '403' in error_str or 'invalid' in error_str:
+                    raise ValueError("ANTHROPIC_API_KEY is invalid or authentication failed. Please check your API key configuration.")
+                # Re-raise other errors as-is
+                raise
             
             # Parse response
             if not message.content or len(message.content) == 0:

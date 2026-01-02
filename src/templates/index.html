@@ -3976,7 +3976,15 @@
                     // HTTP error (400, 500, etc.) - try to get error message from response
                     var errorMsg = 'An error occurred while fetching showtimes.';
                     return scrapeResponse.json().then(function(errorData) {
-                        errorMsg = errorData.message || errorData.error_message || errorData.error || errorMsg;
+                        // Check error type to show appropriate message
+                        var errorType = errorData.error_type || '';
+                        if (errorType === 'api_key_error') {
+                            errorMsg = 'Anthropic API key is not configured or invalid. Please check your ANTHROPIC_API_KEY environment variable.';
+                        } else if (errorType === 'location_verification_failed') {
+                            errorMsg = errorData.error || errorData.message || 'Location not found. Please verify the city, state, and country names are correct.';
+                        } else {
+                            errorMsg = errorData.message || errorData.error_message || errorData.error || errorMsg;
+                        }
                         hideLoadingOverlay();
                         showErrorState(errorMsg, function() {
                             fetchShowtimes(city, country, state);

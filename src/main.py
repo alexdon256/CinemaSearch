@@ -617,8 +617,15 @@ def verify_location_exists(city, country, state=None):
                 else:
                     print(f"    City mismatch: '{city_lower}' not found in result")
             
-            # No matching result found
-            print(f"Location verification: No matching result found for '{search_query}'")
+            # No matching result found - but be very lenient: if Nominatim returned ANY results, accept it
+            # The fact that Nominatim found something for our query is a good sign it exists
+            if len(results) > 0:
+                # Nominatim found results - accept the first one as valid (very lenient)
+                print(f"Location verification: No exact match, but Nominatim found {len(results)} results - accepting first result as valid")
+                session[cache_key] = True
+                return True
+            
+            print(f"Location verification: No results found for '{search_query}'")
             session[cache_key] = False
             return False
             
@@ -1228,11 +1235,20 @@ def api_scrape():
     if state and len(state) < 2:
         return jsonify({'error': 'State/Province name is too short'}), 400
     
+    # Check Anthropic API key first (before location verification to give better error)
+    anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
+    if not anthropic_api_key:
+        return jsonify({'error': 'Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.'}), 500
+    
     # Verify location exists before scraping (backend validation)
     # This prevents scraping non-existent places even if frontend validation is bypassed
     location_valid = verify_location_exists(city, country, state)
     if not location_valid:
-        return jsonify({'error': 'Location not found. Please verify the city, state, and country names are correct.'}), 400
+        # Return specific error for location verification failure
+        return jsonify({
+            'error': 'Location not found. Please verify the city, state, and country names are correct.',
+            'error_type': 'location_verification_failed'
+        }), 400
     
     # Optimize: Normalize all location names in a single API call when possible
     # This reduces Nominatim API calls from 3 to 1 when we have city, state, and country
@@ -1543,8 +1559,11 @@ def api_scrape():
     except ValueError as e:
         # Handle specific errors like missing API key
         error_message = str(e)
-        if 'ANTHROPIC_API_KEY' in error_message:
-            error_message = 'Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.'
+        is_api_key_error = False
+        
+        if 'ANTHROPIC_API_KEY' in error_message or 'api key' in error_message.lower() or 'api_key' in error_message.lower():
+            error_message = 'Anthropic API key is not configured or invalid. Please check your ANTHROPIC_API_KEY environment variable.'
+            is_api_key_error = True
         
         # Safety check: location_id should always be defined here, but check just in case
         if 'location_id' in locals():
@@ -1564,12 +1583,27 @@ def api_scrape():
         
         import traceback
         print(f"Scraping error: {traceback.format_exc()}")
-        return jsonify({'status': 'error', 'message': error_message}), 500
+        # Return 500 for API key errors (server configuration issue), 400 for other validation errors
+        status_code = 500 if is_api_key_error else 400
+        error_type = 'api_key_error' if is_api_key_error else 'scraping_error'
+        return jsonify({
+            'status': 'error', 
+            'message': error_message,
+            'error_type': error_type
+        }), status_code
     except Exception as e:
         # Safety check: location_id should always be defined here, but check just in case
         if 'location_id' in locals():
             # Mark location as error status
             error_message = str(e)
+            
+            # Check if it's an API key/authentication error
+            error_str = str(e).lower()
+            is_api_key_error = False
+            if 'api key' in error_str or 'anthropic' in error_str or 'authentication' in error_str or '401' in error_str or '403' in error_str:
+                error_message = 'Anthropic API key is not configured or invalid. Please check your ANTHROPIC_API_KEY environment variable.'
+                is_api_key_error = True
+            
             db.locations.update_one(
                 {'city_name': location_id},
                 {
@@ -1584,7 +1618,14 @@ def api_scrape():
             release_lock(db, location_id)
         import traceback
         print(f"Scraping error: {traceback.format_exc()}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        # Return 500 for API key errors (server configuration issue), 500 for other errors
+        final_error_message = error_message if 'error_message' in locals() and 'is_api_key_error' in locals() and is_api_key_error else str(e)
+        error_type = 'api_key_error' if ('is_api_key_error' in locals() and is_api_key_error) else 'scraping_error'
+        return jsonify({
+            'status': 'error', 
+            'message': final_error_message,
+            'error_type': error_type
+        }), 500
 
 def get_date_range_to_scrape(city_id):
     """
