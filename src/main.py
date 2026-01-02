@@ -478,7 +478,7 @@ def normalize_location_names_together(city, state, country):
 
 def translate_location_name(name, target_lang='en'):
     """
-    Translate location name to target language using Google Translate API.
+    Translate location name to target language using Google Translate via deep-translator.
     Maps language codes: 'en' -> 'en', 'ua' -> 'uk', 'ru' -> 'ru'
     Returns original name if translation fails or package not available.
     """
@@ -490,7 +490,7 @@ def translate_location_name(name, target_lang='en'):
         return name
     
     try:
-        from googletrans import Translator
+        from deep_translator import GoogleTranslator
         
         # Map our language codes to Google Translate codes
         lang_map = {
@@ -503,20 +503,18 @@ def translate_location_name(name, target_lang='en'):
         if target_code == 'en':
             return name
         
-        # Initialize translator
-        translator = Translator()
-        
         # Translate from English (assumed source) to target language
-        result = translator.translate(name, src='en', dest=target_code)
+        translator = GoogleTranslator(source='en', target=target_code)
+        translated = translator.translate(name)
         
-        if result and result.text and result.text.strip():
-            return result.text.strip()
+        if translated and translated.strip():
+            return translated.strip()
         
         # If translation failed, return original
         return name
     except ImportError:
-        # googletrans not installed, return original
-        print("googletrans not available, skipping translation")
+        # deep-translator not installed, return original
+        print("deep-translator not available, skipping translation")
         return name
     except Exception as e:
         # Translation failed, return original
