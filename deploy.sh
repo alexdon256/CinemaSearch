@@ -1248,11 +1248,62 @@ enable_autostart() {
     systemctl enable cinestream-cpu-affinity.service 2>/dev/null || log_warn "Failed to enable cinestream-cpu-affinity.service"
     systemctl enable cinestream-cpu-affinity.timer 2>/dev/null || log_warn "Failed to enable cinestream-cpu-affinity.timer"
     
-    # Enable MongoDB and Nginx
-    if systemctl list-unit-files | grep -q "^mongodb.service"; then
-        systemctl enable mongodb.service 2>/dev/null || log_warn "Failed to enable mongodb.service"
+    # Enable MongoDB - try multiple methods to find and enable it
+    local mongodb_enabled=false
+    
+    # Method 1: Try standard service name
+    if systemctl enable mongodb.service 2>/dev/null; then
+        log_info "✓ MongoDB autostart enabled (mongodb.service)"
+        mongodb_enabled=true
+    elif systemctl enable mongodb 2>/dev/null; then
+        log_info "✓ MongoDB autostart enabled (mongodb)"
+        mongodb_enabled=true
     else
-        log_warn "mongodb.service not found, skipping autostart enable"
+        # Method 2: Check if service file exists in common locations
+        local mongodb_service_file=""
+        for location in \
+            "/etc/systemd/system/mongodb.service" \
+            "/usr/lib/systemd/system/mongodb.service" \
+            "/lib/systemd/system/mongodb.service"; do
+            if [[ -f "$location" ]]; then
+                mongodb_service_file="$location"
+                break
+            fi
+        done
+        
+        if [[ -n "$mongodb_service_file" ]]; then
+            # Service file exists, try to enable it directly
+            log_info "Found MongoDB service file at $mongodb_service_file, enabling..."
+            if systemctl enable "$mongodb_service_file" 2>/dev/null || systemctl enable mongodb.service 2>/dev/null; then
+                log_info "✓ MongoDB autostart enabled (from file)"
+                mongodb_enabled=true
+            fi
+        fi
+        
+        # Method 3: If MongoDB is installed but service not found, check if we need to create it
+        if [[ "$mongodb_enabled" == "false" ]] && command -v mongod >/dev/null 2>&1; then
+            log_warn "MongoDB is installed but service not enabled. Checking service status..."
+            # Try to find mongodb service using systemctl status
+            if systemctl status mongodb.service >/dev/null 2>&1 || systemctl status mongodb >/dev/null 2>&1; then
+                # Service exists but enable failed, check if already enabled
+                local enabled_status=$(systemctl is-enabled mongodb.service 2>/dev/null || systemctl is-enabled mongodb 2>/dev/null || echo "unknown")
+                if [[ "$enabled_status" == "enabled" ]]; then
+                    log_info "✓ MongoDB autostart already enabled"
+                    mongodb_enabled=true
+                else
+                    log_warn "MongoDB service exists but could not be enabled. Status: $enabled_status"
+                fi
+            else
+                log_warn "MongoDB binary found but systemd service not configured."
+                log_warn "You may need to run: systemctl enable mongodb.service"
+                # Check if service file should exist (created by install_mongodb)
+                if [[ ! -f "/etc/systemd/system/mongodb.service" ]]; then
+                    log_warn "MongoDB service file not found. Run 'init-server' to create it."
+                fi
+            fi
+        elif [[ "$mongodb_enabled" == "false" ]]; then
+            log_warn "MongoDB is not installed. Run 'init-server' to install it."
+        fi
     fi
     
     # Enable Nginx - try multiple methods to find and enable it
