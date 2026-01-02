@@ -8,7 +8,7 @@ import os
 import sys
 import argparse
 import smtplib
-from datetime import datetime
+from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from flask import Flask, render_template, request, session, jsonify, redirect, url_for
@@ -806,262 +806,130 @@ def api_scrape_status(city_name):
         print(f"Error getting scrape status: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+def _create_error_response(error_message, error_type='scraping_error', status_code=500):
+    """Helper: Create error response with cache headers"""
+    response = jsonify({
+        'error': error_message,
+        'error_type': error_type,
+        'status': 'error'
+    })
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response, status_code
+
+def _create_success_response(data, message='Success'):
+    """Helper: Create success response with cache headers"""
+    response = jsonify(data)
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+def _save_error_to_db(location_id, error_message, is_api_key_error=False):
+    """Helper: Save error to location document"""
+    db.locations.update_one(
+        {'city_name': location_id},
+        {
+            '$set': {
+                'status': 'error',
+                'error_message': error_message,
+                'last_updated': datetime.now(timezone.utc)
+            }
+        },
+        upsert=True
+    )
+
 @app.route('/api/scrape', methods=['POST'])
 def api_scrape():
     """On-demand scraping endpoint"""
     data = request.get_json() or {}
-    city = data.get('city') or data.get('city_name')  # Support both formats
+    city = data.get('city') or data.get('city_name')
     country = data.get('country')
-    state = data.get('state') or data.get('province') or data.get('region')  # Support multiple field names
+    state = data.get('state') or data.get('province') or data.get('region')
     
-    # Log received values for debugging
-    print(f"api_scrape: Received - city='{city}', state='{state}', country='{country}'")
+    # Input validation
+    if not city or not country:
+        return jsonify({'error': 'city and country required'}), 400
     
-    # Input validation and sanitization
-    if not city:
-        return jsonify({'error': 'city required'}), 400
-    
-    if not country:
-        return jsonify({'error': 'country required for accurate location identification'}), 400
-    
-    # Sanitize inputs (remove dangerous characters, limit length)
-    city = str(city).strip()[:100] if city else ''
-    country = str(country).strip()[:100] if country else ''
+    # Sanitize inputs
+    city = str(city).strip()[:100]
+    country = str(country).strip()[:100]
     state = str(state).strip()[:100] if state else ''
     
-    # Log sanitized values
-    print(f"api_scrape: After sanitization - city='{city}', state='{state}', country='{country}'")
+    if len(city) < 2 or len(country) < 2 or (state and len(state) < 2):
+        return jsonify({'error': 'Input too short'}), 400
     
-    # Basic validation - reject empty after sanitization
-    if not city or not country:
-        return jsonify({'error': 'Invalid city or country'}), 400
-    
-    # Reject potentially dangerous characters (security check - lightweight)
     dangerous_chars = ['<', '>', '{', '}', '[', ']', '$', '\\', '/']
     if any(char in city or char in country or (state and char in state) for char in dangerous_chars):
         return jsonify({'error': 'Invalid characters in input'}), 400
     
-    # Basic sanity checks (lightweight, no API calls)
-    if len(city) < 2:
-        return jsonify({'error': 'City name is too short'}), 400
-    if len(country) < 2:
-        return jsonify({'error': 'Country name is too short'}), 400
-    if state and len(state) < 2:
-        return jsonify({'error': 'State/Province name is too short'}), 400
-    
-    # Verify location exists BEFORE API key check (validate input first)
-    # This prevents scraping non-existent places even if frontend validation is bypassed
+    # Verify location exists
     try:
-        # Get language for verification (same as city-suggestions uses)
         lang = get_language()
-        print(f"Language: {lang}")
-        location_valid = verify_location_exists(city, country, state, lang)
-        if not location_valid:
-            # Return specific error for location verification failure
+        if not verify_location_exists(city, country, state, lang):
             return jsonify({
-                'error': '{lang} Location not found. Please verify the city, state, and country names are correct.',
+                'error': 'Location not found. Please verify the city, state, and country names are correct.',
                 'error_type': 'location_verification_failed'
             }), 400
-    except Exception as verify_error:
-        # If verification itself fails (e.g., API error), log it and return error
-        print(f"Error: Location verification failed: {verify_error}")
-        import traceback
-        traceback.print_exc()
-        # Return error - we can't verify the location, so we shouldn't scrape
+    except Exception as e:
+        print(f"Location verification failed: {e}")
         return jsonify({
             'error': 'Unable to verify location. Please check your connection and try again.',
             'error_type': 'verification_error'
         }), 500
     
-    # Optimize: Normalize all location names in a single API call when possible
-    # This reduces Nominatim API calls from 3 to 1 when we have city, state, and country
+    # Normalize location names
     try:
         if state:
-            # Try to normalize all three in one call
             normalized = normalize_location_names_together(city, state, country)
             if normalized:
                 city, state, country = normalized
-            else:
-                # Fallback to individual normalization if combined fails
-                try:
-                    city = normalize_location_name(city, 'city') or city
-                    country = normalize_location_name(country, 'country') or country
-                    state = normalize_location_name(state, 'state') or state
-                except Exception as norm_error:
-                    print(f"Warning: Individual normalization failed: {norm_error}")
-                    # Use original names if normalization fails
         else:
-            # Only city and country - can still optimize
             normalized = normalize_location_names_together(city, None, country)
             if normalized:
                 city, _, country = normalized
-            else:
-                # Fallback to individual normalization
-                try:
-                    city = normalize_location_name(city, 'city') or city
-                    country = normalize_location_name(country, 'country') or country
-                except Exception as norm_error:
-                    print(f"Warning: Individual normalization failed: {norm_error}")
-                    # Use original names if normalization fails
     except Exception as e:
-        # If normalization fails, log it but continue with original names
         print(f"Warning: Location normalization failed: {e}")
-        import traceback
-        traceback.print_exc()
-        # Continue with original city, state, country names
     
-    # Build location identifier (city, state, country format) - using normalized names
-    if state:
-        location_id = f"{city}, {state}, {country}"
-    else:
-        location_id = f"{city}, {country}"
+    # Build location identifier
+    location_id = f"{city}, {state}, {country}" if state else f"{city}, {country}"
     
-    # Check Anthropic API key BEFORE any early exits (must check even if data exists)
-    # This ensures API key errors are shown immediately, even if data exists
-    anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
-    if not anthropic_api_key:
-        return jsonify({
-            'error': 'Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.',
-            'error_type': 'api_key_error',
-            'status': 'error'
-        }), 500
+    # Check API key
+    if not os.getenv('ANTHROPIC_API_KEY'):
+        return _create_error_response(
+            'Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.',
+            'api_key_error'
+        )
     
-    # ALWAYS check for previous API key errors FIRST, before any early exits
-    # This ensures that if the key was invalid before, we show the error even if data exists
-    # This way, once the key is invalid, it will always show the error until the key is fixed
-    location = db.locations.find_one({'city_name': location_id})
-    if location:
-        # Check for API key errors regardless of current status (fresh, error, etc.)
-        # This is critical: even if location is 'fresh', if there was an API key error, we must show it
-        error_message = location.get('error_message', '')
-        if error_message and ('api key' in error_message.lower() or 'anthropic' in error_message.lower() or 'authentication' in error_message.lower()):
-            # Location has a previous API key error - return error immediately
-            # We don't validate again here to avoid expensive API calls, but we show the error
-            print(f"API key error detected for {location_id}: {error_message}")
-            response = jsonify({
-                'error': error_message,
-                'error_type': 'api_key_error',
-                'status': 'error'
-            })
-            # Prevent HTTP caching for error responses
-            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-            response.headers['Pragma'] = 'no-cache'
-            response.headers['Expires'] = '0'
-            return response, 500
-        print(f"Location {location_id} status: {location.get('status')}, error_message: {error_message}")
-    
-    # IMPORTANT: If location has no previous error, we still need to validate API key before early exits
-    # This prevents returning 200 with cached data when API key is invalid
-    # However, we only validate if there's no previous error record (to avoid expensive calls on every request)
-    # The validation happens later when we actually try to use the API key during scraping
-    # For now, we rely on the previous error check above to catch most cases
-    
-    # Check if we have complete data (all 14 days) - if so, just return it without scraping
+    # Check for early exit - only check data completeness (not status)
+    # Status can be wrong, but actual data completeness is the truth
     from datetime import timedelta, timezone
     now_utc = datetime.now(timezone.utc)
     today = now_utc.date()
     two_weeks_from_today = today + timedelta(days=14)
     
-    # Check if we have data for all dates
+    # Check if we have complete data (all 14 days)
     movies = list(db.movies.find({'city_id': location_id}))
     if movies:
-        # Collect all unique dates that have showtimes
         dates_with_data = set()
         for movie in movies:
-            theaters = movie.get('theaters', [])
-            for theater in theaters:
-                showtimes = theater.get('showtimes', [])
-                for st in showtimes:
+            for theater in movie.get('theaters', []):
+                for st in theater.get('showtimes', []):
                     start_time = st.get('start_time')
                     if isinstance(start_time, datetime):
-                        # Convert to UTC for comparison
-                        if start_time.tzinfo is None:
-                            start_time_utc = start_time.replace(tzinfo=timezone.utc)
-                        else:
-                            start_time_utc = start_time.astimezone(timezone.utc)
-                        # Get the date (ignore time)
-                        date_with_data = start_time_utc.date()
-                        dates_with_data.add(date_with_data)
+                        start_time_utc = start_time.replace(tzinfo=timezone.utc) if start_time.tzinfo is None else start_time.astimezone(timezone.utc)
+                        dates_with_data.add(start_time_utc.date())
         
-        # Check if we have data for all dates from today to 2 weeks ahead
-        all_dates_present = True
-        current_date = today
-        while current_date <= two_weeks_from_today:
-            if current_date not in dates_with_data:
-                all_dates_present = False
-                break
-            current_date += timedelta(days=1)
-        
+        all_dates_present = all((today + timedelta(days=i)) in dates_with_data for i in range(15))
         if all_dates_present:
-            # Before returning cached data, check for API key errors
-            # Re-check location status in case it was updated to error
-            location_recheck = db.locations.find_one({'city_name': location_id})
-            if location_recheck and location_recheck.get('status') == 'error':
-                error_message = location_recheck.get('error_message', '')
-                if 'api key' in error_message.lower() or 'anthropic' in error_message.lower() or 'authentication' in error_message.lower():
-                    return jsonify({
-                        'error': error_message,
-                        'error_type': 'api_key_error',
-                        'status': 'error'
-                    }), 500
-            # We have complete data (all 14 days) - just return it without scraping
+            # Data is complete - return it (this is the only early exit we need)
             showtimes = get_showtimes_for_city(location_id)
-            response = jsonify({
-                'status': 'fresh', 
+            return _create_success_response({
+                'status': 'fresh',
                 'message': 'Data is up to date (2 weeks coverage)',
                 'showtimes': showtimes
             })
-            # Prevent HTTP caching to ensure fresh error checks
-            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-            response.headers['Pragma'] = 'no-cache'
-            response.headers['Expires'] = '0'
-            return response
-    
-    # Check if location exists and is fresh (within last 24 hours) - also return without scraping
-    location = db.locations.find_one({'city_name': location_id})
-    if location and location.get('status') == 'fresh':
-        last_updated = location.get('last_updated')
-        if last_updated and isinstance(last_updated, datetime):
-            # Handle both timezone-aware and naive datetimes
-            if last_updated.tzinfo is None:
-                # Naive datetime - assume UTC and convert
-                last_updated_utc = last_updated.replace(tzinfo=timezone.utc)
-            else:
-                # Timezone-aware - convert to UTC
-                last_updated_utc = last_updated.astimezone(timezone.utc)
-            
-            hours_old = (now_utc - last_updated_utc).total_seconds() / 3600
-            if hours_old < 24:
-                # Before returning cached data, check for API key errors
-                # Re-check location status in case it was updated to error
-                # CRITICAL: Check for error_message regardless of status (even if status is 'fresh')
-                location_recheck = db.locations.find_one({'city_name': location_id})
-                if location_recheck:
-                    error_message = location_recheck.get('error_message', '')
-                    if error_message and ('api key' in error_message.lower() or 'anthropic' in error_message.lower() or 'authentication' in error_message.lower()):
-                        print(f"API key error detected in fresh location (recheck) {location_id}: {error_message}")
-                        response = jsonify({
-                            'error': error_message,
-                            'error_type': 'api_key_error',
-                            'status': 'error'
-                        })
-                        # Prevent HTTP caching for error responses
-                        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-                        response.headers['Pragma'] = 'no-cache'
-                        response.headers['Expires'] = '0'
-                        return response, 500
-                # Return existing showtimes immediately
-                showtimes = get_showtimes_for_city(location_id)
-                response = jsonify({
-                    'status': 'fresh', 
-                    'message': 'Data already available',
-                    'showtimes': showtimes
-                })
-                # Prevent HTTP caching to ensure fresh error checks
-                response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-                response.headers['Pragma'] = 'no-cache'
-                response.headers['Expires'] = '0'
-                return response
     
     # Try to acquire lock with priority (on-demand requests take precedence)
     # On-demand can override daily-refresh locks immediately
@@ -1090,29 +958,13 @@ def api_scrape():
         # Check if there's actually a date range to scrape (if all dates are present, range will be very small)
         time_diff = (date_end - date_start).total_seconds()
         if time_diff < 3600:  # Less than 1 hour means no real date range to scrape
-            # All dates are already present - but check for API key errors first
-            # Re-check location status in case it was updated
-            location_check = db.locations.find_one({'city_name': location_id})
-            if location_check and location_check.get('status') == 'error':
-                error_message = location_check.get('error_message', '')
-                if 'api key' in error_message.lower() or 'anthropic' in error_message.lower() or 'authentication' in error_message.lower():
-                    return jsonify({
-                        'error': error_message,
-                        'error_type': 'api_key_error',
-                        'status': 'error'
-                    }), 500
-            # All dates are already present - just return existing data
+            # All dates are already present
             showtimes = get_showtimes_for_city(location_id)
-            response = jsonify({
+            return _create_success_response({
                 'status': 'fresh',
                 'message': 'Data is up to date (all dates covered)',
                 'showtimes': showtimes
             })
-            # Prevent HTTP caching to ensure fresh error checks
-            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-            response.headers['Pragma'] = 'no-cache'
-            response.headers['Expires'] = '0'
-            return response
         
         # Spawn AI agent to scrape only the missing date range
         agent = ClaudeAgent()
@@ -1300,109 +1152,36 @@ def api_scrape():
                 'showtimes': formatted_showtimes
             })
         else:
-            # Scraping failed - mark as error and don't set status to 'fresh'
+            # Scraping failed
             error_msg = result.get('error', 'Unknown error')
-            # Check if it's an API key error
             is_api_key_error = 'api key' in error_msg.lower() or 'anthropic' in error_msg.lower() or 'authentication' in error_msg.lower()
-            if 'location_id' in locals():
-                db.locations.update_one(
-                    {'city_name': location_id},
-                    {
-                        '$set': {
-                            'status': 'error',
-                            'error_message': error_msg,
-                            'last_updated': datetime.now(timezone.utc)
-                        }
-                    },
-                    upsert=True
-                )
+            _save_error_to_db(location_id, error_msg, is_api_key_error)
             release_lock(db, location_id)
-            error_type = 'api_key_error' if is_api_key_error else 'scraping_error'
-            response = jsonify({
-                'status': 'error', 
-                'message': error_msg,
-                'error_type': error_type
-            })
-            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-            response.headers['Pragma'] = 'no-cache'
-            response.headers['Expires'] = '0'
-            return response, 500
+            return _create_error_response(error_msg, 'api_key_error' if is_api_key_error else 'scraping_error')
             
     except ValueError as e:
-        # Handle specific errors like missing API key
         error_message = str(e)
-        is_api_key_error = False
-        
-        if 'ANTHROPIC_API_KEY' in error_message or 'api key' in error_message.lower() or 'api_key' in error_message.lower():
+        is_api_key_error = 'ANTHROPIC_API_KEY' in error_message or 'api key' in error_message.lower() or 'api_key' in error_message.lower()
+        if is_api_key_error:
             error_message = 'Anthropic API key is not configured or invalid. Please check your ANTHROPIC_API_KEY environment variable.'
-            is_api_key_error = True
-        
-        # Safety check: location_id should always be defined here, but check just in case
         if 'location_id' in locals():
-            # Mark location as error status
-            db.locations.update_one(
-                {'city_name': location_id},
-                {
-                    '$set': {
-                        'status': 'error',
-                        'error_message': error_message,
-                        'last_updated': datetime.now(timezone.utc)
-                    }
-                },
-                upsert=True
-            )
+            _save_error_to_db(location_id, error_message, is_api_key_error)
             release_lock(db, location_id)
-        
         import traceback
         print(f"Scraping error: {traceback.format_exc()}")
-        # Return 500 for API key errors (server configuration issue), 400 for other validation errors
-        status_code = 500 if is_api_key_error else 400
-        error_type = 'api_key_error' if is_api_key_error else 'scraping_error'
-        response = jsonify({
-            'status': 'error', 
-            'message': error_message,
-            'error_type': error_type
-        })
-        # Prevent HTTP caching for error responses
-        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-        response.headers['Pragma'] = 'no-cache'
-        response.headers['Expires'] = '0'
-        return response, status_code
+        return _create_error_response(error_message, 'api_key_error' if is_api_key_error else 'scraping_error', 500 if is_api_key_error else 400)
     except Exception as e:
-        # Safety check: location_id should always be defined here, but check just in case
+        error_message = str(e)
+        error_str = error_message.lower()
+        is_api_key_error = 'api key' in error_str or 'anthropic' in error_str or 'authentication' in error_str or '401' in error_str or '403' in error_str
+        if is_api_key_error:
+            error_message = 'Anthropic API key is not configured or invalid. Please check your ANTHROPIC_API_KEY environment variable.'
         if 'location_id' in locals():
-            # Mark location as error status
-            error_message = str(e)
-            
-            # Check if it's an API key/authentication error
-            error_str = str(e).lower()
-            is_api_key_error = False
-            if 'api key' in error_str or 'anthropic' in error_str or 'authentication' in error_str or '401' in error_str or '403' in error_str:
-                error_message = 'Anthropic API key is not configured or invalid. Please check your ANTHROPIC_API_KEY environment variable.'
-                is_api_key_error = True
-            
-            db.locations.update_one(
-                {'city_name': location_id},
-                {
-                    '$set': {
-                        'status': 'error',
-                        'error_message': error_message,
-                        'last_updated': datetime.now(timezone.utc)
-                    }
-                },
-                upsert=True
-            )
+            _save_error_to_db(location_id, error_message, is_api_key_error)
             release_lock(db, location_id)
         import traceback
         print(f"Scraping error: {traceback.format_exc()}")
-        # Return 500 for API key errors (server configuration issue), 500 for other errors
-        final_error_message = error_message if 'error_message' in locals() and 'is_api_key_error' in locals() and is_api_key_error else str(e)
-        error_type = 'api_key_error' if ('is_api_key_error' in locals() and is_api_key_error) else 'scraping_error'
-        return jsonify({
-            'status': 'error', 
-            'message': final_error_message,
-            'error_type': error_type
-        }), 500
+        return _create_error_response(error_message, 'api_key_error' if is_api_key_error else 'scraping_error')
 
 def get_date_range_to_scrape(city_id):
     """
