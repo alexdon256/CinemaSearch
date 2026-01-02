@@ -984,6 +984,17 @@ def api_scrape():
             current_date += timedelta(days=1)
         
         if all_dates_present:
+            # Before returning cached data, check for API key errors
+            # Re-check location status in case it was updated to error
+            location_recheck = db.locations.find_one({'city_name': location_id})
+            if location_recheck and location_recheck.get('status') == 'error':
+                error_message = location_recheck.get('error_message', '')
+                if 'api key' in error_message.lower() or 'anthropic' in error_message.lower() or 'authentication' in error_message.lower():
+                    return jsonify({
+                        'error': error_message,
+                        'error_type': 'api_key_error',
+                        'status': 'error'
+                    }), 500
             # We have complete data (all 14 days) - just return it without scraping
             showtimes = get_showtimes_for_city(location_id)
             return jsonify({
@@ -1007,6 +1018,22 @@ def api_scrape():
             
             hours_old = (now_utc - last_updated_utc).total_seconds() / 3600
             if hours_old < 24:
+                # Before returning cached data, check for API key errors
+                # Re-check location status in case it was updated to error
+                location_recheck = db.locations.find_one({'city_name': location_id})
+                if location_recheck and location_recheck.get('status') == 'error':
+                    error_message = location_recheck.get('error_message', '')
+                    if 'api key' in error_message.lower() or 'anthropic' in error_message.lower() or 'authentication' in error_message.lower():
+                        response = jsonify({
+                            'error': error_message,
+                            'error_type': 'api_key_error',
+                            'status': 'error'
+                        })
+                        # Prevent HTTP caching for error responses
+                        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+                        response.headers['Pragma'] = 'no-cache'
+                        response.headers['Expires'] = '0'
+                        return response, 500
                 # Return existing showtimes immediately
                 showtimes = get_showtimes_for_city(location_id)
                 return jsonify({
@@ -1266,11 +1293,16 @@ def api_scrape():
         # Return 500 for API key errors (server configuration issue), 400 for other validation errors
         status_code = 500 if is_api_key_error else 400
         error_type = 'api_key_error' if is_api_key_error else 'scraping_error'
-        return jsonify({
+        response = jsonify({
             'status': 'error', 
             'message': error_message,
             'error_type': error_type
-        }), status_code
+        })
+        # Prevent HTTP caching for error responses
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response, status_code
     except Exception as e:
         # Safety check: location_id should always be defined here, but check just in case
         if 'location_id' in locals():
