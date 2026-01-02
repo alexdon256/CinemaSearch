@@ -478,18 +478,21 @@ def normalize_location_names_together(city, state, country):
 
 def translate_location_name(name, target_lang='en'):
     """
-    Translate location name to target language using argostranslate.
+    Translate location name to target language using Google Translate API.
     Maps language codes: 'en' -> 'en', 'ua' -> 'uk', 'ru' -> 'ru'
     Returns original name if translation fails or package not available.
     """
     if not name or not name.strip():
         return name
     
+    # If target is English, no translation needed
+    if target_lang == 'en':
+        return name
+    
     try:
-        import argostranslate.package
-        import argostranslate.translate
+        from googletrans import Translator
         
-        # Map our language codes to argostranslate codes
+        # Map our language codes to Google Translate codes
         lang_map = {
             'en': 'en',
             'ua': 'uk',
@@ -497,33 +500,23 @@ def translate_location_name(name, target_lang='en'):
         }
         
         target_code = lang_map.get(target_lang, 'en')
-        
-        # If target is English, no translation needed
         if target_code == 'en':
             return name
         
-        # Try to translate from English to target language
-        # First check if packages are installed
-        installed_languages = argostranslate.translate.get_installed_languages()
-        from_lang = None
-        to_lang = None
+        # Initialize translator
+        translator = Translator()
         
-        for lang in installed_languages:
-            if lang.code == 'en':
-                from_lang = lang
-            if lang.code == target_code:
-                to_lang = lang
+        # Translate from English (assumed source) to target language
+        result = translator.translate(name, src='en', dest=target_code)
         
-        if from_lang and to_lang:
-            translated = argostranslate.translate.translate(name, from_lang.code, to_lang.code)
-            if translated and translated.strip():
-                return translated.strip()
+        if result and result.text and result.text.strip():
+            return result.text.strip()
         
         # If translation failed, return original
         return name
     except ImportError:
-        # argostranslate not installed, return original
-        print("argostranslate not available, skipping translation")
+        # googletrans not installed, return original
+        print("googletrans not available, skipping translation")
         return name
     except Exception as e:
         # Translation failed, return original
