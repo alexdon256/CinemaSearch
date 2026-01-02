@@ -629,9 +629,6 @@ def api_city_suggestions():
         import json
         import urllib.parse
         
-        query_lower = query.lower().strip()
-        query_words = query_lower.split()
-        
         # Use Nominatim for city search
         # Support multilingual search: don't restrict language so Nominatim can return names in any language
         # This allows finding "одеса" even when site is in English mode
@@ -645,131 +642,37 @@ def api_city_suggestions():
             with urllib.request.urlopen(req, timeout=10) as response:
                 data = json.loads(response.read().decode())
                 
-                # Filter results on backend to ensure they actually match the query
-                # This prevents irrelevant results like "Accra" for "los angel"
-                filtered_data = []
-                
-                print(f"City suggestions: Processing {len(data)} results for query '{query}'")
-                
-                for item in data:
-                    # Extract city name
+                # Extract city, state, and country from each result
+                # Return structured data that frontend expects
+                results = []
+                for item in data[:10]:  # Limit to top 10
                     address = item.get('address', {})
-                    city_name = (address.get('city') or 
-                                address.get('town') or 
-                                address.get('village') or 
-                                address.get('municipality') or '')
                     
-                    # Also check display_name - this is important for multilingual support
-                    # display_name often contains names in multiple languages
-                    display_name = item.get('display_name', '')
-                    display_name_lower = display_name.lower()
+                    # Extract city name
+                    city = (address.get('city') or 
+                           address.get('town') or 
+                           address.get('village') or 
+                           address.get('municipality') or '')
                     
-                    # Check if query matches city name or display name
-                    city_lower = city_name.lower()
-                    matches = False
+                    # Extract state/province
+                    state = (address.get('state') or 
+                            address.get('province') or 
+                            address.get('region') or '')
                     
-                    # Direct prefix match (best) - query starts the city name or display name
-                    # Check display_name first as it often contains multilingual names
-                    if display_name_lower.startswith(query_lower) or city_lower.startswith(query_lower):
-                        matches = True
-                    # Contains match in display_name (important for multilingual - "одеса" might be in display_name even if city_name is "Odesa")
-                    # Check this early for single-word queries like "odesa"
-                    elif query_lower in display_name_lower:
-                        matches = True
-                    # Word-by-word prefix match (e.g., "los angel" matches "los angeles")
-                    # This is more important than contains match for multi-word queries
-                    elif len(query_words) > 1:
-                        import re
-                        # Strip punctuation from words for better matching
-                        city_words = [re.sub(r'[^\w]', '', w) for w in city_lower.split()]
-                        display_words = [re.sub(r'[^\w]', '', w) for w in display_name_lower.split()]
-                        # Check display words first (more likely to have multilingual names)
-                        if len(display_words) >= len(query_words):
-                            all_match = True
-                            for i in range(len(query_words)):
-                                word_clean = re.sub(r'[^\w]', '', query_words[i])
-                                # For the last word, allow partial match (e.g., "ang" matches "angeles")
-                                # For earlier words, require exact prefix match
-                                if i >= len(display_words):
-                                    all_match = False
-                                    break
-                                if i == len(query_words) - 1:
-                                    # Last word: allow partial match
-                                    if word_clean not in display_words[i] and not display_words[i].startswith(word_clean):
-                                        all_match = False
-                                        break
-                                else:
-                                    # Earlier words: require prefix match
-                                    if not display_words[i].startswith(word_clean):
-                                        all_match = False
-                                        break
-                            if all_match:
-                                matches = True
-                        # Check city words if display didn't match
-                        if not matches and len(city_words) >= len(query_words):
-                            all_match = True
-                            for i in range(len(query_words)):
-                                word_clean = re.sub(r'[^\w]', '', query_words[i])
-                                # For the last word, allow partial match
-                                if i >= len(city_words):
-                                    all_match = False
-                                    break
-                                if i == len(query_words) - 1:
-                                    # Last word: allow partial match
-                                    if word_clean not in city_words[i] and not city_words[i].startswith(word_clean):
-                                        all_match = False
-                                        break
-                                else:
-                                    # Earlier words: require prefix match
-                                    if not city_words[i].startswith(word_clean):
-                                        all_match = False
-                                        break
-                            if all_match:
-                                matches = True
-                    # Contains match in city name - be lenient for single word queries
-                    elif len(query_words) == 1 and query_lower in city_lower:
-                        matches = True
-                    # Last resort: check if query is a substring (for cases like "ankar" -> "ankara")
-                    # Also check if city name contains query (for "odesa" -> "Odesa")
-                    elif query_lower in city_lower and len(query_lower) >= 3:  # Lowered threshold to 3 chars
-                        matches = True
-                    # Also check reverse - if city name is in query (for partial matches)
-                    elif city_lower and len(city_lower) >= 3 and city_lower in query_lower:
-                        matches = True
+                    # Extract country
+                    country = address.get('country', '')
                     
-                    # Debug logging for "odesa" specifically
-                    if 'odesa' in query_lower or 'одеса' in display_name_lower.lower():
-                        print(f"  Checking item: city='{city_name}', display='{display_name[:50]}', matches={matches}")
-                    
-                    # Only include if it matches
-                    if matches:
-                        filtered_data.append(item)
+                    # Build result object with all original Nominatim data plus extracted fields
+                    result = {
+                        **item,  # Include all original Nominatim fields
+                        'city': city,
+                        'state': state,
+                        'country': country
+                    }
+                    results.append(result)
                 
-                # If we have good matches, sort and return them
-                if len(filtered_data) > 0:
-                    # Sort by relevance: prefix matches first, then by city name length (shorter = more precise)
-                    def get_sort_key(item):
-                        address = item.get('address', {})
-                        city_name = (address.get('city') or 
-                                    address.get('town') or 
-                                    address.get('village') or 
-                                    address.get('municipality') or '')
-                        city_lower = city_name.lower()
-                        display_name = item.get('display_name', '').lower()
-                        
-                        # Score: prefix match = 1000, contains = 100, then sort by length
-                        if city_lower.startswith(query_lower) or display_name.startswith(query_lower):
-                            return (-1000, len(city_name))
-                        elif query_lower in city_lower or query_lower in display_name:
-                            return (-100, len(city_name))
-                        else:
-                            return (0, len(city_name))
-                    
-                    filtered_data.sort(key=get_sort_key)
-                    return jsonify(filtered_data[:10]), 200
-                
-                # If no good matches, return empty
-                return jsonify([]), 200
+                print(f"City suggestions: Returning {len(results)} results from Nominatim for query '{query}'")
+                return jsonify(results), 200
                 
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
             print(f"City suggestions error: {e}")
