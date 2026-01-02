@@ -633,7 +633,12 @@ def api_city_suggestions():
         # Use accept-language to get results in the requested language (or English as default)
         # This ensures that when user types "odesa" in English, they get "Odesa" not "Одеса"
         # But still allows finding cities when query is in different script
-        accept_lang = lang if lang in ['en', 'uk', 'ru', 'de', 'fr', 'es', 'it', 'pl'] else 'en'
+        if lang == 'ua':
+            accept_lang = 'uk'
+        elif lang == 'ru':
+            accept_lang = 'ru'
+        else:
+            accept_lang = 'en'
         url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=30&addressdetails=1&extratags=1&dedupe=1&accept-language={accept_lang}"
         
         try:
