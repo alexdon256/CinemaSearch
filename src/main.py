@@ -1034,10 +1034,12 @@ def api_scrape():
             if hours_old < 24:
                 # Before returning cached data, check for API key errors
                 # Re-check location status in case it was updated to error
+                # CRITICAL: Check for error_message regardless of status (even if status is 'fresh')
                 location_recheck = db.locations.find_one({'city_name': location_id})
-                if location_recheck and location_recheck.get('status') == 'error':
+                if location_recheck:
                     error_message = location_recheck.get('error_message', '')
-                    if 'api key' in error_message.lower() or 'anthropic' in error_message.lower() or 'authentication' in error_message.lower():
+                    if error_message and ('api key' in error_message.lower() or 'anthropic' in error_message.lower() or 'authentication' in error_message.lower()):
+                        print(f"API key error detected in fresh location (recheck) {location_id}: {error_message}")
                         response = jsonify({
                             'error': error_message,
                             'error_type': 'api_key_error',
@@ -1117,20 +1119,34 @@ def api_scrape():
         result = agent.scrape_city_showtimes(city, country, state, date_start, date_end)
         
         if result.get('success'):
-            # Update location status with city/state/country info
-            db.locations.update_one(
-                {'city_name': location_id},
-                {
-                    '$set': {
-                        'city': city,
-                        'state': state or '',
-                        'country': country,
-                        'status': 'fresh',
-                        'last_updated': datetime.now(timezone.utc)
-                    }
-                },
-                upsert=True
-            )
+            # Only update status to 'fresh' if we actually got movies
+            # Don't mark as 'fresh' if scraping "succeeded" but returned no movies or had errors
+            movies_found = result.get('movies') and len(result.get('movies', [])) > 0
+            
+            if movies_found:
+                # Update location status with city/state/country info
+                # IMPORTANT: Clear error_message when scraping succeeds (so we don't show stale errors)
+                db.locations.update_one(
+                    {'city_name': location_id},
+                    {
+                        '$set': {
+                            'city': city,
+                            'state': state or '',
+                            'country': country,
+                            'status': 'fresh',
+                            'last_updated': datetime.now(timezone.utc)
+                        },
+                        '$unset': {
+                            'error_message': ''  # Clear any previous error messages on success
+                        }
+                    },
+                    upsert=True
+                )
+            else:
+                # Scraping "succeeded" but no movies found - don't mark as 'fresh'
+                # Keep existing status (might be 'error' or 'stale')
+                print(f"Scraping succeeded but no movies found for {location_id}, not updating status to 'fresh'")
+                # Don't update status - leave it as is (could be 'error' from previous attempt)
             
             # Insert/update movies (merge with existing, don't delete first)
             if result.get('movies'):
@@ -1284,8 +1300,33 @@ def api_scrape():
                 'showtimes': formatted_showtimes
             })
         else:
+            # Scraping failed - mark as error and don't set status to 'fresh'
+            error_msg = result.get('error', 'Unknown error')
+            # Check if it's an API key error
+            is_api_key_error = 'api key' in error_msg.lower() or 'anthropic' in error_msg.lower() or 'authentication' in error_msg.lower()
+            if 'location_id' in locals():
+                db.locations.update_one(
+                    {'city_name': location_id},
+                    {
+                        '$set': {
+                            'status': 'error',
+                            'error_message': error_msg,
+                            'last_updated': datetime.now(timezone.utc)
+                        }
+                    },
+                    upsert=True
+                )
             release_lock(db, location_id)
-            return jsonify({'status': 'error', 'message': result.get('error', 'Unknown error')}), 500
+            error_type = 'api_key_error' if is_api_key_error else 'scraping_error'
+            response = jsonify({
+                'status': 'error', 
+                'message': error_msg,
+                'error_type': error_type
+            })
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+            return response, 500
             
     except ValueError as e:
         # Handle specific errors like missing API key
