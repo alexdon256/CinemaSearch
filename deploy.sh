@@ -1590,19 +1590,74 @@ uninit_server() {
         return 1
     fi 2>/dev/null || true
     
-    # Remove application directories
+    # Clean up Python virtual environments and uninstall packages
+    log_info "Cleaning up Python virtual environments and packages..."
+    for app_dir in /var/www/*/; do
+        if [[ -d "$app_dir" ]]; then
+            local venv_dir="${app_dir}venv"
+            if [[ -d "$venv_dir" ]] && [[ -f "${venv_dir}/bin/python" ]]; then
+                log_info "Uninstalling packages from virtual environment: ${venv_dir}"
+                # Try to uninstall packages explicitly (optional, venv removal will do this anyway)
+                if [[ -f "${venv_dir}/bin/pip" ]]; then
+                    # Get list of installed packages and uninstall them
+                    "${venv_dir}/bin/pip" freeze > /tmp/venv_packages_$$.txt 2>/dev/null || true
+                    if [[ -f /tmp/venv_packages_$$.txt ]] && [[ -s /tmp/venv_packages_$$.txt ]]; then
+                        # Uninstall all packages (except pip, setuptools, wheel which are part of venv)
+                        "${venv_dir}/bin/pip" uninstall -y -r /tmp/venv_packages_$$.txt 2>/dev/null || true
+                        rm -f /tmp/venv_packages_$$.txt
+                        log_info "  ✓ Uninstalled all packages"
+                    fi
+                fi
+                
+                # Deactivate venv if active (in case script is running from within venv)
+                if [[ -n "$VIRTUAL_ENV" ]] && [[ "$VIRTUAL_ENV" == "$venv_dir" ]]; then
+                    deactivate 2>/dev/null || true
+                fi
+                
+                # Remove venv directory (removes all remaining files)
+                log_info "Removing virtual environment: ${venv_dir}"
+                rm -rf "$venv_dir"
+                log_info "  ✓ Removed virtual environment"
+            fi
+        fi
+    done
+    
+    # Remove application directories (now that venv is cleaned up)
+    log_info "Removing application directories..."
     rm -rf /var/www/${APP_NAME}
     rm -rf /var/www/*/  # Remove all app directories
     
-    # Clean MongoDB database (visitors, locations, movies, stats)
+    # Drop all MongoDB databases
     if command -v mongosh &> /dev/null; then
-        log_info "Cleaning MongoDB database..."
-        mongosh movie_db --eval "db.dropDatabase()" --quiet 2>/dev/null || true
-        log_info "MongoDB database cleaned"
+        log_info "Dropping all MongoDB databases..."
+        # Get list of all databases (excluding system databases)
+        local dbs=$(mongosh --quiet --eval "db.adminCommand('listDatabases').databases.forEach(function(d){if(d.name!='admin'&&d.name!='local'&&d.name!='config'){print(d.name)}})" 2>/dev/null || echo "")
+        if [[ -n "$dbs" ]]; then
+            echo "$dbs" | while IFS= read -r db_name || true; do
+                if [[ -n "$db_name" ]] && [[ "$db_name" != "admin" ]] && [[ "$db_name" != "local" ]] && [[ "$db_name" != "config" ]]; then
+                    log_info "  Dropping database: ${db_name}"
+                    mongosh "${db_name}" --eval "db.dropDatabase()" --quiet 2>/dev/null || true
+                fi
+            done
+            log_info "✓ All user databases dropped"
+        else
+            log_info "No user databases found to drop"
+        fi
     elif command -v mongo &> /dev/null; then
-        log_info "Cleaning MongoDB database..."
-        mongo movie_db --eval "db.dropDatabase()" --quiet 2>/dev/null || true
-        log_info "MongoDB database cleaned"
+        log_info "Dropping all MongoDB databases..."
+        # Get list of all databases (excluding system databases)
+        local dbs=$(mongo --quiet --eval "db.adminCommand('listDatabases').databases.forEach(function(d){if(d.name!='admin'&&d.name!='local'&&d.name!='config'){print(d.name)}})" 2>/dev/null || echo "")
+        if [[ -n "$dbs" ]]; then
+            echo "$dbs" | while IFS= read -r db_name || true; do
+                if [[ -n "$db_name" ]] && [[ "$db_name" != "admin" ]] && [[ "$db_name" != "local" ]] && [[ "$db_name" != "config" ]]; then
+                    log_info "  Dropping database: ${db_name}"
+                    mongo "${db_name}" --eval "db.dropDatabase()" --quiet 2>/dev/null || true
+                fi
+            done
+            log_info "✓ All user databases dropped"
+        else
+            log_info "No user databases found to drop"
+        fi
     else
         log_warn "MongoDB client not found, skipping database cleanup"
     fi
@@ -2358,6 +2413,87 @@ stop_all() {
     log_info "All services stopped"
 }
 
+# Set Anthropic API key
+set_anthropic_key() {
+    local api_key="${1:-}"
+    local app_name="${2:-${APP_NAME}}"
+    local app_dir="/var/www/${app_name}"
+    
+    if [[ -z "$api_key" ]]; then
+        log_error "API key is required"
+        log_info "Usage: $0 set-anthropic-key <api-key> [app-name]"
+        exit 1
+    fi
+    
+    if [[ ! -d "$app_dir" ]]; then
+        log_error "Application ${app_name} not found at ${app_dir}"
+        log_info "Run 'init-server' first to deploy the application"
+        exit 1
+    fi
+    
+    # Create .env file if it doesn't exist
+    if [[ ! -f "${app_dir}/.env" ]]; then
+        log_info "Creating .env file..."
+        cat > "${app_dir}/.env" <<EOF
+# MongoDB Configuration
+MONGO_URI=mongodb://localhost:27017/movie_db
+
+# Flask Configuration
+SECRET_KEY=$(openssl rand -hex 32)
+
+# Anthropic API Configuration
+ANTHROPIC_API_KEY=${api_key}
+CLAUDE_MODEL=haiku
+EOF
+        chmod 600 "${app_dir}/.env"
+        log_info "✓ Created .env file with API key"
+    else
+        # Update existing .env file
+        log_info "Updating ANTHROPIC_API_KEY in ${app_dir}/.env..."
+        
+        # Backup .env file
+        cp "${app_dir}/.env" "${app_dir}/.env.backup.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+        
+        # Update or add ANTHROPIC_API_KEY
+        if grep -q "^ANTHROPIC_API_KEY=" "${app_dir}/.env" 2>/dev/null; then
+            # Update existing key
+            if [[ "$(uname)" == "Darwin" ]]; then
+                # macOS sed
+                sed -i '' "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${api_key}|" "${app_dir}/.env"
+            else
+                # Linux sed
+                sed -i "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${api_key}|" "${app_dir}/.env"
+            fi
+        else
+            # Add new key
+            echo "ANTHROPIC_API_KEY=${api_key}" >> "${app_dir}/.env"
+        fi
+        
+        log_info "✓ Updated ANTHROPIC_API_KEY in .env file"
+    fi
+    
+    # Get port range from .deploy_config if available
+    local start_port=8001
+    local end_port=8012
+    if [[ -f "${app_dir}/.deploy_config" ]]; then
+        source "${app_dir}/.deploy_config"
+        start_port=${START_PORT:-8001}
+        end_port=${END_PORT:-8012}
+    fi
+    
+    # Restart services to load new API key
+    log_info "Restarting services to load new API key..."
+    for port in $(seq ${start_port} ${end_port}); do
+        local service_name="${app_name}@${port}.service"
+        if systemctl is-active --quiet "${service_name}" 2>/dev/null; then
+            systemctl restart "${service_name}" 2>/dev/null || true
+        fi
+    done
+    
+    log_info "✓ API key updated and services restarted"
+    log_info "You may want to initialize the database: cd ${app_dir} && ./venv/bin/python src/scripts/init_db.py"
+}
+
 # Main command dispatcher
 main() {
     case "${1:-}" in
@@ -2374,6 +2510,10 @@ main() {
         install-ssl)
             check_root
             install_ssl "${2:-}" "${3:-${APP_NAME}}"
+            ;;
+        set-anthropic-key)
+            check_root
+            set_anthropic_key "${2:-}" "${3:-${APP_NAME}}"
             ;;
         status)
             show_status
@@ -2464,6 +2604,7 @@ main() {
             echo "  uninit-server [yes]     Remove all components (preserves MongoDB/Nginx unless 'yes')"
             echo "  set-domain <domain>      Configure domain name for application"
             echo "  install-ssl <domain>    Install SSL certificate for domain"
+            echo "  set-anthropic-key <key> Set Anthropic API key in .env file"
             echo "  status                  Show server status"
             echo "  start-all               Start all services"
             echo "  stop-all                Stop all services"

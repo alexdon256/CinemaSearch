@@ -476,18 +476,31 @@ def normalize_location_names_together(city, state, country):
         print(f"Combined normalization error for {search_query}: {e}")
         return None
 
-def translate_location_name(name, target_lang='en'):
+def translate_location_names(city, country, state=None, target_lang='en'):
     """
-    Translate location name to target language using Google Translate via deep-translator.
+    Translate location names (city, state, country) to target language in a single API request.
     Maps language codes: 'en' -> 'en', 'ua' -> 'uk', 'ru' -> 'ru'
-    Returns original name if translation fails or package not available.
+    Returns tuple (translated_city, translated_country, translated_state) or original values if translation fails.
     """
-    if not name or not name.strip():
-        return name
-    
     # If target is English, no translation needed
     if target_lang == 'en':
-        return name
+        return city, country, state
+    
+    # Filter out empty values
+    parts = []
+    part_names = []
+    if city and city.strip():
+        parts.append(city.strip())
+        part_names.append('city')
+    if country and country.strip():
+        parts.append(country.strip())
+        part_names.append('country')
+    if state and state.strip():
+        parts.append(state.strip())
+        part_names.append('state')
+    
+    if not parts:
+        return city, country, state
     
     try:
         from deep_translator import GoogleTranslator
@@ -501,25 +514,45 @@ def translate_location_name(name, target_lang='en'):
         
         target_code = lang_map.get(target_lang, 'en')
         if target_code == 'en':
-            return name
+            return city, country, state
         
-        # Translate from English (assumed source) to target language
+        # Join all parts with comma separator and translate in one request
+        combined_text = ', '.join(parts)
         translator = GoogleTranslator(source='en', target=target_code)
-        translated = translator.translate(name)
+        translated_combined = translator.translate(combined_text)
         
-        if translated and translated.strip():
-            return translated.strip()
+        if translated_combined and translated_combined.strip():
+            # Split the translated result back into parts
+            # The translation should preserve the comma separators
+            translated_parts = [p.strip() for p in translated_combined.split(',')]
+            
+            # Map translated parts back to city, country, state
+            translated_city = city
+            translated_country = country
+            translated_state = state
+            
+            part_idx = 0
+            if city and city.strip() and part_idx < len(translated_parts):
+                translated_city = translated_parts[part_idx]
+                part_idx += 1
+            if country and country.strip() and part_idx < len(translated_parts):
+                translated_country = translated_parts[part_idx]
+                part_idx += 1
+            if state and state.strip() and part_idx < len(translated_parts):
+                translated_state = translated_parts[part_idx]
+            
+            return translated_city, translated_country, translated_state
         
         # If translation failed, return original
-        return name
+        return city, country, state
     except ImportError:
         # deep-translator not installed, return original
         print("deep-translator not available, skipping translation")
-        return name
+        return city, country, state
     except Exception as e:
         # Translation failed, return original
-        print(f"Translation error for '{name}' to {target_lang}: {e}")
-        return name
+        print(f"Translation error for '{combined_text}' to {target_lang}: {e}")
+        return city, country, state
 
 def normalize_location_name(name, location_type='city'):
     """
@@ -650,12 +683,9 @@ def api_geocode():
                         if region:
                             region = normalize_location_name(region.strip(), 'state')
                         
-                        # Translate to user's selected language
+                        # Translate to user's selected language (single API call for all)
                         lang = get_language()
-                        city = translate_location_name(city, lang)
-                        country = translate_location_name(country, lang)
-                        if region:
-                            region = translate_location_name(region, lang)
+                        city, country, region = translate_location_names(city, country, region, lang)
                         
                         return jsonify({
                             'success': True,
@@ -764,12 +794,9 @@ def api_geocode_ip():
             if region:
                 region = normalize_location_name(region, 'state')
             
-            # Translate to user's selected language
+            # Translate to user's selected language (single API call for all)
             lang = get_language()
-            city = translate_location_name(city, lang)
-            country = translate_location_name(country, lang)
-            if region:
-                region = translate_location_name(region, lang)
+            city, country, region = translate_location_names(city, country, region, lang)
             
             return jsonify({
                 'success': True,
