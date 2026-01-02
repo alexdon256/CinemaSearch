@@ -820,6 +820,7 @@ def api_scrape():
     # Input validation and sanitization
     # Check Anthropic API key FIRST (before any other validation to give clear error)
     anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
+    print(f"Anthropic API key: {anthropic_api_key}")
     if not anthropic_api_key:
         return jsonify({
             'error': 'Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.',
