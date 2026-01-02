@@ -630,10 +630,11 @@ def api_city_suggestions():
         import urllib.parse
         
         # Use Nominatim for city search
-        # Support multilingual search: don't restrict language so Nominatim can return names in any language
-        # This allows finding "одеса" even when site is in English mode
-        # Nominatim will search for the query regardless of language, and return results with multilingual names
-        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=30&addressdetails=1&extratags=1&dedupe=1"
+        # Use accept-language to get results in the requested language (or English as default)
+        # This ensures that when user types "odesa" in English, they get "Odesa" not "Одеса"
+        # But still allows finding cities when query is in different script
+        accept_lang = lang if lang in ['en', 'uk', 'ru', 'de', 'fr', 'es', 'it', 'pl'] else 'en'
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=30&addressdetails=1&extratags=1&dedupe=1&accept-language={accept_lang}"
         
         try:
             req = urllib.request.Request(url, headers={
