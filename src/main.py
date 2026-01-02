@@ -534,16 +534,43 @@ def verify_location_exists(city, country, state=None):
                               address.get('province') or 
                               address.get('region') or '').lower()
                 
-                # Check if country matches
+                # Check if country matches (be flexible - country names can vary)
+                country_matches = False
                 if result_country:
-                    if country_lower not in result_country and result_country not in country_lower:
-                        continue
+                    # Exact or substring match
+                    if country_lower in result_country or result_country in country_lower:
+                        country_matches = True
+                    # Also check if key words match (e.g., "ukraine" matches "Ukraine")
+                    country_words = [w for w in country_lower.split() if len(w) > 2]
+                    result_country_words = [w for w in result_country.split() if len(w) > 2]
+                    matching_country_words = sum(1 for w in country_words if any(w in rc or rc in w for rc in result_country_words))
+                    if matching_country_words > 0:
+                        country_matches = True
+                else:
+                    # No country in result - still check city (some results might not have country)
+                    country_matches = True
+                
+                if not country_matches:
+                    continue
                 
                 # Check if city matches (fuzzy matching) - check both city name and display_name
                 city_matches = False
                 
-                # Check city name field
-                if result_city:
+                # First check display_name (most important for multilingual - contains names in all languages)
+                if display_name:
+                    # Check if query city appears in display_name (most reliable for multilingual)
+                    if city_lower in display_name:
+                        city_matches = True
+                    # Also check if any significant words from city appear in display_name
+                    elif len(city_lower) >= 4:
+                        city_words = [w for w in city_lower.split() if len(w) >= 3]
+                        if city_words:
+                            matching_words = sum(1 for w in city_words if w in display_name)
+                            if matching_words >= min(len(city_words), 1):  # At least one word matches
+                                city_matches = True
+                
+                # Also check city name field (might be in different language)
+                if not city_matches and result_city:
                     # Exact or substring match
                     if city_lower in result_city or result_city in city_lower:
                         city_matches = True
@@ -552,13 +579,8 @@ def verify_location_exists(city, country, state=None):
                         city_words = [w for w in city_lower.split() if len(w) > 2]
                         result_city_words = [w for w in result_city.split() if len(w) > 2]
                         matching_words = sum(1 for w in city_words if w in result_city_words)
-                        if matching_words >= min(len(city_words), 2):
+                        if matching_words >= min(len(city_words), 1):  # At least one word matches
                             city_matches = True
-                
-                # Also check display_name for multilingual matches (important for "одеса" -> "Одеса")
-                if not city_matches and display_name:
-                    if city_lower in display_name:
-                        city_matches = True
                 
                 if city_matches:
                     # State matching is optional - if city and country match, accept even if state differs

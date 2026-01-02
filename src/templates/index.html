@@ -3464,16 +3464,65 @@
                     var resultCountry = (address.country || '').toLowerCase();
                     var resultState = (address.state || address.province || address.region || '').toLowerCase();
                     
-                    // Check if country matches
-                    if (resultCountry && resultCountry.indexOf(countryLower) === -1 && countryLower.indexOf(resultCountry) === -1) {
+                    // Check if country matches (be flexible - country names can vary)
+                    var countryMatches = false;
+                    if (resultCountry) {
+                        // Exact or substring match
+                        if (resultCountry.indexOf(countryLower) !== -1 || countryLower.indexOf(resultCountry) !== -1) {
+                            countryMatches = true;
+                        } else {
+                            // Also check if key words match (e.g., "ukraine" matches "Ukraine")
+                            var countryWords = countryLower.split(/\s+/).filter(function(w) { return w.length > 2; });
+                            var resultCountryWords = resultCountry.split(/\s+/).filter(function(w) { return w.length > 2; });
+                            var matchingCountryWords = 0;
+                            for (var j = 0; j < countryWords.length; j++) {
+                                for (var k = 0; k < resultCountryWords.length; k++) {
+                                    if (resultCountryWords[k].indexOf(countryWords[j]) !== -1 || countryWords[j].indexOf(resultCountryWords[k]) !== -1) {
+                                        matchingCountryWords++;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (matchingCountryWords > 0) {
+                                countryMatches = true;
+                            }
+                        }
+                    } else {
+                        // No country in result - still check city (some results might not have country)
+                        countryMatches = true;
+                    }
+                    
+                    if (!countryMatches) {
                         continue;
                     }
                     
                     // Check if city matches (fuzzy) - check both city name and display_name
                     var cityMatches = false;
                     
-                    // Check city name field
-                    if (resultCity) {
+                    // First check display_name (most important for multilingual - contains names in all languages)
+                    if (displayName) {
+                        // Check if query city appears in display_name (most reliable for multilingual)
+                        if (displayName.indexOf(cityLower) !== -1) {
+                            cityMatches = true;
+                        } else if (cityLower.length >= 4) {
+                            // Also check if any significant words from city appear in display_name
+                            var cityWords = cityLower.split(/\s+/).filter(function(w) { return w.length >= 3; });
+                            if (cityWords.length > 0) {
+                                var matchingWords = 0;
+                                for (var j = 0; j < cityWords.length; j++) {
+                                    if (displayName.indexOf(cityWords[j]) !== -1) {
+                                        matchingWords++;
+                                    }
+                                }
+                                if (matchingWords >= Math.min(cityWords.length, 1)) {  // At least one word matches
+                                    cityMatches = true;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Also check city name field (might be in different language)
+                    if (!cityMatches && resultCity) {
                         if (resultCity.indexOf(cityLower) !== -1 || cityLower.indexOf(resultCity) !== -1) {
                             cityMatches = true;
                         } else {
@@ -3489,15 +3538,10 @@
                                     }
                                 }
                             }
-                            if (matchingWords >= Math.min(cityWords.length, 2)) {
+                            if (matchingWords >= Math.min(cityWords.length, 1)) {  // At least one word matches
                                 cityMatches = true;
                             }
                         }
-                    }
-                    
-                    // Also check display_name for multilingual matches (important for "одеса" -> "Одеса")
-                    if (!cityMatches && displayName && displayName.indexOf(cityLower) !== -1) {
-                        cityMatches = true;
                     }
                     
                     if (cityMatches) {
