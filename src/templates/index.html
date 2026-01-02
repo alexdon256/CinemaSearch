@@ -2527,47 +2527,8 @@
             });
         }
         
-        // Comprehensive country list (ISO 3166-1)
-        var countries = [
-            "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Argentina", "Armenia", 
-            "Australia", "Austria", "Azerbaijan", "Bahamas", "Bahrain", "Bangladesh", "Barbados", 
-            "Belarus", "Belgium", "Belize", "Benin", "Bhutan", "Bolivia", "Bosnia and Herzegovina", 
-            "Botswana", "Brazil", "Brunei", "Bulgaria", "Burkina Faso", "Burundi", "Cambodia", 
-            "Cameroon", "Canada", "Cape Verde", "Central African Republic", "Chad", "Chile", 
-            "China", "Colombia", "Comoros", "Congo", "Costa Rica", "Croatia", "Cuba", "Cyprus", 
-            "Czech Republic", "Denmark", "Djibouti", "Dominican Republic", "Ecuador", "Egypt", 
-            "El Salvador", "Equatorial Guinea", "Eritrea", "Estonia", "Eswatini", "Ethiopia", 
-            "Fiji", "Finland", "France", "Gabon", "Gambia", "Georgia", "Germany", "Ghana", 
-            "Greece", "Grenada", "Guatemala", "Guinea", "Guinea-Bissau", "Guyana", "Haiti", 
-            "Honduras", "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland", 
-            "Israel", "Italy", "Ivory Coast", "Jamaica", "Japan", "Jordan", "Kazakhstan", "Kenya", 
-            "Kiribati", "Kuwait", "Kyrgyzstan", "Laos", "Latvia", "Lebanon", "Lesotho", "Liberia", 
-            "Libya", "Liechtenstein", "Lithuania", "Luxembourg", "Madagascar", "Malawi", "Malaysia", 
-            "Maldives", "Mali", "Malta", "Mauritania", "Mauritius", "Mexico", "Moldova", "Monaco", 
-            "Mongolia", "Montenegro", "Morocco", "Mozambique", "Myanmar", "Namibia", "Nauru", 
-            "Nepal", "Netherlands", "New Zealand", "Nicaragua", "Niger", "Nigeria", "North Korea", 
-            "North Macedonia", "Norway", "Oman", "Pakistan", "Palau", "Palestine", "Panama", 
-            "Papua New Guinea", "Paraguay", "Peru", "Philippines", "Poland", "Portugal", "Qatar", 
-            "Romania", "Russia", "Rwanda", "Saint Lucia", "Samoa", "San Marino", "Saudi Arabia", 
-            "Senegal", "Serbia", "Seychelles", "Sierra Leone", "Singapore", "Slovakia", "Slovenia", 
-            "Solomon Islands", "Somalia", "South Africa", "South Korea", "South Sudan", "Spain", 
-            "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland", "Syria", "Taiwan", 
-            "Tajikistan", "Tanzania", "Thailand", "Timor-Leste", "Togo", "Tonga", "Trinidad and Tobago", 
-            "Tunisia", "Turkey", "Turkmenistan", "Tuvalu", "Uganda", "Ukraine", "United Arab Emirates", 
-            "United Kingdom", "United States", "Uruguay", "Uzbekistan", "Vanuatu", "Vatican City", 
-            "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe"
-        ];
-        
-        // Populate country dropdown (hidden select for form submission, or visible for old devices)
-        for (var i = 0; i < countries.length; i++) {
-            var country = countries[i];
-            var option = document.createElement('option');
-            option.value = country;
-            option.textContent = country;
-            if (countrySelect) {
-            countrySelect.appendChild(option);
-            }
-        }
+        // Country dropdown will be populated dynamically from Nominatim when needed
+        // No hardcoded list - rely on Nominatim for country names
         
         // Country search functionality (only for modern browsers)
         // Declare timeout variable in outer scope so it's accessible to handler
@@ -2594,42 +2555,67 @@
             }
             
             countrySearchTimeout = setTimeout(function() {
-                    var filtered = [];
-                    for (var i = 0; i < countries.length; i++) {
-                        if (countries[i].toLowerCase().indexOf(query) !== -1) {
-                            filtered.push(countries[i]);
-                            if (filtered.length >= 10) break; // Limit to 10 results
-                        }
-                    }
-                
-                countryDropdown.innerHTML = '';
-                if (filtered.length === 0) {
-                        hideDropdown(countryDropdown);
+                // Use Nominatim to search for countries
+                if (query.length < 2) {
+                    hideDropdown(countryDropdown);
                     return;
                 }
                 
-                    for (var j = 0; j < filtered.length; j++) {
-                        var country = filtered[j];
-                        var div = document.createElement('div');
-                    div.className = 'country-option';
-                    div.textContent = country;
+                // Search Nominatim for countries matching the query
+                fetch('/api/city-suggestions?q=' + encodeURIComponent(query) + '&lang=en', {
+                    headers: { 'Accept': 'application/json' }
+                }).then(function(response) {
+                    if (!response.ok) {
+                        hideDropdown(countryDropdown);
+                        return [];
+                    }
+                    return response.json();
+                }).then(function(results) {
+                    // Extract unique countries from results
+                    var countries = [];
+                    var countrySet = {};
+                    for (var i = 0; i < results.length && countries.length < 10; i++) {
+                        var result = results[i];
+                        var address = result.address || {};
+                        var country = address.country || '';
+                        if (country && !countrySet[country.toLowerCase()]) {
+                            countrySet[country.toLowerCase()] = true;
+                            countries.push(country);
+                        }
+                    }
                     
-                    // Function to select this country (used by both click and keyboard)
+                    countryDropdown.innerHTML = '';
+                    if (countries.length === 0) {
+                        hideDropdown(countryDropdown);
+                        return;
+                    }
+                    
+                    for (var j = 0; j < countries.length; j++) {
+                        var country = countries[j];
+                        var div = document.createElement('div');
+                        div.className = 'country-option';
+                        div.textContent = country;
+                        
+                        // Function to select this country (used by both click and keyboard)
                         var selectCountry = function(countryName) {
                             return function() {
                                 countryInput.value = countryName;
                                 countrySelect.value = countryName;
                                 hideDropdown(countryDropdown);
-                        selectedCountryIndex = -1; // Reset selection
-                    };
+                                selectedCountryIndex = -1; // Reset selection
+                            };
                         }(country);
-                    
-                    div.addEventListener('click', selectCountry);
-                    countryDropdown.appendChild(div);
+                        
+                        div.addEventListener('click', selectCountry);
+                        countryDropdown.appendChild(div);
                     }
-                
+                    
                     showDropdown(countryDropdown);
-                selectedCountryIndex = -1; // Reset selection when new suggestions are shown
+                    selectedCountryIndex = -1; // Reset selection when new suggestions are shown
+                }).catch(function(error) {
+                    console.error('Error fetching country suggestions:', error);
+                    hideDropdown(countryDropdown);
+                });
             }, 200);
             }
         
@@ -3168,158 +3154,17 @@
                         cityInput.value = city;
                     
                     // Try to match and select the country
-                    // First, normalize country name (remove common suffixes, handle abbreviations)
-                        function normalizeCountryName(name) {
+                    // Nominatim should return normalized country names, but try to match to dropdown list
+                    function normalizeCountryName(name) {
                         return name.toLowerCase()
                             .replace(/\s+/g, ' ')
                             .trim();
-                        }
-                    
-                        var countryLower = normalizeCountryName(country);
-                    
-                    // Common country name mappings (API might return different names)
-                    var countryMappings = {
-                        'usa': 'United States',
-                        'us': 'United States',
-                        'united states of america': 'United States',
-                        'united states': 'United States',
-                        'uk': 'United Kingdom',
-                        'united kingdom': 'United Kingdom',
-                        'united kingdom of great britain and northern ireland': 'United Kingdom',
-                        'russian federation': 'Russia',
-                        'russia': 'Russia',
-                        'czechia': 'Czech Republic',
-                        'czech republic': 'Czech Republic',
-                        'myanmar': 'Myanmar',
-                        'burma': 'Myanmar',
-                        'east timor': 'Timor-Leste',
-                        'timor-leste': 'Timor-Leste',
-                        'swaziland': 'Eswatini',
-                        'eswatini': 'Eswatini',
-                        'macedonia': 'North Macedonia',
-                        'north macedonia': 'North Macedonia',
-                        'côte d\'ivoire': 'Ivory Coast',
-                        'cote d\'ivoire': 'Ivory Coast',
-                        'ivory coast': 'Ivory Coast',
-                        'south korea': 'South Korea',
-                        'republic of korea': 'South Korea',
-                        'north korea': 'North Korea',
-                        'democratic people\'s republic of korea': 'North Korea',
-                        'dprk': 'North Korea'
-                    };
-                    
-                    // Check mappings first
-                    var matchedCountry = null;
-                    if (countryMappings[countryLower]) {
-                        matchedCountry = countryMappings[countryLower];
-                    } else {
-                        // Try exact match
-                        for (var cIdx = 0; cIdx < countries.length; cIdx++) {
-                            var c = countries[cIdx];
-                            var cLower = normalizeCountryName(c);
-                            if (cLower === countryLower) {
-                                matchedCountry = c;
-                                break;
-                            }
-                        }
-                        
-                        // Try contains match (either direction)
-                        if (!matchedCountry) {
-                            for (var cIdx2 = 0; cIdx2 < countries.length; cIdx2++) {
-                                var c2 = countries[cIdx2];
-                                var cLower2 = normalizeCountryName(c2);
-                                if (countryLower.indexOf(cLower2) !== -1 || cLower2.indexOf(countryLower) !== -1) {
-                                    matchedCountry = c2;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        // Try word-based matching for multi-word countries
-                        if (!matchedCountry) {
-                            var countryWords = countryLower.split(/\s+/);
-                            var filteredWords = [];
-                            for (var wIdx = 0; wIdx < countryWords.length; wIdx++) {
-                                if (countryWords[wIdx].length > 2) {
-                                    filteredWords.push(countryWords[wIdx]);
-                                }
-                            }
-                            for (var cIdx3 = 0; cIdx3 < countries.length; cIdx3++) {
-                                var c3 = countries[cIdx3];
-                                var cLower3 = normalizeCountryName(c3);
-                                var cWords = cLower3.split(/\s+/);
-                                var foundMatch = false;
-                                for (var wIdx2 = 0; wIdx2 < filteredWords.length; wIdx2++) {
-                                    for (var cwIdx = 0; cwIdx < cWords.length; cwIdx++) {
-                                        if (filteredWords[wIdx2] === cWords[cwIdx] || cWords[cwIdx] === filteredWords[wIdx2]) {
-                                            matchedCountry = c3;
-                                            foundMatch = true;
-                                            break;
-                                        }
-                                    }
-                                    if (foundMatch) break;
-                                }
-                                if (foundMatch) break;
-                            }
-                        }
                     }
                     
-                    // Always set the country - try to match first, then use the country name from API
-                    if (matchedCountry) {
-                        // Update both the hidden select and visible input with matched country
-                        countrySelect.value = matchedCountry;
-                        countryInput.value = matchedCountry;
-                        console.log('✓ Country matched: "' + countryName + '" -> "' + matchedCountry + '"');
-                    } else {
-                        // If no match found, try to find the closest match or set as-is
-                        // First, try to find by first word (e.g., "United" for "United States")
-                        var firstWord = countryLower.split(/\s+/)[0];
-                        var partialMatch = null;
-                        for (var pIdx = 0; pIdx < countries.length; pIdx++) {
-                            var pc = countries[pIdx];
-                            var pcLower = normalizeCountryName(pc);
-                            if (pcLower.indexOf(firstWord) === 0 || (firstWord.length > 3 && pcLower.indexOf(firstWord) !== -1)) {
-                                partialMatch = pc;
-                                break;
-                            }
-                        }
-                        
-                        if (partialMatch) {
-                            countrySelect.value = partialMatch;
-                            countryInput.value = partialMatch;
-                            console.log('✓ Country partially matched: "' + countryName + '" -> "' + partialMatch + '"');
-                        } else {
-                            // Set the country name as-is in the input (user can verify/correct)
-                            countryInput.value = countryName;
-                            // Try to find similar countries for user reference
-                            var similar = [];
-                            var sub3 = countryLower.substring(0, 3);
-                            for (var sIdx = 0; sIdx < countries.length && similar.length < 3; sIdx++) {
-                                var sc = countries[sIdx];
-                                var scLower = normalizeCountryName(sc);
-                                if (scLower.indexOf(sub3) !== -1 || sub3.indexOf(scLower.substring(0, 3)) !== -1) {
-                                    similar.push(sc);
-                                }
-                            }
-                            
-                            console.warn(`⚠ Could not match country "${countryName}" to country list`);
-                            if (similar.length > 0) {
-                                console.log(`   Similar countries found: ${similar.join(', ')}`);
-                                // Auto-select the first similar country if very close match
-                                if (similar.length === 1 || countryLower.length <= 5) {
-                                    countrySelect.value = similar[0];
-                                    countryInput.value = similar[0];
-                                    console.log(`   Auto-selected closest match: "${similar[0]}"`);
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Ensure country is always set (fallback to countryName if nothing else worked)
-                    if (!countryInput.value || countryInput.value.trim() === '') {
-                        countryInput.value = countryName;
-                        console.log('   Set country to API value: "' + countryName + '"');
-                    }
+                    // Use Nominatim's country name directly (already normalized)
+                    countryInput.value = countryName;
+                    countrySelect.value = countryName;
+                    console.log('✓ Using Nominatim country name: "' + countryName + '"');
                     
                     // State is already set above before cityInput.value was set
                     if (stateName && stateName.length > 0) {
@@ -3355,61 +3200,6 @@
             citySuggestions.style.right = '0';
             citySuggestions.style.width = '100%';
             console.log('Suggestions dropdown should now be visible, display:', citySuggestions.style.display);
-        }
-        
-        // Complete ISO 3166-1 alpha-2 country codes for Nominatim (matches all countries in list)
-        function getCountryCode(countryName) {
-            var codes = {
-                "Afghanistan": "af", "Albania": "al", "Algeria": "dz", "Andorra": "ad", 
-                "Angola": "ao", "Argentina": "ar", "Armenia": "am", "Australia": "au", 
-                "Austria": "at", "Azerbaijan": "az", "Bahamas": "bs", "Bahrain": "bh", 
-                "Bangladesh": "bd", "Barbados": "bb", "Belarus": "by", "Belgium": "be", 
-                "Belize": "bz", "Benin": "bj", "Bhutan": "bt", "Bolivia": "bo", 
-                "Bosnia and Herzegovina": "ba", "Botswana": "bw", "Brazil": "br", 
-                "Brunei": "bn", "Bulgaria": "bg", "Burkina Faso": "bf", "Burundi": "bi", 
-                "Cambodia": "kh", "Cameroon": "cm", "Canada": "ca", "Cape Verde": "cv", 
-                "Central African Republic": "cf", "Chad": "td", "Chile": "cl", "China": "cn", 
-                "Colombia": "co", "Comoros": "km", "Congo": "cg", "Costa Rica": "cr", 
-                "Croatia": "hr", "Cuba": "cu", "Cyprus": "cy", "Czech Republic": "cz", 
-                "Denmark": "dk", "Djibouti": "dj", "Dominican Republic": "do", "Ecuador": "ec", 
-                "Egypt": "eg", "El Salvador": "sv", "Equatorial Guinea": "gq", "Eritrea": "er", 
-                "Estonia": "ee", "Eswatini": "sz", "Ethiopia": "et", "Fiji": "fj", 
-                "Finland": "fi", "France": "fr", "Gabon": "ga", "Gambia": "gm", 
-                "Georgia": "ge", "Germany": "de", "Ghana": "gh", "Greece": "gr", 
-                "Grenada": "gd", "Guatemala": "gt", "Guinea": "gn", "Guinea-Bissau": "gw", 
-                "Guyana": "gy", "Haiti": "ht", "Honduras": "hn", "Hungary": "hu", 
-                "Iceland": "is", "India": "in", "Indonesia": "id", "Iran": "ir", 
-                "Iraq": "iq", "Ireland": "ie", "Israel": "il", "Italy": "it", 
-                "Ivory Coast": "ci", "Jamaica": "jm", "Japan": "jp", "Jordan": "jo", 
-                "Kazakhstan": "kz", "Kenya": "ke", "Kiribati": "ki", "Kuwait": "kw", 
-                "Kyrgyzstan": "kg", "Laos": "la", "Latvia": "lv", "Lebanon": "lb", 
-                "Lesotho": "ls", "Liberia": "lr", "Libya": "ly", "Liechtenstein": "li", 
-                "Lithuania": "lt", "Luxembourg": "lu", "Madagascar": "mg", "Malawi": "mw", 
-                "Malaysia": "my", "Maldives": "mv", "Mali": "ml", "Malta": "mt", 
-                "Mauritania": "mr", "Mauritius": "mu", "Mexico": "mx", "Moldova": "md", 
-                "Monaco": "mc", "Mongolia": "mn", "Montenegro": "me", "Morocco": "ma", 
-                "Mozambique": "mz", "Myanmar": "mm", "Namibia": "na", "Nauru": "nr", 
-                "Nepal": "np", "Netherlands": "nl", "New Zealand": "nz", "Nicaragua": "ni", 
-                "Niger": "ne", "Nigeria": "ng", "North Korea": "kp", "North Macedonia": "mk", 
-                "Norway": "no", "Oman": "om", "Pakistan": "pk", "Palau": "pw", 
-                "Palestine": "ps", "Panama": "pa", "Papua New Guinea": "pg", "Paraguay": "py", 
-                "Peru": "pe", "Philippines": "ph", "Poland": "pl", "Portugal": "pt", 
-                "Qatar": "qa", "Romania": "ro", "Russia": "ru", "Rwanda": "rw", 
-                "Saint Lucia": "lc", "Samoa": "ws", "San Marino": "sm", "Saudi Arabia": "sa", 
-                "Senegal": "sn", "Serbia": "rs", "Seychelles": "sc", "Sierra Leone": "sl", 
-                "Singapore": "sg", "Slovakia": "sk", "Slovenia": "si", "Solomon Islands": "sb", 
-                "Somalia": "so", "South Africa": "za", "South Korea": "kr", "South Sudan": "ss", 
-                "Spain": "es", "Sri Lanka": "lk", "Sudan": "sd", "Suriname": "sr", 
-                "Sweden": "se", "Switzerland": "ch", "Syria": "sy", "Taiwan": "tw", 
-                "Tajikistan": "tj", "Tanzania": "tz", "Thailand": "th", "Timor-Leste": "tl", 
-                "Togo": "tg", "Tonga": "to", "Trinidad and Tobago": "tt", "Tunisia": "tn", 
-                "Turkey": "tr", "Turkmenistan": "tm", "Tuvalu": "tv", "Uganda": "ug", 
-                "Ukraine": "ua", "United Arab Emirates": "ae", "United Kingdom": "gb", 
-                "United States": "us", "Uruguay": "uy", "Uzbekistan": "uz", "Vanuatu": "vu", 
-                "Vatican City": "va", "Venezuela": "ve", "Vietnam": "vn", "Yemen": "ye", 
-                "Zambia": "zm", "Zimbabwe": "zw"
-            };
-            return codes[countryName] || '';
         }
         
         // Hide suggestions when clicking outside
@@ -3787,86 +3577,12 @@
                         var countryLower = normalizeCountryName(countryName);
                         
                         // Common country name mappings
-                        var countryMappings = {
-                            'usa': 'United States',
-                            'us': 'United States',
-                            'united states of america': 'United States',
-                            'uk': 'United Kingdom',
-                            'united kingdom of great britain and northern ireland': 'United Kingdom',
-                            'russian federation': 'Russia',
-                            'czechia': 'Czech Republic',
-                            'myanmar': 'Myanmar',
-                            'burma': 'Myanmar',
-                            'east timor': 'Timor-Leste',
-                            'swaziland': 'Eswatini',
-                            'macedonia': 'North Macedonia',
-                            'north macedonia': 'North Macedonia',
-                            'côte d\'ivoire': 'Ivory Coast',
-                            'ivory coast': 'Ivory Coast'
-                        };
-                        
-                        var matchedCountry = null;
-                        if (countryMappings[countryLower]) {
-                            matchedCountry = countryMappings[countryLower];
-                        } else {
-                            // Use Array.find polyfill if available
-                            var foundCountry = null;
-                            for (var i = 0; i < countries.length; i++) {
-                                var c = countries[i];
-                                var cLower = normalizeCountryName(c);
-                                if (cLower === countryLower) {
-                                    foundCountry = c;
-                                    break;
-                                }
-                            }
-                            matchedCountry = foundCountry;
-                            
-                            if (!matchedCountry) {
-                                for (var j = 0; j < countries.length; j++) {
-                                    var c2 = countries[j];
-                                    var cLower2 = normalizeCountryName(c2);
-                                    if (countryLower.indexOf(cLower2) !== -1 || cLower2.indexOf(countryLower) !== -1) {
-                                        matchedCountry = c2;
-                                        break;
-                                    }
-                                }
-                            }
-                            
-                            if (!matchedCountry) {
-                                var countryWords = [];
-                                var words = countryLower.split(/\s+/);
-                                for (var w = 0; w < words.length; w++) {
-                                    if (words[w].length > 2) {
-                                        countryWords.push(words[w]);
-                                    }
-                                }
-                                for (var k = 0; k < countries.length; k++) {
-                                    var c3 = countries[k];
-                                    var cLower3 = normalizeCountryName(c3);
-                                    var cWords = cLower3.split(/\s+/);
-                                    var foundMatch = false;
-                                    for (var wIdx = 0; wIdx < countryWords.length; wIdx++) {
-                                        for (var cwIdx = 0; cwIdx < cWords.length; cwIdx++) {
-                                            if (countryWords[wIdx] === cWords[cwIdx] || cWords[cwIdx] === countryWords[wIdx]) {
-                                                matchedCountry = c3;
-                                                foundMatch = true;
-                                                break;
-                                            }
-                                        }
-                                        if (foundMatch) break;
-                                    }
-                                    if (foundMatch) break;
-                                }
-                            }
-                        }
-                        
-                        if (matchedCountry) {
-                            countrySelect.value = matchedCountry;
-                            countryInput.value = matchedCountry;
-                        } else {
-                            countryInput.value = countryName;
-                            console.warn('Could not match country "' + countryName + '" to country list');
-                        }
+                        // Try to match country to dropdown list
+                        // Nominatim should return normalized country names
+                        // Use Nominatim's country name directly (already normalized)
+                        countryInput.value = countryName;
+                        countrySelect.value = countryName;
+                        console.log('✓ Using Nominatim country name: "' + countryName + '"');
                         
                         // State is already set above before cityInput.value was set
                         
