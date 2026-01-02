@@ -3075,183 +3075,6 @@
             }
         });
         
-        // Validation function - verifies location exists using Nominatim API
-        function validateLocationInput(city, country, state, callback) {
-            if (!city || !country) {
-                callback(['Please enter a city and select a country.']);
-                return;
-            }
-            
-            // Build search query
-            var searchQuery = state && state.trim() ? city + ', ' + state + ', ' + country : city + ', ' + country;
-            // Don't restrict language - allow multilingual search to verify locations in any language
-            var url = 'https://nominatim.openstreetmap.org/search?q=' + encodeURIComponent(searchQuery) + '&format=json&limit=5&addressdetails=1';
-            
-            fetch(url, {
-                headers: { 
-                    'User-Agent': 'CineStream/1.0',
-                    'Accept': 'application/json'
-                }
-            }).then(function(response) {
-                if (!response.ok) {
-                    callback(['Unable to verify location. Please try again.']);
-                    return;
-                }
-                return response.json();
-            }).then(function(results) {
-                if (!results || results.length === 0) {
-                    callback(['Location not found. Please check the city, state, and country names.']);
-                    return;
-                }
-                
-                // Check if any result matches the location
-                var cityLower = city.toLowerCase();
-                var countryLower = country.toLowerCase();
-                var stateLower = state ? state.toLowerCase() : '';
-                var found = false;
-                
-                for (var i = 0; i < results.length; i++) {
-                    var result = results[i];
-                    var address = result.address || {};
-                    // Also check display_name which contains multilingual names
-                    var displayName = (result.display_name || '').toLowerCase();
-                    var resultCity = (address.city || address.town || address.village || address.municipality || '').toLowerCase();
-                    var resultCountry = (address.country || '').toLowerCase();
-                    var resultState = (address.state || address.province || address.region || '').toLowerCase();
-                    
-                    // Check if country matches (be flexible - country names can vary)
-                    var countryMatches = false;
-                    if (resultCountry) {
-                        // Exact or substring match
-                        if (resultCountry.indexOf(countryLower) !== -1 || countryLower.indexOf(resultCountry) !== -1) {
-                            countryMatches = true;
-                        } else {
-                            // Also check if key words match (e.g., "ukraine" matches "Ukraine")
-                            var countryWords = countryLower.split(/\s+/).filter(function(w) { return w.length > 2; });
-                            var resultCountryWords = resultCountry.split(/\s+/).filter(function(w) { return w.length > 2; });
-                            var matchingCountryWords = 0;
-                            for (var j = 0; j < countryWords.length; j++) {
-                                for (var k = 0; k < resultCountryWords.length; k++) {
-                                    if (resultCountryWords[k].indexOf(countryWords[j]) !== -1 || countryWords[j].indexOf(resultCountryWords[k]) !== -1) {
-                                        matchingCountryWords++;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (matchingCountryWords > 0) {
-                                countryMatches = true;
-                            }
-                        }
-                    } else {
-                        // No country in result - still check city (some results might not have country)
-                        countryMatches = true;
-                    }
-                    
-                    if (!countryMatches) {
-                        continue;
-                    }
-                    
-                    // Check if city matches (fuzzy) - check both city name and display_name
-                    var cityMatches = false;
-                    
-                    // First check display_name (most important for multilingual - contains names in all languages)
-                    if (displayName) {
-                        // Check if query city appears in display_name (most reliable for multilingual)
-                        if (displayName.indexOf(cityLower) !== -1) {
-                            cityMatches = true;
-                        } else if (cityLower.length >= 4) {
-                            // Also check if any significant words from city appear in display_name
-                            var cityWords = cityLower.split(/\s+/).filter(function(w) { return w.length >= 3; });
-                            if (cityWords.length > 0) {
-                                var matchingWords = 0;
-                                for (var j = 0; j < cityWords.length; j++) {
-                                    if (displayName.indexOf(cityWords[j]) !== -1) {
-                                        matchingWords++;
-                                    }
-                                }
-                                if (matchingWords >= Math.min(cityWords.length, 1)) {  // At least one word matches
-                                    cityMatches = true;
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Also check city name field (might be in different language)
-                    if (!cityMatches && resultCity) {
-                        if (resultCity.indexOf(cityLower) !== -1 || cityLower.indexOf(resultCity) !== -1) {
-                            cityMatches = true;
-                        } else {
-                            // Check if words match (e.g., "New York" matches "New York City")
-                            var cityWords = cityLower.split(/\s+/);
-                            var resultCityWords = resultCity.split(/\s+/);
-                            var matchingWords = 0;
-                            for (var j = 0; j < cityWords.length; j++) {
-                                for (var k = 0; k < resultCityWords.length; k++) {
-                                    if (cityWords[j] === resultCityWords[k] && cityWords[j].length > 2) {
-                                        matchingWords++;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (matchingWords >= Math.min(cityWords.length, 1)) {  // At least one word matches
-                                cityMatches = true;
-                            }
-                        }
-                    }
-                    
-                    if (cityMatches) {
-                        // State matching is optional - if city and country match, accept even if state differs
-                        // State names can vary significantly between languages (e.g., "одеська область" vs "Odesa Oblast")
-                        // So we only require state match if it's provided AND found in result
-                        if (stateLower) {
-                            // If state is in result, try to match it (but be very lenient)
-                            if (resultState) {
-                                // Check if state matches (fuzzy - substring match)
-                                if (resultState.indexOf(stateLower) !== -1 || stateLower.indexOf(resultState) !== -1) {
-                                    found = true;
-                                    break;
-                                }
-                                // Also check if key words match (e.g., "одеська" matches "Odesa")
-                                var stateWords = stateLower.split(/\s+/).filter(function(w) { return w.length > 3; });
-                                var resultStateWords = resultState.split(/\s+/).filter(function(w) { return w.length > 3; });
-                                var matchingStateWords = 0;
-                                for (var j = 0; j < stateWords.length; j++) {
-                                    for (var k = 0; k < resultStateWords.length; k++) {
-                                        if (resultStateWords[k].indexOf(stateWords[j]) !== -1 || stateWords[j].indexOf(resultStateWords[k]) !== -1) {
-                                            matchingStateWords++;
-                                            break;
-                                        }
-                                    }
-                                }
-                                if (matchingStateWords > 0) {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            // If no state in result OR state doesn't match, still accept if city and country match
-                            // (state is less critical than city/country for location identification)
-                            found = true;
-                            break;
-                        } else {
-                            // No state provided, city and country match is enough
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-                
-                if (!found) {
-                    callback(['Location not found. Please verify the city, state, and country are correct.']);
-                } else {
-                    callback([]); // No errors
-                }
-            }).catch(function(error) {
-                console.error('Location validation error:', error);
-                // Don't block on API errors - allow the request to proceed
-                callback([]);
-            });
-        }
-        
         // Search button click handler
         searchBtn.addEventListener('click', function() {
             var city = cityInput.value.trim();
@@ -3307,22 +3130,8 @@
                 return;
             }
             
-            // Show loading state while validating location
-            showLoadingState('Verifying location...');
-            
-            // Validate location exists using API (async)
-            validateLocationInput(city, country, state, function(validationErrors) {
-                hideLoadingOverlay();
-                
-                if (validationErrors.length > 0) {
-                    var errorMessage = validationErrors.join('\n');
-                    showErrorState(errorMessage, function() {
-                        cityInput.focus();
-                    });
-                    return;
-                }
-                
-                // Location is valid, proceed with search
+            // Location validation is now handled by backend /api/scrape endpoint
+            // Proceed directly with search
             currentCity = city;
             currentCountry = country;
             
@@ -3344,40 +3153,42 @@
                             fetchShowtimes(city, country, state);
                         });
                         return; // STOP here, don't continue
-            }
-            
-            // Only check for existing showtimes if status is not error
-                            var params = 'city_name=' + encodeURIComponent(locationId);
-                            if (formatFilter.value) params += '&format=' + encodeURIComponent(formatFilter.value);
-                            if (languageFilter.value) params += '&language=' + encodeURIComponent(languageFilter.value);
-                            
-                            return fetch('/api/showtimes?' + params).then(function(existingDataResponse) {
-                                return existingDataResponse.json().then(function(existingShowtimes) {
-                // If we have showtimes available, display them immediately (no need to scrape)
-                if (existingShowtimes && Array.isArray(existingShowtimes) && existingShowtimes.length > 0) {
-                    hideLoadingOverlay(); // Stop animation
-                    showtimes = applyFilters(existingShowtimes);
-                    renderShowtimes();
-                    return; // Data is available, no need to trigger scrape
-                }
-                                    
-                                    // Data not available - trigger scraping
-                                    fetchShowtimes(city, country, state);
-                                });
-                            }).catch(function(e) {
-                // If checking existing data fails, continue to scrape
-                console.log('Could not check existing data, proceeding with scrape...');
-                                fetchShowtimes(city, country, state);
-                            });
-                        });
                     }
-                }).catch(function(e) {
-                    // If status check fails, log but continue (might be first time)
-                    console.log('Status check failed, continuing...', e);
-                    // Proceed with scraping
-                    fetchShowtimes(city, country, state);
+                    
+                    // Only check for existing showtimes if status is not error
+                    var params = 'city_name=' + encodeURIComponent(locationId);
+                    if (formatFilter.value) params += '&format=' + encodeURIComponent(formatFilter.value);
+                    if (languageFilter.value) params += '&language=' + encodeURIComponent(languageFilter.value);
+                    
+                    return fetch('/api/showtimes?' + params).then(function(existingDataResponse) {
+                        return existingDataResponse.json().then(function(existingShowtimes) {
+                            // If we have showtimes available, display them immediately (no need to scrape)
+                            if (existingShowtimes && Array.isArray(existingShowtimes) && existingShowtimes.length > 0) {
+                                hideLoadingOverlay(); // Stop animation
+                                showtimes = applyFilters(existingShowtimes);
+                                renderShowtimes();
+                                return; // Data is available, no need to trigger scrape
+                            }
+                            
+                            // Data not available - trigger scraping
+                            fetchShowtimes(city, country, state);
+                        });
+                    }).catch(function(e) {
+                        // If checking existing data fails, continue to scrape
+                        console.log('Could not check existing data, proceeding with scrape...');
+                        fetchShowtimes(city, country, state);
+                    });
                 });
-            });
+            } else {
+                // Status check failed, proceed with scraping
+                fetchShowtimes(city, country, state);
+            }
+        }).catch(function(e) {
+            // If status check fails, log but continue (might be first time)
+            console.log('Status check failed, continuing...', e);
+            // Proceed with scraping
+            fetchShowtimes(city, country, state);
+        });
         });
         
         // Keyboard navigation for city and country suggestions
