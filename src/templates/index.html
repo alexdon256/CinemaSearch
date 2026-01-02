@@ -3160,24 +3160,9 @@
                     if (formatFilter.value) params += '&format=' + encodeURIComponent(formatFilter.value);
                     if (languageFilter.value) params += '&language=' + encodeURIComponent(languageFilter.value);
                     
-                    return fetch('/api/showtimes?' + params).then(function(existingDataResponse) {
-                        return existingDataResponse.json().then(function(existingShowtimes) {
-                            // If we have showtimes available, display them immediately (no need to scrape)
-                            if (existingShowtimes && Array.isArray(existingShowtimes) && existingShowtimes.length > 0) {
-                                hideLoadingOverlay(); // Stop animation
-                                showtimes = applyFilters(existingShowtimes);
-                                renderShowtimes();
-                                return; // Data is available, no need to trigger scrape
-                            }
-                            
-                            // Data not available - trigger scraping
-                            fetchShowtimes(city, country, state);
-                        });
-                    }).catch(function(e) {
-                        // If checking existing data fails, continue to scrape
-                        console.log('Could not check existing data, proceeding with scrape...');
-                        fetchShowtimes(city, country, state);
-                    });
+                    // Always trigger scrape to ensure API key check happens
+                    // Backend will return existing data if fresh, but API key validation still occurs
+                    fetchShowtimes(city, country, state);
                 });
             } else {
                 // Status check failed, proceed with scraping
