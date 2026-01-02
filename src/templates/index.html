@@ -3162,17 +3162,17 @@
                     }
                     
                     // Use Nominatim's country name directly (already normalized)
-                    countryInput.value = countryName;
-                    countrySelect.value = countryName;
-                    console.log('✓ Using Nominatim country name: "' + countryName + '"');
+                    countryInput.value = country;
+                    countrySelect.value = country;
+                    console.log('✓ Using Nominatim country name: "' + country + '"');
                     
                     // State is already set above before cityInput.value was set
-                    if (stateName && stateName.length > 0) {
-                        console.log('✓ State stored: "' + stateName + '"');
+                    if (state && state.length > 0) {
+                        console.log('✓ State stored: "' + state + '"');
                     }
                     
                     // Log summary for debugging
-                        console.log('Selected location: City="' + cityName + '", State="' + (stateName || '(none)') + '", Country="' + (matchedCountry || countryName) + '"');
+                    console.log('Selected location: City="' + city + '", State="' + (state || '(none)') + '", Country="' + country + '"');
                     
                     // Close suggestions
                         hideDropdown(citySuggestions);

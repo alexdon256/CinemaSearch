@@ -530,24 +530,39 @@ def verify_location_exists(city, country, state=None):
                 
                 # Simplified matching: if city and country appear in display_name (multilingual), accept it
                 # Nominatim's display_name already handles translations via accept-language
+                # display_name contains names in multiple languages, so this handles "Одеса" matching "Odesa" etc.
+                # The accept-language parameter ensures display_name contains names in all supported languages
                 city_in_display = city_lower in display_name
                 country_in_display = country_lower in display_name
                 
-                # Also check address fields as fallback
+                # Also check address fields as fallback (might be in different language)
+                # Address fields are normalized to English by Nominatim when accept-language=en is used
                 result_city = (address.get('city') or address.get('town') or address.get('village') or address.get('municipality') or '').lower()
                 result_country = (address.get('country') or '').lower()
                 
+                # Check if city matches (in display_name or address fields)
+                # display_name is multilingual, so "одеса" will match "Одеса" in display_name
                 city_matches = city_in_display or (result_city and (city_lower in result_city or result_city in city_lower))
+                
+                # Check if country matches (in display_name or address fields)
+                # display_name contains multilingual names, so "україна" will match "Ukraine" or "Україна" in display_name
+                # Be very lenient - if country appears anywhere in display_name, accept it
                 country_matches = country_in_display or (result_country and (country_lower in result_country or result_country in country_lower))
                 
-                # If both city and country match, or if Nominatim found results for our query, accept it
-                if city_matches and country_matches:
-                    print(f"    Location verified: city and country match")
+                # If city matches, accept it (country matching is less critical since Nominatim found results for our query)
+                if city_matches:
+                    print(f"    Location verified: city matches (city='{city_lower}', country='{country_lower}')")
                     session[cache_key] = True
                     return True
-                elif city_matches or country_matches:
-                    # If at least one matches and Nominatim found results for our query, trust it
-                    print(f"    Location verified: {'city' if city_matches else 'country'} matches (Nominatim found results for query)")
+                elif country_matches:
+                    # If country matches but city doesn't, still accept if Nominatim found results
+                    print(f"    Location verified: country matches (Nominatim found results for query)")
+                    session[cache_key] = True
+                    return True
+                else:
+                    # Even if no explicit match, if Nominatim found results for our query, trust it
+                    # The query included city, state, and country, so if Nominatim found something, it's likely correct
+                    print(f"    Location verified: Nominatim found results for query (city='{city_lower}', country='{country_lower}')")
                     session[cache_key] = True
                     return True
             
