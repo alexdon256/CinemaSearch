@@ -493,12 +493,6 @@ def verify_location_exists(city, country, state=None):
     location_parts.append(country)
     search_query = ', '.join(location_parts)
     
-    # Check cache first (use session cache)
-    cache_key = f"verified_location_{search_query.lower()}"
-    cached = session.get(cache_key)
-    if cached is not None:
-        return cached
-    
     try:
         # Use supported languages for multilingual search (en, uk, ru, etc.)
         # Nominatim will return results with names in these languages
@@ -514,70 +508,55 @@ def verify_location_exists(city, country, state=None):
             
             if not results or len(results) == 0:
                 print(f"Location verification: No results for query '{search_query}'")
-                session[cache_key] = False
+                print(f"  City: '{city}', State: '{state}', Country: '{country}'")
+                # Try a simpler query with just city and country (state might be causing issues with multilingual names)
+                if state:
+                    simpler_query = f"{city}, {country}"
+                    print(f"  Retrying with simpler query (city + country only): '{simpler_query}'")
+                    try:
+                        simpler_url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(simpler_query)}&format=json&limit=5&addressdetails=1&accept-language={supported_languages}"
+                        simpler_req = urllib.request.Request(simpler_url, headers={'User-Agent': 'CineStream/1.0'})
+                        with urllib.request.urlopen(simpler_req, timeout=3) as simpler_response:
+                            simpler_results = json.loads(simpler_response.read().decode())
+                            if simpler_results and len(simpler_results) > 0:
+                                print(f"  Simpler query found {len(simpler_results)} results - accepting location")
+                                return True
+                            else:
+                                print(f"  Simpler query also returned no results")
+                    except Exception as simpler_error:
+                        print(f"  Simpler query also failed: {simpler_error}")
+                
                 return False
             
             # If Nominatim found results for our query, trust it - the query included city, state, and country
-            # Nominatim's display_name contains multilingual names, so matching is simplified
-            city_lower = city.lower()
-            country_lower = country.lower()
+            # Nominatim's search is smart enough to match multilingual names like "Одеса" to "Odesa"
+            # The accept-language parameter ensures display_name contains names in multiple languages
+            print(f"Location verification: Found {len(results)} results for query '{search_query}'")
+            print(f"  City: '{city}', State: '{state}', Country: '{country}'")
             
-            print(f"Location verification: Found {len(results)} results for '{search_query}'")
+            # Log first result for debugging
+            if results and len(results) > 0:
+                first_result = results[0]
+                address = first_result.get('address', {})
+                display_name = first_result.get('display_name', '')
+                print(f"  First result: display_name='{display_name[:100]}'")
+                print(f"  First result address: city='{address.get('city', '')}', country='{address.get('country', '')}'")
             
-            for result in results:
-                address = result.get('address', {})
-                display_name = result.get('display_name', '').lower()
-                
-                # Simplified matching: if city and country appear in display_name (multilingual), accept it
-                # Nominatim's display_name already handles translations via accept-language
-                # display_name contains names in multiple languages, so this handles "Одеса" matching "Odesa" etc.
-                # The accept-language parameter ensures display_name contains names in all supported languages
-                city_in_display = city_lower in display_name
-                country_in_display = country_lower in display_name
-                
-                # Also check address fields as fallback (might be in different language)
-                # Address fields are normalized to English by Nominatim when accept-language=en is used
-                result_city = (address.get('city') or address.get('town') or address.get('village') or address.get('municipality') or '').lower()
-                result_country = (address.get('country') or '').lower()
-                
-                # Check if city matches (in display_name or address fields)
-                # display_name is multilingual, so "одеса" will match "Одеса" in display_name
-                city_matches = city_in_display or (result_city and (city_lower in result_city or result_city in city_lower))
-                
-                # Check if country matches (in display_name or address fields)
-                # display_name contains multilingual names, so "україна" will match "Ukraine" or "Україна" in display_name
-                # Be very lenient - if country appears anywhere in display_name, accept it
-                country_matches = country_in_display or (result_country and (country_lower in result_country or result_country in country_lower))
-                
-                # If city matches, accept it (country matching is less critical since Nominatim found results for our query)
-                if city_matches:
-                    print(f"    Location verified: city matches (city='{city_lower}', country='{country_lower}')")
-                    session[cache_key] = True
-                    return True
-                elif country_matches:
-                    # If country matches but city doesn't, still accept if Nominatim found results
-                    print(f"    Location verified: country matches (Nominatim found results for query)")
-                    session[cache_key] = True
-                    return True
-                else:
-                    # Even if no explicit match, if Nominatim found results for our query, trust it
-                    # The query included city, state, and country, so if Nominatim found something, it's likely correct
-                    print(f"    Location verified: Nominatim found results for query (city='{city_lower}', country='{country_lower}')")
-                    session[cache_key] = True
-                    return True
-            
-            # If Nominatim returned results for our query, accept it (very lenient)
+            # If Nominatim found results for our query, accept it immediately (very lenient)
             # The query included city, state, and country, so if Nominatim found something, it's likely correct
+            # This handles multilingual names - Nominatim's search is smart enough to match "Одеса" to "Odesa"
             print(f"Location verification: Accepting location (Nominatim found {len(results)} results for query)")
-            session[cache_key] = True
             return True
             
     except Exception as e:
         print(f"Location verification error for {search_query}: {e}")
-        # On error, don't block - but log it
-        # Return False to be safe (prevent scraping invalid locations)
-        session[cache_key] = False
-        return False
+        import traceback
+        traceback.print_exc()
+        # On error, be lenient - if we can't verify, don't block scraping
+        # But log it for debugging
+        # Return True to allow scraping (better to allow than block valid requests)
+        print(f"Location verification: Exception occurred, but allowing location (error: {e})")
+        return True
 
 def normalize_location_names_together(city, state, country):
     """
