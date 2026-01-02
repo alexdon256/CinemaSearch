@@ -1255,19 +1255,56 @@ enable_autostart() {
         log_warn "mongodb.service not found, skipping autostart enable"
     fi
     
-    # Enable Nginx (check if service exists first)
-    if systemctl list-unit-files | grep -qE "^nginx\.service|^nginx@"; then
-        if systemctl enable nginx.service 2>/dev/null; then
-            log_info "✓ Nginx autostart enabled"
-        else
-            log_warn "Failed to enable nginx.service, trying 'nginx'..."
-            systemctl enable nginx 2>/dev/null || log_warn "Failed to enable nginx"
-        fi
+    # Enable Nginx - try multiple methods to find and enable it
+    local nginx_enabled=false
+    
+    # Method 1: Try standard service name
+    if systemctl enable nginx.service 2>/dev/null; then
+        log_info "✓ Nginx autostart enabled (nginx.service)"
+        nginx_enabled=true
+    elif systemctl enable nginx 2>/dev/null; then
+        log_info "✓ Nginx autostart enabled (nginx)"
+        nginx_enabled=true
     else
-        log_warn "nginx.service not found, checking if nginx is installed..."
-        if command -v nginx >/dev/null 2>&1; then
-            log_warn "Nginx is installed but service file not found. You may need to install nginx service manually."
-        else
+        # Method 2: Check if service file exists in common locations
+        local nginx_service_file=""
+        for location in \
+            "/usr/lib/systemd/system/nginx.service" \
+            "/etc/systemd/system/nginx.service" \
+            "/lib/systemd/system/nginx.service"; do
+            if [[ -f "$location" ]]; then
+                nginx_service_file="$location"
+                break
+            fi
+        done
+        
+        if [[ -n "$nginx_service_file" ]]; then
+            # Service file exists, try to enable it directly
+            log_info "Found nginx service file at $nginx_service_file, enabling..."
+            if systemctl enable "$nginx_service_file" 2>/dev/null || systemctl enable nginx.service 2>/dev/null; then
+                log_info "✓ Nginx autostart enabled (from file)"
+                nginx_enabled=true
+            fi
+        fi
+        
+        # Method 3: If nginx is installed but service not found, check if we need to create it
+        if [[ "$nginx_enabled" == "false" ]] && command -v nginx >/dev/null 2>&1; then
+            log_warn "Nginx is installed but service not enabled. Checking service status..."
+            # Try to find nginx service using systemctl status
+            if systemctl status nginx.service >/dev/null 2>&1 || systemctl status nginx >/dev/null 2>&1; then
+                # Service exists but enable failed, try with --now flag or check if already enabled
+                local enabled_status=$(systemctl is-enabled nginx.service 2>/dev/null || systemctl is-enabled nginx 2>/dev/null || echo "unknown")
+                if [[ "$enabled_status" == "enabled" ]]; then
+                    log_info "✓ Nginx autostart already enabled"
+                    nginx_enabled=true
+                else
+                    log_warn "Nginx service exists but could not be enabled. Status: $enabled_status"
+                fi
+            else
+                log_warn "Nginx binary found but systemd service not configured."
+                log_warn "You may need to run: systemctl enable nginx.service"
+            fi
+        elif [[ "$nginx_enabled" == "false" ]]; then
             log_warn "Nginx is not installed. Run 'init-server' to install it."
         fi
     fi
