@@ -486,63 +486,44 @@ def verify_location_exists(city, country, state=None):
     import json
     import urllib.parse
     
-    # Try multiple query formats, starting with the simplest
-    # This handles cases where state names in different languages cause issues
-    # Use same query format as city-suggestions endpoint for consistency
-    supported_languages = 'en,uk,ru,de,fr,es,it,pl'
-    
-    # Query formats to try (from simplest to most specific)
-    queries_to_try = []
-    
-    # 1. Just city (most lenient - if city suggestions work, this should too)
-    queries_to_try.append(city)
-    
-    # 2. City + Country (works well for most cases)
-    queries_to_try.append(f"{city}, {country}")
-    
-    # 3. Full query with state (most specific, but might fail with multilingual state names)
-    if state:
-        queries_to_try.append(f"{city}, {state}, {country}")
-    
+    # Simplified verification: Since Nominatim already returned these values in suggestions,
+    # we should trust them. Just verify that Nominatim can find the city (which we know works).
+    # This is much more lenient and avoids issues with multilingual state/country names.
     try:
-        # Try each query format until one succeeds
-        for search_query in queries_to_try:
-            print(f"Location verification: Trying query '{search_query}'")
-            # Use EXACT same format as city-suggestions endpoint for consistency
-            # If suggestions found it, verification should too
-            url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(search_query)}&format=json&limit=30&addressdetails=1&extratags=1&dedupe=1"
-            
-            req = urllib.request.Request(url, headers={
-                'User-Agent': 'CineStream/1.0'
-            })
-            
-            with urllib.request.urlopen(req, timeout=10) as response:
-                results = json.loads(response.read().decode())
-                
-                if results and len(results) > 0:
-                    print(f"Location verification: Found {len(results)} results for query '{search_query}'")
-                    print(f"  Input: City='{city}', State='{state}', Country='{country}'")
-                    
-                    # Log first result for debugging
-                    first_result = results[0]
-                    address = first_result.get('address', {})
-                    display_name = first_result.get('display_name', '')
-                    print(f"  First result: display_name='{display_name[:100]}'")
-                    print(f"  First result address: city='{address.get('city', '')}', country='{address.get('country', '')}'")
-                    
-                    # If Nominatim found results for any query format, accept it
-                    # Since Nominatim returned these values in suggestions, verification should accept them
-                    print(f"Location verification: Accepting location (Nominatim found {len(results)} results)")
-                    return True
+        # Use EXACT same format as city-suggestions endpoint for consistency
+        # Just search for the city name - if suggestions found it, this will too
+        print(f"Location verification: Verifying city='{city}' (state='{state}', country='{country}')")
+        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(city)}&format=json&limit=30&addressdetails=1&extratags=1&dedupe=1"
         
-        # If all queries failed, location not found
-        print(f"Location verification: No results for any query format")
-        print(f"  Tried queries: {queries_to_try}")
-        print(f"  Input: City='{city}', State='{state}', Country='{country}'")
-        return False
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'CineStream/1.0'
+        })
+        
+        with urllib.request.urlopen(req, timeout=10) as response:
+            results = json.loads(response.read().decode())
+            
+            if results and len(results) > 0:
+                print(f"Location verification: Found {len(results)} results for city '{city}'")
+                print(f"  Input: City='{city}', State='{state}', Country='{country}'")
+                
+                # Log first result for debugging
+                first_result = results[0]
+                address = first_result.get('address', {})
+                display_name = first_result.get('display_name', '')
+                print(f"  First result: display_name='{display_name[:100]}'")
+                print(f"  First result address: city='{address.get('city', '')}', country='{address.get('country', '')}'")
+                
+                # If Nominatim found the city, accept it (very lenient)
+                # Since Nominatim returned these values in suggestions, we trust them
+                print(f"Location verification: Accepting location (Nominatim found city '{city}')")
+                return True
+            else:
+                print(f"Location verification: No results for city '{city}'")
+                print(f"  Input: City='{city}', State='{state}', Country='{country}'")
+                return False
             
     except Exception as e:
-        print(f"Location verification error for {search_query}: {e}")
+        print(f"Location verification error for city='{city}': {e}")
         import traceback
         traceback.print_exc()
         # On error, be lenient - if we can't verify, don't block scraping
