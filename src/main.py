@@ -303,9 +303,10 @@ def index():
                              visitor_count=0,
                              donation_url=DONATION_URL), 500
 
-def verify_location_exists(city, country, state=None):
+def verify_location_exists(city, country, state=None, lang='en'):
     """
     Verify that a location (city, state, country) actually exists using Nominatim API.
+    Works exactly like api_city_suggestions - uses same language logic and URL format.
     Simplified: Search for city, then iterate through results and compare city, state, country.
     Returns True if location is found, False otherwise.
     """
@@ -318,10 +319,18 @@ def verify_location_exists(city, country, state=None):
     
     # Search for just the city (simpler approach)
     print(f"Location verification: Searching for city='{city}'")
-    print(f"  Verifying: City='{city}', State='{state}', Country='{country}'")
+    print(f"  Verifying: City='{city}', State='{state}', Country='{country}', Lang='{lang}'")
     
-    # Use same format as city-suggestions endpoint
-    url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(city)}&format=json&limit=30&addressdetails=1&extratags=1&dedupe=1"
+    # Use same language logic as city-suggestions endpoint
+    if lang == 'ua':
+        accept_lang = 'uk'
+    elif lang == 'ru':
+        accept_lang = 'ru'
+    else:
+        accept_lang = 'en'
+    
+    # Use EXACT same format as city-suggestions endpoint
+    url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(city)}&format=json&limit=30&addressdetails=1&extratags=1&dedupe=1&accept-language={accept_lang}"
     
     try:
         req = urllib.request.Request(url, headers={
@@ -851,7 +860,9 @@ def api_scrape():
     # Verify location exists before scraping (backend validation)
     # This prevents scraping non-existent places even if frontend validation is bypassed
     try:
-        location_valid = verify_location_exists(city, country, state)
+        # Get language for verification (same as city-suggestions uses)
+        lang = get_language()
+        location_valid = verify_location_exists(city, country, state, lang)
         if not location_valid:
             # Return specific error for location verification failure
             return jsonify({
