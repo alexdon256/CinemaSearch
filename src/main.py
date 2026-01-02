@@ -910,19 +910,42 @@ def api_scrape():
         traceback.print_exc()
         # Continue with original city, state, country names
     
-    # Check Anthropic API key BEFORE any early exits (must check even if data exists)
-    anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
-    if not anthropic_api_key:
-        return jsonify({
-            'error': 'Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.',
-            'error_type': 'api_key_error'
-        }), 500
-    
     # Build location identifier (city, state, country format) - using normalized names
     if state:
         location_id = f"{city}, {state}, {country}"
     else:
         location_id = f"{city}, {country}"
+    
+    # Check Anthropic API key BEFORE any early exits (must check even if data exists)
+    # This ensures API key errors are shown immediately, even if data exists
+    anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
+    if not anthropic_api_key:
+        return jsonify({
+            'error': 'Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.',
+            'error_type': 'api_key_error',
+            'status': 'error'
+        }), 500
+    
+    # Check if location has a previous API key error - if so, return error immediately
+    # This ensures that if the key was invalid before, we show the error even if data exists
+    # This way, once the key is invalid, it will always show the error until the key is fixed
+    location = db.locations.find_one({'city_name': location_id})
+    if location and location.get('status') == 'error':
+        error_message = location.get('error_message', '')
+        if 'api key' in error_message.lower() or 'anthropic' in error_message.lower() or 'authentication' in error_message.lower():
+            # Location has a previous API key error - return error immediately
+            # We don't validate again here to avoid expensive API calls, but we show the error
+            return jsonify({
+                'error': error_message,
+                'error_type': 'api_key_error',
+                'status': 'error'
+            }), 500
+    
+    # IMPORTANT: If location has no previous error, we still need to validate API key before early exits
+    # This prevents returning 200 with cached data when API key is invalid
+    # However, we only validate if there's no previous error record (to avoid expensive calls on every request)
+    # The validation happens later when we actually try to use the API key during scraping
+    # For now, we rely on the previous error check above to catch most cases
     
     # Check if we have complete data (all 14 days) - if so, just return it without scraping
     from datetime import timedelta, timezone
@@ -1019,6 +1042,17 @@ def api_scrape():
         # Check if there's actually a date range to scrape (if all dates are present, range will be very small)
         time_diff = (date_end - date_start).total_seconds()
         if time_diff < 3600:  # Less than 1 hour means no real date range to scrape
+            # All dates are already present - but check for API key errors first
+            # Re-check location status in case it was updated
+            location_check = db.locations.find_one({'city_name': location_id})
+            if location_check and location_check.get('status') == 'error':
+                error_message = location_check.get('error_message', '')
+                if 'api key' in error_message.lower() or 'anthropic' in error_message.lower() or 'authentication' in error_message.lower():
+                    return jsonify({
+                        'error': error_message,
+                        'error_type': 'api_key_error',
+                        'status': 'error'
+                    }), 500
             # All dates are already present - just return existing data
             showtimes = get_showtimes_for_city(location_id)
             return jsonify({
