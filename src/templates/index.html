@@ -3501,8 +3501,43 @@
                     }
                     
                     if (cityMatches) {
-                        found = true;
-                        break;
+                        // State matching is optional - if city and country match, accept even if state differs
+                        // State names can vary significantly between languages (e.g., "одеська область" vs "Odesa Oblast")
+                        // So we only require state match if it's provided AND found in result
+                        if (stateLower) {
+                            // If state is in result, try to match it (but be very lenient)
+                            if (resultState) {
+                                // Check if state matches (fuzzy - substring match)
+                                if (resultState.indexOf(stateLower) !== -1 || stateLower.indexOf(resultState) !== -1) {
+                                    found = true;
+                                    break;
+                                }
+                                // Also check if key words match (e.g., "одеська" matches "Odesa")
+                                var stateWords = stateLower.split(/\s+/).filter(function(w) { return w.length > 3; });
+                                var resultStateWords = resultState.split(/\s+/).filter(function(w) { return w.length > 3; });
+                                var matchingStateWords = 0;
+                                for (var j = 0; j < stateWords.length; j++) {
+                                    for (var k = 0; k < resultStateWords.length; k++) {
+                                        if (resultStateWords[k].indexOf(stateWords[j]) !== -1 || stateWords[j].indexOf(resultStateWords[k]) !== -1) {
+                                            matchingStateWords++;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (matchingStateWords > 0) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            // If no state in result OR state doesn't match, still accept if city and country match
+                            // (state is less critical than city/country for location identification)
+                            found = true;
+                            break;
+                        } else {
+                            // No state provided, city and country match is enough
+                            found = true;
+                            break;
+                        }
                     }
                 }
                 

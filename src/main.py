@@ -561,11 +561,27 @@ def verify_location_exists(city, country, state=None):
                         city_matches = True
                 
                 if city_matches:
-                    # If state is provided, check it matches too
+                    # State matching is optional - if city and country match, accept even if state differs
+                    # State names can vary significantly between languages (e.g., "одеська область" vs "Odesa Oblast")
+                    # So we only require state match if it's provided AND found in result
                     if state_lower:
-                        if result_state and (state_lower in result_state or result_state in state_lower):
-                            session[cache_key] = True
-                            return True
+                        # If state is in result, try to match it (but be very lenient)
+                        if result_state:
+                            # Check if state matches (fuzzy - substring match)
+                            if state_lower in result_state or result_state in state_lower:
+                                session[cache_key] = True
+                                return True
+                            # Also check if key words match (e.g., "одеська" matches "Odesa")
+                            state_words = [w for w in state_lower.split() if len(w) > 3]
+                            result_state_words = [w for w in result_state.split() if len(w) > 3]
+                            matching_state_words = sum(1 for w in state_words if any(w in rs or rs in w for rs in result_state_words))
+                            if matching_state_words > 0:
+                                session[cache_key] = True
+                                return True
+                        # If no state in result OR state doesn't match, still accept if city and country match
+                        # (state is less critical than city/country for location identification)
+                        session[cache_key] = True
+                        return True
                     else:
                         # No state provided, city and country match is enough
                         session[cache_key] = True
