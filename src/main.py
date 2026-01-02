@@ -476,6 +476,60 @@ def normalize_location_names_together(city, state, country):
         print(f"Combined normalization error for {search_query}: {e}")
         return None
 
+def translate_location_name(name, target_lang='en'):
+    """
+    Translate location name to target language using argostranslate.
+    Maps language codes: 'en' -> 'en', 'ua' -> 'uk', 'ru' -> 'ru'
+    Returns original name if translation fails or package not available.
+    """
+    if not name or not name.strip():
+        return name
+    
+    try:
+        import argostranslate.package
+        import argostranslate.translate
+        
+        # Map our language codes to argostranslate codes
+        lang_map = {
+            'en': 'en',
+            'ua': 'uk',
+            'ru': 'ru'
+        }
+        
+        target_code = lang_map.get(target_lang, 'en')
+        
+        # If target is English, no translation needed
+        if target_code == 'en':
+            return name
+        
+        # Try to translate from English to target language
+        # First check if packages are installed
+        installed_languages = argostranslate.translate.get_installed_languages()
+        from_lang = None
+        to_lang = None
+        
+        for lang in installed_languages:
+            if lang.code == 'en':
+                from_lang = lang
+            if lang.code == target_code:
+                to_lang = lang
+        
+        if from_lang and to_lang:
+            translated = argostranslate.translate.translate(name, from_lang.code, to_lang.code)
+            if translated and translated.strip():
+                return translated.strip()
+        
+        # If translation failed, return original
+        return name
+    except ImportError:
+        # argostranslate not installed, return original
+        print("argostranslate not available, skipping translation")
+        return name
+    except Exception as e:
+        # Translation failed, return original
+        print(f"Translation error for '{name}' to {target_lang}: {e}")
+        return name
+
 def normalize_location_name(name, location_type='city'):
     """
     Normalize location names to English to avoid duplicates from different languages.
@@ -605,6 +659,13 @@ def api_geocode():
                         if region:
                             region = normalize_location_name(region.strip(), 'state')
                         
+                        # Translate to user's selected language
+                        lang = get_language()
+                        city = translate_location_name(city, lang)
+                        country = translate_location_name(country, lang)
+                        if region:
+                            region = translate_location_name(region, lang)
+                        
                         return jsonify({
                             'success': True,
                             'city': city,
@@ -705,12 +766,19 @@ def api_geocode_ip():
     try:
         geo_data = detect_city_from_ip()
         if geo_data:
-            # Normalize to English
+            # Normalize to English first
             city = normalize_location_name(geo_data.get('city', ''), 'city')
             country = normalize_location_name(geo_data.get('country', ''), 'country')
             region = geo_data.get('region', '')
             if region:
                 region = normalize_location_name(region, 'state')
+            
+            # Translate to user's selected language
+            lang = get_language()
+            city = translate_location_name(city, lang)
+            country = translate_location_name(country, lang)
+            if region:
+                region = translate_location_name(region, lang)
             
             return jsonify({
                 'success': True,
