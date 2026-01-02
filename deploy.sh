@@ -1245,12 +1245,32 @@ enable_autostart() {
     log_step "Enabling autostart for all services..."
     
     # Enable CPU affinity services
-    systemctl enable cinestream-cpu-affinity.service
-    systemctl enable cinestream-cpu-affinity.timer
+    systemctl enable cinestream-cpu-affinity.service 2>/dev/null || log_warn "Failed to enable cinestream-cpu-affinity.service"
+    systemctl enable cinestream-cpu-affinity.timer 2>/dev/null || log_warn "Failed to enable cinestream-cpu-affinity.timer"
     
     # Enable MongoDB and Nginx
-    systemctl enable mongodb.service
-    systemctl enable nginx.service
+    if systemctl list-unit-files | grep -q "^mongodb.service"; then
+        systemctl enable mongodb.service 2>/dev/null || log_warn "Failed to enable mongodb.service"
+    else
+        log_warn "mongodb.service not found, skipping autostart enable"
+    fi
+    
+    # Enable Nginx (check if service exists first)
+    if systemctl list-unit-files | grep -qE "^nginx\.service|^nginx@"; then
+        if systemctl enable nginx.service 2>/dev/null; then
+            log_info "✓ Nginx autostart enabled"
+        else
+            log_warn "Failed to enable nginx.service, trying 'nginx'..."
+            systemctl enable nginx 2>/dev/null || log_warn "Failed to enable nginx"
+        fi
+    else
+        log_warn "nginx.service not found, checking if nginx is installed..."
+        if command -v nginx >/dev/null 2>&1; then
+            log_warn "Nginx is installed but service file not found. You may need to install nginx service manually."
+        else
+            log_warn "Nginx is not installed. Run 'init-server' to install it."
+        fi
+    fi
     
     # Enable all application targets and their worker services
     for app_dir in /var/www/*/; do
