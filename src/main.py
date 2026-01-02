@@ -540,33 +540,56 @@ def verify_location_exists(city, country, state=None):
                 
                 print(f"  Result: city='{result_city}', country='{result_country}', state='{result_state}', display='{display_name[:50]}'")
                 
-                # Very lenient country matching - if country is in display_name or address, accept it
+                # Very lenient country matching - use Nominatim's multilingual display_name
+                # Since Nominatim found results for our query (which includes country), trust it
+                # The display_name contains the country name in multiple languages, so we can match dynamically
                 country_matches = False
-                if result_country:
-                    # Exact or substring match
-                    if country_lower in result_country or result_country in country_lower:
+                
+                # Get country code from result (ISO code) - most reliable identifier
+                country_code = address.get('country_code', '').lower() if address else ''
+                
+                # First, check if country appears anywhere in display_name (most reliable for multilingual)
+                # Nominatim's display_name contains names in all languages, so this handles translations automatically
+                if country_lower in display_name:
+                    country_matches = True
+                    print(f"    Country match in display_name: '{country_lower}' found in display")
+                elif result_country:
+                    result_country_lower = result_country.lower()
+                    # Check exact or substring match
+                    if country_lower in result_country_lower or result_country_lower in country_lower:
                         country_matches = True
-                    # Also check display_name for country
-                    elif country_lower in display_name:
-                        country_matches = True
-                    # Word-based matching
+                        print(f"    Country match in address: '{country_lower}' matches '{result_country}'")
+                    # Word-based matching for multi-word countries
                     else:
                         country_words = [w for w in country_lower.split() if len(w) > 2]
                         result_country_words = [w for w in result_country.split() if len(w) > 2]
                         matching_country_words = sum(1 for w in country_words if any(w in rc or rc in w for rc in result_country_words))
                         if matching_country_words > 0:
                             country_matches = True
+                            print(f"    Country word match: {matching_country_words} words matched")
                 else:
-                    # No country in result - check display_name
-                    if country_lower in display_name:
-                        country_matches = True
-                    else:
-                        # If no country found but we have results, still check city (very lenient)
-                        country_matches = True
+                    # No country in result - but if Nominatim found it, trust it
+                    # Check if any significant word from the country name appears in display_name
+                    country_words = [w for w in country_lower.split() if len(w) > 3]
+                    if country_words:
+                        for word in country_words:
+                            if word in display_name:
+                                country_matches = True
+                                print(f"    Country word found in display_name: '{word}'")
+                                break
                 
+                # If country still doesn't match, but city matches well, accept it anyway
+                # (Nominatim found results for our query, so it's likely correct)
+                # Also, if we searched with the country in the query and Nominatim returned results, trust it
                 if not country_matches:
-                    print(f"    Country mismatch: '{country_lower}' not found in result")
-                    continue
+                    print(f"    Country not explicitly matched: '{country_lower}' vs result country '{result_country}'")
+                    # Since Nominatim found results for a query that included the country, trust it
+                    # The country was in our search query, so if Nominatim found results, it's likely correct
+                    if country_lower in search_query.lower():
+                        country_matches = True
+                        print(f"    Country accepted because it was in search query and Nominatim found results")
+                    # Don't reject yet - check city first, then decide
+                    # If city matches well, accept even without country match
                 
                 # Very lenient city matching - check display_name first (most reliable for multilingual)
                 city_matches = False
@@ -610,12 +633,27 @@ def verify_location_exists(city, country, state=None):
                         print(f"    City match by query inclusion: '{city_lower}' was in search query")
                 
                 if city_matches:
-                    print(f"    City and country match! Accepting location.")
-                    # State matching is optional - if city and country match, accept even if state differs
+                    # If city matches, accept location even if country didn't match explicitly
+                    # (Nominatim found it for our query, so it's likely correct)
+                    if country_matches:
+                        print(f"    City and country match! Accepting location.")
+                    else:
+                        print(f"    City matches, accepting location (country match not required since Nominatim found it)")
+                    # State matching is optional - if city matches, accept even if state differs
                     session[cache_key] = True
                     return True
                 else:
                     print(f"    City mismatch: '{city_lower}' not found in result")
+                    # If city doesn't match, only reject if country also doesn't match
+                    # (to be very lenient)
+                    if not country_matches:
+                        print(f"    Both city and country don't match, skipping result")
+                        continue
+                    else:
+                        # Country matches but city doesn't - still accept if Nominatim found it
+                        print(f"    Country matches, accepting location despite city mismatch (Nominatim found it)")
+                        session[cache_key] = True
+                        return True
             
             # No matching result found - but be very lenient: if Nominatim returned ANY results, accept it
             # The fact that Nominatim found something for our query is a good sign it exists
@@ -1242,35 +1280,61 @@ def api_scrape():
     
     # Verify location exists before scraping (backend validation)
     # This prevents scraping non-existent places even if frontend validation is bypassed
-    location_valid = verify_location_exists(city, country, state)
-    if not location_valid:
-        # Return specific error for location verification failure
+    try:
+        location_valid = verify_location_exists(city, country, state)
+        if not location_valid:
+            # Return specific error for location verification failure
+            return jsonify({
+                'error': 'Location not found. Please verify the city, state, and country names are correct.',
+                'error_type': 'location_verification_failed'
+            }), 400
+    except Exception as verify_error:
+        # If verification itself fails (e.g., API error), log it and return error
+        print(f"Error: Location verification failed: {verify_error}")
+        import traceback
+        traceback.print_exc()
+        # Return error - we can't verify the location, so we shouldn't scrape
         return jsonify({
-            'error': 'Location not found. Please verify the city, state, and country names are correct.',
-            'error_type': 'location_verification_failed'
-        }), 400
+            'error': 'Unable to verify location. Please check your connection and try again.',
+            'error_type': 'verification_error'
+        }), 500
     
     # Optimize: Normalize all location names in a single API call when possible
     # This reduces Nominatim API calls from 3 to 1 when we have city, state, and country
-    if state:
-        # Try to normalize all three in one call
-        normalized = normalize_location_names_together(city, state, country)
-        if normalized:
-            city, state, country = normalized
+    try:
+        if state:
+            # Try to normalize all three in one call
+            normalized = normalize_location_names_together(city, state, country)
+            if normalized:
+                city, state, country = normalized
+            else:
+                # Fallback to individual normalization if combined fails
+                try:
+                    city = normalize_location_name(city, 'city') or city
+                    country = normalize_location_name(country, 'country') or country
+                    state = normalize_location_name(state, 'state') or state
+                except Exception as norm_error:
+                    print(f"Warning: Individual normalization failed: {norm_error}")
+                    # Use original names if normalization fails
         else:
-            # Fallback to individual normalization if combined fails
-            city = normalize_location_name(city, 'city')
-            country = normalize_location_name(country, 'country')
-            state = normalize_location_name(state, 'state')
-    else:
-        # Only city and country - can still optimize
-        normalized = normalize_location_names_together(city, None, country)
-        if normalized:
-            city, _, country = normalized
-        else:
-            # Fallback to individual normalization
-            city = normalize_location_name(city, 'city')
-            country = normalize_location_name(country, 'country')
+            # Only city and country - can still optimize
+            normalized = normalize_location_names_together(city, None, country)
+            if normalized:
+                city, _, country = normalized
+            else:
+                # Fallback to individual normalization
+                try:
+                    city = normalize_location_name(city, 'city') or city
+                    country = normalize_location_name(country, 'country') or country
+                except Exception as norm_error:
+                    print(f"Warning: Individual normalization failed: {norm_error}")
+                    # Use original names if normalization fails
+    except Exception as e:
+        # If normalization fails, log it but continue with original names
+        print(f"Warning: Location normalization failed: {e}")
+        import traceback
+        traceback.print_exc()
+        # Continue with original city, state, country names
     
     # Build location identifier (city, state, country format) - using normalized names
     if state:
