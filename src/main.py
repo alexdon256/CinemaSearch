@@ -818,15 +818,6 @@ def api_scrape():
     print(f"api_scrape: Received - city='{city}', state='{state}', country='{country}'")
     
     # Input validation and sanitization
-    # Check Anthropic API key FIRST (before any other validation to give clear error)
-    anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
-    print(f"Anthropic API key: {anthropic_api_key}")
-    if not anthropic_api_key:
-        return jsonify({
-            'error': 'Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.',
-            'error_type': 'api_key_error'
-        }), 500
-    
     if not city:
         return jsonify({'error': 'city required'}), 400
     
@@ -858,16 +849,17 @@ def api_scrape():
     if state and len(state) < 2:
         return jsonify({'error': 'State/Province name is too short'}), 400
     
-    # Verify location exists before scraping (backend validation)
+    # Verify location exists BEFORE API key check (validate input first)
     # This prevents scraping non-existent places even if frontend validation is bypassed
     try:
         # Get language for verification (same as city-suggestions uses)
         lang = get_language()
+        print(f"Language: {lang}")
         location_valid = verify_location_exists(city, country, state, lang)
         if not location_valid:
             # Return specific error for location verification failure
             return jsonify({
-                'error': 'Location not found. Please verify the city, state, and country names are correct.',
+                'error': '{lang} Location not found. Please verify the city, state, and country names are correct.',
                 'error_type': 'location_verification_failed'
             }), 400
     except Exception as verify_error:
@@ -879,6 +871,14 @@ def api_scrape():
         return jsonify({
             'error': 'Unable to verify location. Please check your connection and try again.',
             'error_type': 'verification_error'
+        }), 500
+    
+    # Check Anthropic API key (after location verification)
+    anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
+    if not anthropic_api_key:
+        return jsonify({
+            'error': 'Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.',
+            'error_type': 'api_key_error'
         }), 500
     
     # Optimize: Normalize all location names in a single API call when possible
