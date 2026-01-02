@@ -3305,6 +3305,8 @@
         function fetchShowtimes(city, country, state) {
             if (!state) state = '';
             
+            console.log('fetchShowtimes called - calling /api/scrape', {city: city, country: country, state: state});
+            
             fetch('/api/scrape', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -3314,11 +3316,14 @@
                         state: state
                     })
             }).then(function(scrapeResponse) {
+                console.log('fetchShowtimes - /api/scrape response received', {status: scrapeResponse.status, ok: scrapeResponse.ok, statusText: scrapeResponse.statusText});
                 // Check HTTP status first - if it's an error status, handle it
                 if (!scrapeResponse.ok && scrapeResponse.status !== 202) {
+                    console.log('fetchShowtimes - HTTP error status, parsing error response');
                     // HTTP error (400, 500, etc.) - try to get error message from response
                     var errorMsg = 'An error occurred while fetching showtimes.';
                     return scrapeResponse.json().then(function(errorData) {
+                        console.log('fetchShowtimes - Error data received:', errorData);
                         // Check error type to show appropriate message
                         var errorType = errorData.error_type || '';
                         if (errorType === 'api_key_error') {
@@ -3328,11 +3333,13 @@
                         } else {
                             errorMsg = errorData.message || errorData.error_message || errorData.error || errorMsg;
                         }
+                        console.log('fetchShowtimes - Showing error:', errorMsg);
                         hideLoadingOverlay();
                         showErrorState(errorMsg, function() {
                             fetchShowtimes(city, country, state);
                         });
                     }).catch(function(e) {
+                        console.error('fetchShowtimes - Error parsing JSON:', e);
                         // If JSON parsing fails, use default message
                         errorMsg = 'Server error (' + scrapeResponse.status + '). Please check your API key configuration.';
                     hideLoadingOverlay();
@@ -3415,7 +3422,8 @@
                 }
                 });
             }).catch(function(e) {
-                console.error('Scrape error:', e);
+                console.error('fetchShowtimes - Request failed:', e);
+                console.error('fetchShowtimes - Error details:', e.message, e.stack);
                 // Stop animation on error
                 hideLoadingOverlay();
                 showErrorState('Error connecting to server. Please check your internet connection.', function() {
