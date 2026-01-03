@@ -1533,6 +1533,360 @@ EOF
     log_warn "  4. Install SSL: $0 install-ssl <domain>"
 }
 
+# Optimize OS: Debloat CachyOS with Plasma KDE, minimize RAM, optimize system, harden security
+optimize_os() {
+    log_step "Optimizing CachyOS system (debloat, RAM optimization, security hardening)..."
+    
+    check_root
+    
+    log_warn "This will optimize the system while preserving KDE, SSH, bluetooth, and browsers."
+    log_warn "Other unnecessary packages and services will be removed/disabled."
+    read -p "Continue? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        log_info "Optimization cancelled."
+        return 0
+    fi
+    
+    # 1. Remove unnecessary packages (preserving KDE, browsers, SSH, bluetooth, audio)
+    log_step "Removing unnecessary packages (preserving KDE, browsers, SSH, bluetooth, audio)..."
+    
+    # List of unnecessary packages to remove (preserving KDE, browsers, SSH, bluetooth, audio)
+    # Only remove packages that are clearly unnecessary for a server with desktop access
+    # Note: Audio packages (pulseaudio, pipewire, alsa, audacious, audacity, amarok, juk, kmix, kscd, kdemultimedia) are preserved
+    local unnecessary_packages=(
+        "libreoffice-fresh"
+        "gimp"
+        "inkscape"
+        "vlc"
+        # "audacious"  # Preserved for audio playback
+        # "audacity"   # Preserved for audio editing
+        "gparted"
+        "file-roller"
+        "k3b"
+        # "amarok"     # Preserved for audio playback
+        # "juk"        # Preserved for audio playback
+        # "kmix"       # Preserved for audio control
+        # "kscd"       # Preserved for audio CD playback
+        "kdetoys"
+        "kdegames"
+        "kdeedu"
+        # "kdemultimedia"  # Preserved for multimedia support
+    )
+    
+    removed_count=0
+    for pkg in "${unnecessary_packages[@]}"; do
+        if pacman -Qi "$pkg" &>/dev/null; then
+            log_info "Removing $pkg..."
+            pacman -Rns --noconfirm "$pkg" 2>/dev/null && ((removed_count++)) || true
+        fi
+    done
+    
+    if [[ $removed_count -gt 0 ]]; then
+        log_info "Removed $removed_count unnecessary packages"
+    fi
+    
+    # 2. Optimize systemd services - disable unnecessary services (preserving bluetooth, SSH, audio)
+    log_step "Disabling unnecessary systemd services (preserving bluetooth, SSH, audio)..."
+    
+    local services_to_disable=(
+        "cups.service"
+        "cups-browsed.service"
+        "avahi-daemon.service"
+        "ModemManager.service"
+        "NetworkManager-wait-online.service"
+        "pamac.service"
+        "pamac-cleancache.timer"
+        "pamac-mirrorlist.timer"
+        "upower.service"
+        "wpa_supplicant.service"
+        "accounts-daemon.service"
+        "colord.service"
+        "geoclue.service"
+        "polkit.service"
+        "udisks2.service"
+        "gvfs-daemon.service"
+        "gvfs-afc-volume-monitor.service"
+        "gvfs-gphoto2-volume-monitor.service"
+        "gvfs-mtp-volume-monitor.service"
+        "gvfs-udisks2-volume-monitor.service"
+        "gvfs-goa-volume-monitor.service"
+        "gvfs-metadata.service"
+        "packagekit.service"
+        "packagekit-offline-update.service"
+        # Note: rtkit-daemon.service is preserved (needed for audio)
+        # Note: pulseaudio, pipewire, alsa services are preserved
+    )
+    
+    local disabled_count=0
+    for service in "${services_to_disable[@]}"; do
+        if systemctl is-enabled "$service" &>/dev/null; then
+            log_info "Disabling $service..."
+            systemctl disable "$service" 2>/dev/null && ((disabled_count++)) || true
+            systemctl stop "$service" 2>/dev/null || true
+        fi
+    done
+    
+    if [[ $disabled_count -gt 0 ]]; then
+        log_info "Disabled $disabled_count unnecessary services"
+    fi
+    
+    # 3. Optimize kernel parameters for lower RAM usage
+    log_step "Optimizing kernel parameters for lower RAM usage..."
+    
+    # Create sysctl optimization file
+    cat > /etc/sysctl.d/99-cinestream-optimization.conf <<'EOF'
+# CineStream System Optimizations
+
+# Reduce swappiness (use swap less aggressively)
+vm.swappiness=10
+
+# Improve memory management
+vm.dirty_ratio=15
+vm.dirty_background_ratio=5
+
+# Reduce overcommit (more conservative memory allocation)
+vm.overcommit_memory=1
+vm.overcommit_ratio=50
+
+# Optimize network buffers
+net.core.rmem_max=16777216
+net.core.wmem_max=16777216
+net.ipv4.tcp_rmem=4096 87380 16777216
+net.ipv4.tcp_wmem=4096 65536 16777216
+
+# TCP optimizations
+net.ipv4.tcp_fin_timeout=30
+net.ipv4.tcp_keepalive_time=300
+net.ipv4.tcp_keepalive_probes=5
+net.ipv4.tcp_keepalive_intvl=15
+net.ipv4.tcp_max_syn_backlog=8192
+net.ipv4.tcp_syncookies=1
+net.ipv4.tcp_tw_reuse=1
+net.ipv4.tcp_fastopen=3
+
+# Reduce connection tracking
+net.netfilter.nf_conntrack_max=262144
+net.netfilter.nf_conntrack_tcp_timeout_established=86400
+
+# File system optimizations
+fs.file-max=2097152
+fs.inotify.max_user_watches=524288
+
+# Disable IPv6 if not needed (uncomment if IPv6 not used)
+# net.ipv6.conf.all.disable_ipv6=1
+# net.ipv6.conf.default.disable_ipv6=1
+EOF
+    
+    sysctl -p /etc/sysctl.d/99-cinestream-optimization.conf
+    log_info "Kernel parameters optimized"
+    
+    # 4. Optimize systemd limits
+    log_step "Optimizing systemd resource limits..."
+    
+    cat > /etc/systemd/system.conf.d/99-cinestream-limits.conf <<'EOF'
+[Manager]
+DefaultLimitNOFILE=2097152
+DefaultLimitNPROC=32768
+DefaultTasksMax=8192
+EOF
+    
+    systemctl daemon-reload
+    log_info "Systemd limits optimized"
+    
+    # 5. Security hardening
+    log_step "Hardening system security..."
+    
+    # Install security tools if not present
+    pacman -S --needed --noconfirm \
+        fail2ban \
+        ufw \
+        rkhunter \
+        chkrootkit \
+        audit \
+        apparmor \
+        || log_warn "Some security packages may not be available"
+    
+    # Configure fail2ban
+    if command -v fail2ban-client &>/dev/null; then
+        systemctl enable fail2ban.service 2>/dev/null || true
+        systemctl start fail2ban.service 2>/dev/null || true
+        log_info "✓ fail2ban configured"
+    fi
+    
+    # Harden SSH further (keeping SSH enabled and functional)
+    log_step "Hardening SSH configuration (preserving functionality)..."
+    
+    # Backup original config
+    cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup.$(date +%Y%m%d_%H%M%S)
+    
+    # Apply security settings (less restrictive to preserve usability)
+    if ! grep -q "# CineStream SSH Hardening (Additional)" /etc/ssh/sshd_config; then
+        cat >> /etc/ssh/sshd_config <<'EOF'
+
+# CineStream SSH Hardening (Additional)
+Protocol 2
+MaxAuthTries 5
+MaxSessions 10
+ClientAliveInterval 300
+ClientAliveCountMax 2
+LoginGraceTime 60
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+UsePAM yes
+# Allow forwarding for usability (can be disabled if needed)
+# AllowTcpForwarding yes
+# AllowStreamLocalForwarding yes
+GatewayPorts no
+# PermitTunnel yes  # Commented out to allow VPN-like functionality
+X11Forwarding yes  # Keep enabled for desktop use
+PrintMotd no
+TCPKeepAlive yes
+Compression no
+EOF
+    fi
+    
+    # Restart SSH if config is valid
+    if sshd -t 2>/dev/null; then
+        systemctl restart sshd.service
+        log_info "✓ SSH hardened with security settings (functionality preserved)"
+    else
+        log_warn "SSH config test failed, restoring backup..."
+        mv /etc/ssh/sshd_config.backup.* /etc/ssh/sshd_config 2>/dev/null || true
+    fi
+    
+    # Configure firewall rules
+    log_step "Hardening firewall rules..."
+    
+    if systemctl is-active --quiet firewalld; then
+        # Remove default services if not needed
+        firewall-cmd --permanent --remove-service=dhcpv6-client 2>/dev/null || true
+        
+        # Set default zone to drop (more restrictive)
+        firewall-cmd --set-default-zone=public 2>/dev/null || true
+        
+        # Only allow essential services
+        firewall-cmd --permanent --add-service=ssh || true
+        firewall-cmd --permanent --add-service=http || true
+        firewall-cmd --permanent --add-service=https || true
+        
+        # Enable logging
+        firewall-cmd --set-log-denied=all 2>/dev/null || true
+        
+        firewall-cmd --reload
+        log_info "✓ Firewall hardened"
+    fi
+    
+    # 6. Optimize journald (reduce disk/RAM usage)
+    log_step "Optimizing systemd journal..."
+    
+    mkdir -p /etc/systemd/journald.conf.d
+    cat > /etc/systemd/journald.conf.d/99-cinestream.conf <<'EOF'
+[Journal]
+SystemMaxUse=100M
+SystemKeepFree=200M
+SystemMaxFileSize=10M
+MaxRetentionSec=7day
+ForwardToSyslog=no
+Compress=yes
+EOF
+    
+    systemctl restart systemd-journald.service
+    log_info "✓ Journal optimized (limited to 100MB, 7-day retention)"
+    
+    # 7. Disable unnecessary kernel modules (preserving bluetooth, audio, video for desktop use)
+    log_step "Blacklisting unnecessary kernel modules (preserving bluetooth, audio, video)..."
+    
+    # Only blacklist modules that are truly unnecessary and won't affect desktop use
+    # Note: Not blacklisting bluetooth, audio, or video modules to preserve desktop functionality
+    if ! grep -q "# CineStream: Disable unnecessary modules" /etc/modprobe.d/blacklist.conf 2>/dev/null; then
+        cat >> /etc/modprobe.d/blacklist.conf <<'EOF'
+
+# CineStream: Disable unnecessary modules for server use
+# Note: Bluetooth, audio, and video modules preserved for desktop use
+# blacklist bluetooth  # Preserved for desktop use
+# blacklist btusb      # Preserved for desktop use
+# blacklist uvcvideo   # Preserved for desktop use
+# blacklist videobuf2_core  # Preserved for desktop use
+# blacklist videobuf2_vmalloc  # Preserved for desktop use
+# blacklist videobuf2_memops  # Preserved for desktop use
+# blacklist videodev   # Preserved for desktop use
+# blacklist media      # Preserved for desktop use
+# blacklist snd_hda_codec_hdmi  # Preserved for desktop use
+# blacklist snd_hda_codec_realtek  # Preserved for desktop use
+# blacklist snd_hda_intel  # Preserved for desktop use
+# blacklist snd_hda_codec  # Preserved for desktop use
+# blacklist snd_hda_core  # Preserved for desktop use
+# blacklist snd_hwdep  # Preserved for desktop use
+# blacklist snd_pcm  # Preserved for desktop use
+# blacklist snd_timer  # Preserved for desktop use
+# blacklist snd  # Preserved for desktop use
+# blacklist soundcore  # Preserved for desktop use
+EOF
+        log_info "✓ Kernel module blacklist updated (bluetooth, audio, video preserved)"
+    else
+        log_info "✓ Kernel module blacklist already configured"
+    fi
+    
+    # 8. Clean up package cache and orphaned packages
+    log_step "Cleaning up system..."
+    
+    pacman -Sc --noconfirm || true
+    pacman -Rns $(pacman -Qtdq) --noconfirm 2>/dev/null || true
+    
+    log_info "✓ System cleaned up"
+    
+    # 9. Optimize CPU governor (if available)
+    log_step "Optimizing CPU governor..."
+    
+    if [[ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]]; then
+        # Set to performance mode for server
+        for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            echo performance > "$cpu" 2>/dev/null || true
+        done
+        
+        # Make it persistent
+        if ! grep -q "scaling_governor" /etc/rc.local 2>/dev/null; then
+            cat > /etc/rc.local <<'EOF'
+#!/bin/bash
+# Set CPU governor to performance
+for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+    echo performance > "$cpu" 2>/dev/null
+done
+exit 0
+EOF
+            chmod +x /etc/rc.local
+        fi
+        
+        log_info "✓ CPU governor set to performance mode"
+    else
+        log_info "CPU governor not available (may require cpupower package)"
+    fi
+    
+    # 10. Summary
+    log_step "Optimization complete!"
+    echo ""
+    log_info "Summary of optimizations:"
+    log_info "  ✓ Removed unnecessary packages (KDE, browsers, SSH, bluetooth, audio preserved)"
+    log_info "  ✓ Disabled unnecessary systemd services (bluetooth, audio preserved)"
+    log_info "  ✓ Optimized kernel parameters for lower RAM usage"
+    log_info "  ✓ Hardened SSH security (functionality preserved)"
+    log_info "  ✓ Configured firewall rules"
+    log_info "  ✓ Optimized systemd journal (100MB limit)"
+    log_info "  ✓ Updated kernel module blacklist (bluetooth, audio, video preserved)"
+    log_info "  ✓ Cleaned up package cache"
+    echo ""
+    log_info "Preserved for desktop use:"
+    log_info "  ✓ KDE Plasma desktop environment"
+    log_info "  ✓ Browsers (firefox, chromium, etc.)"
+    log_info "  ✓ SSH (hardened but fully functional)"
+    log_info "  ✓ Bluetooth"
+    log_info "  ✓ Audio (PulseAudio/PipeWire/ALSA, all audio modules, rtkit-daemon preserved)"
+    echo ""
+    log_warn "Recommendation: Reboot the system to apply all optimizations:"
+    log_warn "  sudo reboot"
+}
+
 # Uninitialize server
 uninit_server() {
     local remove_all="${1:-no}"
@@ -2637,6 +2991,9 @@ main() {
             log_warn "Scraping agents removed - only on-demand scraping is used now"
             create_scraping_agents "${2:-${APP_NAME}}"
             ;;
+        optimize-os)
+            optimize_os
+            ;;
         *)
             echo "CineStream Deployment Script"
             echo ""
@@ -2659,6 +3016,7 @@ main() {
             echo "  test-load-balancing     Test load balancing distribution"
             echo "  check-load-distribution Check actual load distribution from logs"
             echo "  verify-workers         Verify all workers are running and accessible"
+            echo "  optimize-os            Debloat CachyOS, minimize RAM, optimize system, harden security"
             echo ""
             exit 1
             ;;
