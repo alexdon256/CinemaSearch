@@ -1244,6 +1244,49 @@ install_ssl() {
 enable_autostart() {
     log_step "Enabling autostart for all services..."
     
+    # Enable SSH - critical service that must always be enabled
+    local ssh_enabled=false
+    if systemctl enable sshd.service 2>/dev/null; then
+        log_info "✓ SSH autostart enabled (sshd.service)"
+        ssh_enabled=true
+    elif systemctl enable ssh.service 2>/dev/null; then
+        log_info "✓ SSH autostart enabled (ssh.service)"
+        ssh_enabled=true
+    else
+        # Check if SSH service file exists in common locations
+        local ssh_service_file=""
+        for location in \
+            "/usr/lib/systemd/system/sshd.service" \
+            "/etc/systemd/system/sshd.service" \
+            "/lib/systemd/system/sshd.service" \
+            "/usr/lib/systemd/system/ssh.service" \
+            "/etc/systemd/system/ssh.service" \
+            "/lib/systemd/system/ssh.service"; do
+            if [[ -f "$location" ]]; then
+                ssh_service_file="$location"
+                break
+            fi
+        done
+        
+        if [[ -n "$ssh_service_file" ]]; then
+            log_info "Found SSH service file at $ssh_service_file, enabling..."
+            if systemctl enable "$ssh_service_file" 2>/dev/null || systemctl enable sshd.service 2>/dev/null; then
+                log_info "✓ SSH autostart enabled (from file)"
+                ssh_enabled=true
+            fi
+        fi
+        
+        if [[ "$ssh_enabled" == "false" ]]; then
+            log_warn "SSH service not found or could not be enabled. This is critical for server access!"
+            log_warn "Try manually: systemctl enable sshd.service"
+        fi
+    fi
+    
+    # Ensure SSH is started (in case it was stopped)
+    if systemctl start sshd.service 2>/dev/null || systemctl start ssh.service 2>/dev/null; then
+        log_info "✓ SSH service started"
+    fi
+    
     # Enable CPU affinity services
     systemctl enable cinestream-cpu-affinity.service 2>/dev/null || log_warn "Failed to enable cinestream-cpu-affinity.service"
     systemctl enable cinestream-cpu-affinity.timer 2>/dev/null || log_warn "Failed to enable cinestream-cpu-affinity.timer"
