@@ -623,7 +623,12 @@ def normalize_location_name(name, location_type='city'):
 
 @app.route('/api/geocode', methods=['POST'])
 def api_geocode():
-    """Reverse geocode coordinates to get city, country, and region (normalized to English)"""
+    """
+    DEPRECATED: This endpoint is no longer used by the frontend.
+    Geocoding is now done client-side by calling Nominatim directly.
+    Kept for backward compatibility only.
+    Reverse geocode coordinates to get city, country, and region (normalized to English)
+    """
     try:
         data = request.get_json() or {}
         lat = data.get('lat')
@@ -783,7 +788,12 @@ def api_city_suggestions():
 
 @app.route('/api/geocode-ip', methods=['GET'])
 def api_geocode_ip():
-    """Fallback: Get location from IP address (when browser geolocation fails)"""
+    """
+    DEPRECATED: This endpoint is no longer used by the frontend.
+    IP geolocation is now done client-side by calling ip-api.com directly.
+    Kept for backward compatibility only.
+    Fallback: Get location from IP address (when browser geolocation fails)
+    """
     try:
         geo_data = detect_city_from_ip()
         if geo_data:
