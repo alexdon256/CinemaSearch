@@ -10,8 +10,7 @@ from datetime import datetime, timedelta
 
 # Available models (in order of cost, cheapest first)
 MODELS = {
-    'haiku': 'claude-3-5-haiku-20241022',    # Fastest, cheapest - good for structured tasks
-    'sonnet': 'claude-sonnet-4-20250514',     # Balanced performance/cost
+    'haiku': 'claude-haiku-4-5-20251001'
 }
 
 # Default to Haiku for cost efficiency (structured JSON extraction works well)
