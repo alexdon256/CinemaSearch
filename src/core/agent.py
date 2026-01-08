@@ -167,16 +167,53 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
                 raise ValueError("Prompt is empty")
             
             try:
-                message = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=8192,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ]
-                )
+                # Include web_search tool to enable internet browsing
+                tools = [{
+                    "type": "web_search_20250305",
+                    "name": "web_search",
+                    "max_uses": 12  # Allow multiple searches for finding cinema websites
+                }]
+                
+                # Start conversation with web search enabled
+                messages = [
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+                
+                # Handle tool use responses (may require multiple round trips)
+                max_iterations = 5
+                iteration = 0
+                message = None
+                
+                while iteration < max_iterations:
+                    message = self.client.messages.create(
+                        model=self.model,
+                        max_tokens=16384,
+                        messages=messages,
+                        tools=tools
+                    )
+                    
+                    # Check if response contains tool use
+                    if message.stop_reason == "tool_use":
+                        # Add assistant's tool use to messages
+                        messages.append({
+                            "role": "assistant",
+                            "content": message.content
+                        })
+                        
+                        # Add tool results (web search results are automatically included)
+                        # The API handles web search results automatically, so we continue
+                        iteration += 1
+                        continue
+                    else:
+                        # Final response received
+                        break
+                
+                if not message:
+                    raise ValueError("Failed to get response from API after multiple iterations")
+                    
             except Exception as api_error:
                 # Check if it's an API key/authentication error
                 error_str = str(api_error).lower()
@@ -189,7 +226,15 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
             if not message.content or len(message.content) == 0:
                 raise ValueError("Empty response from API")
             
-            response_text = message.content[0].text
+            # Extract text from response (handle both text and tool use content blocks)
+            response_text = ""
+            for content_block in message.content:
+                if content_block.type == "text":
+                    response_text += content_block.text
+                elif content_block.type == "tool_use":
+                    # Tool use blocks shouldn't appear in final response, but handle gracefully
+                    continue
+            
             if not response_text or not response_text.strip():
                 raise ValueError("Empty response text from API")
             
