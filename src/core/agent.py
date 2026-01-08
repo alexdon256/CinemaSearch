@@ -97,9 +97,15 @@ class ClaudeAgent:
         else:
             date_range_desc = f"from {start_date_str} to {end_date_str}"
         
-        prompt = f"""You are a web scraping agent. Your task is to find cinema websites in {location} and extract movie showtimes.
+        prompt = f"""You are a web scraping agent. Your task is to find cinema websites in {location} and extract movie showtimes using web_search.
 
-CRITICAL: Use the EXACT location specified below to avoid confusion with cities of the same name in other countries/states.
+CRITICAL INSTRUCTIONS:
+- Use the web_search tool extensively to find cinema websites and showtimes
+- web_search returns the FULL CONTENT of web pages, not just snippets - extract showtime data from the page content
+- Your FINAL response must be ONLY valid JSON - no explanatory text, no markdown, no code blocks
+- Do NOT include any text before or after the JSON
+- The response must start with {{ and end with }}
+- Use the EXACT location specified below to avoid confusion with cities of the same name
 
 Location Details:
 - City: {city}
@@ -107,29 +113,62 @@ Location Details:
 - Country: {country}
 - Full Location: {location}
 
-Requirements:
-1. Search for all official cinema chain websites operating SPECIFICALLY in {location}
-2. IMPORTANT: If there are multiple cities with the same name, ensure you are searching in {country}{f', {state}' if state else ''}, NOT other countries or states
-3. Look for major and minor cinema chains in that country/region (e.g., Multiplex, Planeta Kino for Ukraine; AMC, Regal, Cinemark for USA; Odeon, Vue, Cineworld for UK, etc.)
-4. Extract showtimes {date_range_desc} (or whatever is available on the cinema websites)
+SEARCH STRATEGY (use up to 12 web_search calls):
+1. Start with broad searches to identify cinema chains in {location}:
+   - Search: "[city] cinema showtimes [country]"
+   - Search: "[city] movie theaters [country]"
+   - Search: "[city] кинотеатр розклад" (for Ukrainian/Russian cities)
+   - Search: "cinema [city] [country] schedule"
+
+2. For each major cinema chain found, search specifically for their showtime pages:
+   - Search: "[cinema chain name] [city] showtimes"
+   - Search: "[cinema chain name] [city] schedule today"
+   - Search: "[cinema chain name] [city] movies playing"
+   - Try searching for the cinema's official website URL directly if found
+
+3. Look for major cinema chains in {country}:
+   - Ukraine: Multiplex, Planeta Kino, Cinema City, Oscar, etc.
+   - USA: AMC, Regal, Cinemark, Alamo Drafthouse, etc.
+   - UK: Odeon, Vue, Cineworld, Showcase, etc.
+   - Search for each chain specifically: "[chain name] [city] [country]"
+
+4. IMPORTANT: If there are multiple cities with the same name, ensure you are searching in {country}{f', {state}' if state else ''}, NOT other countries or states
+
+5. Extract showtime information from the FULL PAGE CONTENT returned by web_search:
+   - The web_search results contain the complete webpage HTML/content
+   - Look for showtime tables, schedules, movie listings in the page content
+   - Extract dates, times, movie titles, formats, languages from the page content
+   - If a page shows "today" or "this week", extract those showtimes
+
+DATA EXTRACTION REQUIREMENTS:
+6. Extract showtimes {date_range_desc}:
    - DO NOT include past showtimes
    - Only include showtimes that are at least 1 hour in the future
-5. For each movie, extract:
+   - Extract ALL available showtimes from the pages you access
+   - Convert times to ISO 8601 format with timezone (use local timezone of {location})
+
+7. For each movie found, extract:
    - Movie title (in local language, English, and other available languages: en, ua, ru)
-   - Movie description/synopsis (in multiple languages: en, ua, ru - extract from cinema websites or translate if needed)
-   - Movie poster/image URL (high-quality poster image URL if available)
+   - Movie description/synopsis (in multiple languages: en, ua, ru - extract from pages or use your knowledge)
+   - Movie poster/image URL (high-quality poster image URL if available in page content)
    - For each cinema showing this movie:
      * Cinema name and location/address (FULL address including street, building number, etc.)
-     * Cinema website URL (general website, not specific showtime links)
+     * Cinema website URL (general website URL)
      * Showtimes for this movie at this cinema:
-       - Start time (ISO 8601 format with timezone)
+       - Start time (ISO 8601 format with timezone - use the local timezone of {location})
        - Format (OPTIONAL - only include if available: 2D, 3D, IMAX, 4DX, Dolby Atmos, etc.)
        - Audio language / dubbing / subtitles information
        - Hall/room number if available
 
-6. Group by movie to avoid duplication - each movie should appear once with all its showtimes across all cinemas
+8. Group by movie to avoid duplication - each movie should appear once with all its showtimes across all cinemas
 
-Return your findings as a JSON structure with this format:
+9. USE ALL 12 WEB_SEARCH CALLS if needed:
+   - Don't stop after finding one cinema - search for multiple cinemas
+   - Try different search terms if initial searches don't return useful results
+   - Search for specific cinema websites and their showtime pages
+   - Be thorough - use all available searches to find as much data as possible
+
+OUTPUT FORMAT - Return ONLY this JSON structure (no other text):
 {{
     "city": "{city}",
     "state": "{state or ''}",
@@ -147,9 +186,9 @@ Return your findings as a JSON structure with this format:
                     "showtimes": [
                         {{
                             "start_time": "2025-12-20T18:00:00+02:00",
-                            "format": "2D",  // Optional: only include if available
+                            "format": "2D",
                             "language": "Ukrainian dubbing",
-                            "hall": "Hall 5"  // Optional
+                            "hall": "Hall 5"
                         }}
                     ]
                 }}
@@ -158,7 +197,17 @@ Return your findings as a JSON structure with this format:
     ]
 }}
 
-If you cannot find any valid showtimes, return {{"error": "No showtimes found for {location}"}}.
+ERROR HANDLING:
+- Only return an error if you have used multiple web_search calls (at least 5-6 searches) and still cannot find showtimes
+- If you find cinema websites but showtime pages are inaccessible, try searching for alternative terms or pages
+- If you cannot find any valid showtimes after thorough searching (using 8+ searches), return ONLY: {{"error": "No showtimes found for {location} - web scraping limitation"}}
+
+REMEMBER: 
+- Your response must be ONLY valid JSON, starting with {{ and ending with }}
+- No explanatory text, no markdown code blocks, no additional commentary
+- web_search returns FULL page content - extract showtimes from the HTML/content in the search results
+- Use all 12 available web_search calls to be thorough
+- Extract data from the page content returned by web_search, not just from search snippets
 """
         
         try:
@@ -182,34 +231,23 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
                     }
                 ]
                 
-                # Handle tool use responses (may require multiple round trips)
-                max_iterations = 5
-                iteration = 0
                 message = None
                 
-                while iteration < max_iterations:
-                    message = self.client.messages.create(
-                        model=self.model,
-                        max_tokens=16384,
-                        messages=messages,
-                        tools=tools
-                    )
+                message = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=16384,
+                    messages=messages,
+                    tools=tools
+                )
+                
+                # Check if response contains tool use
+                if message.stop_reason == "tool_use":
+                    # Add assistant's tool use to messages
+                    messages.append({
+                        "role": "assistant",
+                        "content": message.content
+                    })
                     
-                    # Check if response contains tool use
-                    if message.stop_reason == "tool_use":
-                        # Add assistant's tool use to messages
-                        messages.append({
-                            "role": "assistant",
-                            "content": message.content
-                        })
-                        
-                        # Add tool results (web search results are automatically included)
-                        # The API handles web search results automatically, so we continue
-                        iteration += 1
-                        continue
-                    else:
-                        # Final response received
-                        break
                 
                 if not message:
                     raise ValueError("Failed to get response from API after multiple iterations")
@@ -238,21 +276,53 @@ If you cannot find any valid showtimes, return {{"error": "No showtimes found fo
             if not response_text or not response_text.strip():
                 raise ValueError("Empty response text from API")
             
-            # Extract JSON from response (handle markdown code blocks)
+            # Extract JSON from response (handle markdown code blocks and text before/after)
             import json
             import re
             
-            # Try to extract JSON from markdown code blocks
-            json_match = re.search(r'```(?:json)?\s*(\{.*\})\s*```', response_text, re.DOTALL)
+            # First, try to extract JSON from markdown code blocks
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
             if json_match:
                 response_text = json_match.group(1)
             else:
-                # Try to find JSON object directly
-                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-                if json_match:
-                    response_text = json_match.group(0)
+                # Try to find JSON object directly (handle nested braces properly)
+                # Find all positions of opening braces
+                brace_positions = [i for i, char in enumerate(response_text) if char == '{']
+                
+                # Try parsing JSON starting from each opening brace
+                extracted_json = None
+                for start_pos in brace_positions:
+                    # Try to find the matching closing brace by counting
+                    brace_count = 0
+                    end_pos = -1
+                    for i in range(start_pos, len(response_text)):
+                        if response_text[i] == '{':
+                            brace_count += 1
+                        elif response_text[i] == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                end_pos = i
+                                break
+                    
+                    if end_pos != -1:
+                        # Try to parse this as JSON
+                        candidate = response_text[start_pos:end_pos+1]
+                        try:
+                            json.loads(candidate)  # Validate it's valid JSON
+                            extracted_json = candidate
+                            break
+                        except json.JSONDecodeError:
+                            continue
+                
+                if extracted_json:
+                    response_text = extracted_json
                 else:
-                    raise ValueError(f"No JSON found in response. Response: {response_text[:200]}")
+                    # Last resort: try simple regex
+                    json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                    if json_match:
+                        response_text = json_match.group(0)
+                    else:
+                        raise ValueError(f"No valid JSON found in response. Response: {response_text[:500]}")
             
             # Validate and parse JSON
             try:
