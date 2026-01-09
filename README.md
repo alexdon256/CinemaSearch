@@ -6,11 +6,11 @@
 
 ## Overview
 
-CineStream is a high-performance, localized movie showtime aggregation platform that leverages **Artificial Intelligence (Claude)** to dynamically discover and scrape cinema schedules on-demand. The system is architected for extreme concurrency using a shared-nothing parallel process model.
+CineStream is a high-performance, localized movie showtime aggregation platform that leverages **Artificial Intelligence (Google Gemini)** to dynamically discover and scrape cinema schedules on-demand. The system is architected for extreme concurrency using a shared-nothing parallel process model.
 
 ## Key Features
 
-- 🎬 **AI-Powered Scraping**: Uses Claude AI to discover and extract cinema showtimes automatically
+- 🎬 **AI-Powered Scraping**: Uses Google Gemini AI to discover and extract cinema showtimes automatically with step-by-step approach
 - 🎯 **Incremental Scraping**: Intelligently scrapes only missing date ranges, reducing API token usage by up to 93%
 - 📦 **Movie-Centric Data Model**: Efficient structure that stores movie images once per movie, not per showtime
 - 🌍 **Multi-Language Support**: Full localization for Ukrainian (UA), English (EN), and Russian (RU)
@@ -146,7 +146,7 @@ This command will:
 ├── src/                      # Application source code
 │   ├── main.py              # Web application entry point
 │   ├── core/
-│   │   ├── agent.py         # Claude AI agent wrapper
+│   │   ├── agent.py         # Gemini AI agent wrapper
 │   │   └── lock.py          # Concurrency locking
 │   ├── scripts/
 │   │   ├── init_db.py       # Database schema initialization
@@ -272,12 +272,13 @@ Applications deployed on the server require a `.env` file with:
 
 ```bash
 MONGO_URI=mongodb://user:pass@127.0.0.1:27017/movie_db?authSource=admin
-ANTHROPIC_API_KEY=sk-ant-api03-...
+GOOGLE_API_KEY=your-api-key-here
+# Alternative: GEMINI_API_KEY=your-api-key-here
 SECRET_KEY=your-secret-key-here
 
-# Optional: Claude model selection
-# Options: haiku (default, cheapest/fastest), sonnet (more capable)
-CLAUDE_MODEL=haiku
+# Optional: Gemini model selection
+# Options: flash (default, cheapest/fastest), pro (more capable)
+GEMINI_MODEL=flash
 ```
 
 Note: The `deploy.sh` script does not create or manage application deployments. You must deploy applications manually and configure them to work with the initialized server infrastructure.
@@ -288,8 +289,8 @@ These should be configured in your application's `.env` file.
 
 | Model | Cost | Speed | Best For |
 |-------|------|-------|----------|
-| `haiku` (default) | $0.25/$1.25 per 1M tokens | Fastest | Structured tasks, JSON extraction |
-| `sonnet` | $3/$15 per 1M tokens | Balanced | Complex reasoning if needed |
+| `flash` (default) | $0.15/$0.60 per 1M tokens | Fastest | Structured tasks, JSON extraction, web scraping |
+| `pro` | $1.25/$10.00 per 1M tokens | Balanced | Complex reasoning if needed |
 
 ## Database Schema
 
@@ -405,7 +406,7 @@ For deployment issues:
 
 ## Acknowledgments
 
-- **Claude AI** by Anthropic for intelligent web scraping
+- **Google Gemini AI** for intelligent web scraping with step-by-step approach
 - **CachyOS** for the optimized, performant Arch-based OS
 - **Let's Encrypt** for free SSL certificates
 - **MongoDB** for flexible document storage

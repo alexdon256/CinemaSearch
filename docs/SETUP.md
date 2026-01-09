@@ -11,7 +11,7 @@ Before starting, ensure you have:
 - **Internet connection** for downloading packages and MongoDB
 - **Public IP address** (for domain name resolution)
 - **Domain name** (optional, but required for HTTPS)
-- **Anthropic API key** (for Claude AI scraping)
+- **Google API key** (for Gemini AI scraping) - Get from https://aistudio.google.com/app/apikey
 
 ## Complete Setup Steps
 
@@ -34,7 +34,7 @@ sudo ./deploy.sh init-server
 - **Installs MongoDB via yay** - uses `mongodb-bin` package from AUR (preferred method)
   - Falls back to official repositories if AUR fails
   - Falls back to manual download if both fail
-- Installs Claude CLI tools
+- Installs Google Gemini API dependencies
 - Creates directory structure (`/var/www`)
 - Configures CPU affinity management
 - **Automatically deploys application:**
@@ -53,7 +53,7 @@ sudo ./deploy.sh init-server
 
 **Expected output:** You should see success messages for each component, including application deployment.
 
-**Important:** The `.env` file is created with a template. You **must** update the `ANTHROPIC_API_KEY` before the application will work properly.
+**Important:** The `.env` file is created with a template. You **must** update the `GOOGLE_API_KEY` before the application will work properly.
 
 **Verify installation:**
 ```bash
@@ -81,7 +81,7 @@ fi
 
 ### Step 2: Configure Environment Variables
 
-Update the `.env` file with your Anthropic API key.
+Update the `.env` file with your Google Gemini API key.
 
 ```bash
 # Edit .env file
@@ -89,13 +89,13 @@ sudo nano /var/www/cinestream/.env
 ```
 
 **Update the following:**
-- `ANTHROPIC_API_KEY` - Get from https://console.anthropic.com/
+- `GOOGLE_API_KEY` - Get from https://aistudio.google.com/app/apikey
 - `MONGO_URI` - Only if MongoDB authentication is enabled
 
 **The file already contains:**
 - Auto-generated `SECRET_KEY` (secure, no need to change)
 - Default `MONGO_URI` (works without authentication)
-- Default `CLAUDE_MODEL=haiku` (fastest/cheapest option)
+- Default `GEMINI_MODEL=flash` (cheapest/fastest option)
 
 **After updating, restart services:**
 ```bash
@@ -348,7 +348,7 @@ Here's the complete sequence of commands for a fresh setup:
 sudo ./deploy.sh init-server
 
 # 2. Configure environment variables
-sudo nano /var/www/cinestream/.env  # Update ANTHROPIC_API_KEY
+sudo nano /var/www/cinestream/.env  # Update GOOGLE_API_KEY
 sudo systemctl restart cinestream@*.service
 
 # 3. Initialize database (if not done automatically)

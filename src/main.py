@@ -992,9 +992,9 @@ def api_scrape():
     location_id = f"{city}, {state}, {country}" if state else f"{city}, {country}"
     
     # Check API key
-    if not os.getenv('ANTHROPIC_API_KEY'):
+    if not os.getenv('GOOGLE_API_KEY') and not os.getenv('GEMINI_API_KEY'):
         return _create_error_response(
-            'Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.',
+            'Google API key is not configured. Please set GOOGLE_API_KEY or GEMINI_API_KEY environment variable.',
             'api_key_error'
         )
     
@@ -1250,16 +1250,16 @@ def api_scrape():
         else:
             # Scraping failed
             error_msg = result.get('error', 'Unknown error')
-            is_api_key_error = 'api key' in error_msg.lower() or 'anthropic' in error_msg.lower() or 'authentication' in error_msg.lower()
+            is_api_key_error = 'api key' in error_msg.lower() or 'google' in error_msg.lower() or 'gemini' in error_msg.lower() or 'authentication' in error_msg.lower()
             _save_error_to_db(location_id, error_msg, is_api_key_error)
             release_lock(db, location_id)
             return _create_error_response(error_msg, 'api_key_error' if is_api_key_error else 'scraping_error')
             
     except ValueError as e:
         error_message = str(e)
-        is_api_key_error = 'ANTHROPIC_API_KEY' in error_message or 'api key' in error_message.lower() or 'api_key' in error_message.lower()
+        is_api_key_error = 'GOOGLE_API_KEY' in error_message or 'GEMINI_API_KEY' in error_message or 'api key' in error_message.lower() or 'api_key' in error_message.lower()
         if is_api_key_error:
-            error_message = 'Anthropic API key is not configured or invalid. Please check your ANTHROPIC_API_KEY environment variable.'
+            error_message = 'Google API key is not configured or invalid. Please check your GOOGLE_API_KEY or GEMINI_API_KEY environment variable.'
         if 'location_id' in locals():
             _save_error_to_db(location_id, error_message, is_api_key_error)
             release_lock(db, location_id)
@@ -1269,9 +1269,9 @@ def api_scrape():
     except Exception as e:
         error_message = str(e)
         error_str = error_message.lower()
-        is_api_key_error = 'api key' in error_str or 'anthropic' in error_str or 'authentication' in error_str or '401' in error_str or '403' in error_str
+        is_api_key_error = 'api key' in error_str or 'google' in error_str or 'gemini' in error_str or 'authentication' in error_str or '401' in error_str or '403' in error_str
         if is_api_key_error:
-            error_message = 'Anthropic API key is not configured or invalid. Please check your ANTHROPIC_API_KEY environment variable.'
+            error_message = 'Google API key is not configured or invalid. Please check your GOOGLE_API_KEY or GEMINI_API_KEY environment variable.'
         if 'location_id' in locals():
             _save_error_to_db(location_id, error_message, is_api_key_error)
             release_lock(db, location_id)

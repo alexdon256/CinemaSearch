@@ -606,12 +606,13 @@ MONGO_URI=mongodb://localhost:27017/movie_db
 # Flask Configuration
 SECRET_KEY=$(openssl rand -hex 32)
 
-# Anthropic API Configuration
-ANTHROPIC_API_KEY=your-api-key-here
-CLAUDE_MODEL=haiku
+# Google Gemini API Configuration
+GOOGLE_API_KEY=your-api-key-here
+# Alternative: GEMINI_API_KEY=your-api-key-here
+GEMINI_MODEL=flash
 EOF
         chmod 600 "${app_dir}/.env"
-        log_warn "Created .env file. Please update ANTHROPIC_API_KEY before using the application."
+        log_warn "Created .env file. Please update GOOGLE_API_KEY before using the application."
     fi
     
     # Create .deploy_config file
@@ -1504,12 +1505,13 @@ EOF
     
     # Initialize database (if API key is set)
     local app_dir="/var/www/${APP_NAME}"
-    if grep -q "ANTHROPIC_API_KEY=.*[^=]$" "${app_dir}/.env" 2>/dev/null && ! grep -q "ANTHROPIC_API_KEY=your-api-key-here" "${app_dir}/.env" 2>/dev/null; then
+    if (grep -q "GOOGLE_API_KEY=.*[^=]$" "${app_dir}/.env" 2>/dev/null && ! grep -q "GOOGLE_API_KEY=your-api-key-here" "${app_dir}/.env" 2>/dev/null) || \
+       (grep -q "GEMINI_API_KEY=.*[^=]$" "${app_dir}/.env" 2>/dev/null && ! grep -q "GEMINI_API_KEY=your-api-key-here" "${app_dir}/.env" 2>/dev/null); then
         log_info "Initializing database..."
         cd "${app_dir}"
         "${app_dir}/venv/bin/python" "${app_dir}/src/scripts/init_db.py" || log_warn "Database initialization failed (API key may be invalid)"
     else
-        log_warn "Database not initialized. Update ANTHROPIC_API_KEY in ${app_dir}/.env and run: ${app_dir}/venv/bin/python ${app_dir}/src/scripts/init_db.py"
+        log_warn "Database not initialized. Update GOOGLE_API_KEY in ${app_dir}/.env and run: ${app_dir}/venv/bin/python ${app_dir}/src/scripts/init_db.py"
     fi
     
     # Start all services (MongoDB, Nginx, and all workers)
@@ -1527,7 +1529,7 @@ EOF
     log_info "Server initialization complete!"
     log_info "Application is accessible at: http://localhost/${APP_NAME}/"
     log_warn "Don't forget to:"
-    log_warn "  1. Update ANTHROPIC_API_KEY in ${app_dir}/.env"
+    log_warn "  1. Update GOOGLE_API_KEY in ${app_dir}/.env"
     log_warn "  2. Initialize database: cd ${app_dir} && ./venv/bin/python src/scripts/init_db.py"
     log_warn "  3. Configure domain: $0 set-domain <domain>"
     log_warn "  4. Install SSL: $0 install-ssl <domain>"
@@ -2810,15 +2812,15 @@ stop_all() {
     log_info "All services stopped"
 }
 
-# Set Anthropic API key
-set_anthropic_key() {
+# Set Google Gemini API key
+set_google_key() {
     local api_key="${1:-}"
     local app_name="${2:-${APP_NAME}}"
     local app_dir="/var/www/${app_name}"
     
     if [[ -z "$api_key" ]]; then
         log_error "API key is required"
-        log_info "Usage: $0 set-anthropic-key <api-key> [app-name]"
+        log_info "Usage: $0 set-google-key <api-key> [app-name]"
         exit 1
     fi
     
@@ -2838,35 +2840,42 @@ MONGO_URI=mongodb://localhost:27017/movie_db
 # Flask Configuration
 SECRET_KEY=$(openssl rand -hex 32)
 
-# Anthropic API Configuration
-ANTHROPIC_API_KEY=${api_key}
-CLAUDE_MODEL=haiku
+# Google Gemini API Configuration
+GOOGLE_API_KEY=${api_key}
+GEMINI_MODEL=flash
 EOF
         chmod 600 "${app_dir}/.env"
         log_info "✓ Created .env file with API key"
     else
         # Update existing .env file
-        log_info "Updating ANTHROPIC_API_KEY in ${app_dir}/.env..."
+        log_info "Updating GOOGLE_API_KEY in ${app_dir}/.env..."
         
         # Backup .env file
         cp "${app_dir}/.env" "${app_dir}/.env.backup.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
         
-        # Update or add ANTHROPIC_API_KEY
+        # Remove old Anthropic key if exists
         if grep -q "^ANTHROPIC_API_KEY=" "${app_dir}/.env" 2>/dev/null; then
+            if [[ "$(uname)" == "Darwin" ]]; then
+                sed -i '' "/^ANTHROPIC_API_KEY=/d" "${app_dir}/.env"
+            else
+                sed -i "/^ANTHROPIC_API_KEY=/d" "${app_dir}/.env"
+            fi
+        fi
+        
+        # Update or add GOOGLE_API_KEY
+        if grep -q "^GOOGLE_API_KEY=" "${app_dir}/.env" 2>/dev/null; then
             # Update existing key
             if [[ "$(uname)" == "Darwin" ]]; then
-                # macOS sed
-                sed -i '' "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${api_key}|" "${app_dir}/.env"
+                sed -i '' "s|^GOOGLE_API_KEY=.*|GOOGLE_API_KEY=${api_key}|" "${app_dir}/.env"
             else
-                # Linux sed
-                sed -i "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${api_key}|" "${app_dir}/.env"
+                sed -i "s|^GOOGLE_API_KEY=.*|GOOGLE_API_KEY=${api_key}|" "${app_dir}/.env"
             fi
         else
             # Add new key
-            echo "ANTHROPIC_API_KEY=${api_key}" >> "${app_dir}/.env"
+            echo "GOOGLE_API_KEY=${api_key}" >> "${app_dir}/.env"
         fi
         
-        log_info "✓ Updated ANTHROPIC_API_KEY in .env file"
+        log_info "✓ Updated GOOGLE_API_KEY in .env file"
     fi
     
     # Get port range from .deploy_config if available
@@ -2908,9 +2917,9 @@ main() {
             check_root
             install_ssl "${2:-}" "${3:-${APP_NAME}}"
             ;;
-        set-anthropic-key)
+        set-google-key)
             check_root
-            set_anthropic_key "${2:-}" "${3:-${APP_NAME}}"
+            set_google_key "${2:-}" "${3:-${APP_NAME}}"
             ;;
         status)
             show_status
@@ -3004,7 +3013,7 @@ main() {
             echo "  uninit-server [yes]     Remove all components (preserves MongoDB/Nginx unless 'yes')"
             echo "  set-domain <domain>      Configure domain name for application"
             echo "  install-ssl <domain>    Install SSL certificate for domain"
-            echo "  set-anthropic-key <key> Set Anthropic API key in .env file"
+            echo "  set-google-key <key> Set Google Gemini API key in .env file"
             echo "  status                  Show server status"
             echo "  start-all               Start all services"
             echo "  stop-all                Stop all services"

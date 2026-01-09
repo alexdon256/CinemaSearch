@@ -47,7 +47,7 @@ This document provides a comprehensive overview of the CineStream system archite
          └────────────────────────────────┘
                          │
          ┌───────────────▼────────────────┐
-         │    Claude AI API (Anthropic)   │
+         │    Google Gemini API           │
          │    (On-Demand Scraping)        │
          └────────────────────────────────┘
 ```
@@ -278,7 +278,7 @@ server {
 Every worker process can spawn its own AI agent:
 
 ```
-Request → Worker Process → ClaudeAgent → Claude API → Response
+Request → Worker Process → GeminiAgent → Gemini API → Response
 ```
 
 ### Agent Characteristics
@@ -296,7 +296,7 @@ Request → Worker Process → ClaudeAgent → Claude API → Response
 3. If stale/missing:
    a. Determine date range to scrape (incremental scraping)
    b. Acquire lock (atomic MongoDB operation)
-   c. Spawn ClaudeAgent with date range
+   c. Spawn GeminiAgent with date range
    d. Agent searches web for cinema websites
    e. Agent extracts showtimes organized by movie
    f. Agent returns movie-centric structure (movies → theaters → showtimes)
@@ -352,7 +352,7 @@ Requirements:
 7. Worker 5 (same worker due to sticky session):
    - Checks MongoDB lock status
    - If not locked, acquires lock
-   - Spawns ClaudeAgent
+   - Spawns GeminiAgent
    - Agent scrapes web
    - Stores results in MongoDB
    - Releases lock
@@ -374,7 +374,7 @@ Requirements:
 3. For each city in locations collection:
    a. Determine date range to scrape (incremental)
    b. Acquire lock
-   c. Spawn ClaudeAgent with date range
+   c. Spawn GeminiAgent with date range
    d. Scrape fresh data (only missing dates)
    e. Merge new movies/theaters with existing data
    f. Update MongoDB
@@ -635,7 +635,7 @@ server {
   - **Nginx**: Uses P-cores (0-5) for efficient request routing and SSL processing
   - **Python Workers**: Use E-cores (6-13) for efficient parallel request handling
   - Minimal when idle, spikes during AI scraping
-- **Network**: Moderate (API calls to Claude)
+- **Network**: Moderate (API calls to Gemini)
 - **CPU Affinity**: Automatically maintained via systemd services and timer
 
 ## Security Considerations
@@ -674,7 +674,7 @@ Key metrics to monitor:
 - **Response Time**: P50, P95, P99 latencies
 - **Error Rate**: 5xx errors per minute
 - **Lock Contention**: How often locks are acquired
-- **AI API Usage**: Claude API calls per hour
+- **AI API Usage**: Gemini API calls per hour
 
 ## Future Enhancements
 

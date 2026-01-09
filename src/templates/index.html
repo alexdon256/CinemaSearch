@@ -3397,7 +3397,7 @@
                         hideLoadingOverlay();
                         var errorMsg = data.message || data.error || data.error_message || 'An error occurred while fetching showtimes.';
                         if (data.error_type === 'api_key_error') {
-                            errorMsg = 'Anthropic API key is not configured or invalid. Please check your ANTHROPIC_API_KEY environment variable.';
+                            errorMsg = 'Google API key is not configured or invalid. Please check your GOOGLE_API_KEY or GEMINI_API_KEY environment variable.';
                         } else if (data.error_type === 'location_verification_failed') {
                             errorMsg = errorMsg || 'Location not found. Please verify the city, state, and country names are correct.';
                         }
