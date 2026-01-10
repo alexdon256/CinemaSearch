@@ -33,8 +33,8 @@ This document provides a comprehensive overview of the CineStream system archite
          ┌───────────────┴────────────────┐
          │                                 │
     ┌────▼────┐  ┌────▼────┐  ┌────▼────┐
-    │Worker 1 │  │Worker 2 │  │Worker 3 │  ...  │Worker 20│
-    │:8001    │  │:8002    │  │:8003    │       │:8020    │
+    │Worker 1 │  │Worker 2 │  │Worker 3 │  ...  │Worker 12│
+    │:8001    │  │:8002    │  │:8003    │       │:8012    │
     │E-cores  │  │E-cores  │  │E-cores  │       │E-cores  │
     └────┬────┘  └────┬────┘  └────┬────┘       └────┬────┘
          │            │            │                  │
@@ -80,7 +80,7 @@ The system is optimized for Intel i9-12900HK processors with hybrid architecture
 │                   - Reverse proxy                │
 ├─────────────────────────────────────────────────┤
 │  E-Cores (6-13):  Python Application Workers     │
-│                   - 20 worker processes          │
+│                   - 12 worker processes           │
 │                   - HTTP request handling        │
 │                   - AI agent spawning            │
 │                   - Parallel processing          │
@@ -150,8 +150,8 @@ The system includes automatic CPU affinity management:
 
 ### Process Count
 
-- **Default**: 20 Python worker processes per application
-- **Rationale**: 8 E-cores can efficiently handle 20 processes (processes share cores, with hyperthreading support)
+- **Default**: 12 Python worker processes per application
+- **Rationale**: 8 E-cores can efficiently handle 12 processes (processes share cores efficiently)
 - **Configurable**: Process count can be configured during deployment
 
 For detailed CPU affinity configuration and troubleshooting, see [CPU_AFFINITY.md](CPU_AFFINITY.md).
@@ -164,8 +164,8 @@ The system uses a **shared-nothing architecture** to maximize CPU utilization an
 
 ### Key Characteristics
 
-- **10 Independent Processes**: Each application runs as 10 separate OS processes (default)
-- **Unique Port Binding**: Each process binds to a unique port (e.g., 8001-8010)
+- **12 Independent Processes**: Each application runs as 12 separate OS processes (default)
+- **Unique Port Binding**: Each process binds to a unique port (e.g., 8001-8012)
 - **No Shared Memory**: Processes communicate only via MongoDB
 - **Stateless Workers**: Each process is independent and can be restarted individually
 - **CPU Affinity**: All workers run on E-cores (6-13) for efficient parallel processing
@@ -194,7 +194,7 @@ Process Shutdown:
 
 ### Benefits
 
-- **High Concurrency**: 20 processes can handle 20x more concurrent requests
+- **High Concurrency**: 12 processes can handle 12x more concurrent requests
 - **Fault Isolation**: One crashed process doesn't affect others
 - **Horizontal Scaling**: Easy to add more processes
 - **GIL Bypass**: Each process has its own Python interpreter
@@ -221,7 +221,7 @@ Each application is completely isolated:
 
 ```
 /var/www/
-├── cinestream/           (First app - ports 8001-8020)
+├── cinestream/           (First app - ports 8001-8012)
 │   ├── .env              (Isolated secrets)
 │   ├── .deploy_config    (Port range, domain, etc.)
 │   ├── venv/             (Isolated Python environment)
@@ -243,9 +243,9 @@ Each application is completely isolated:
 
 ### Automatic Port Assignment
 
-- **First app**: Ports 8001-8020 (20 processes)
-- **Second app**: Ports 8021-8040 (20 processes)
-- **Third app**: Ports 8041-8060 (20 processes)
+- **First app**: Ports 8001-8012 (12 processes)
+- **Second app**: Ports 8013-8024 (12 processes)
+- **Third app**: Ports 8025-8036 (12 processes)
 - Ports are automatically assigned to avoid conflicts
 
 ### Nginx Routing
@@ -288,7 +288,7 @@ Request → Worker Process → GeminiAgent → Gemini API → Response
 - **Independent**: Each agent operates in isolation
 - **Parallel**: Multiple agents can run simultaneously
 
-### Scraping Workflow
+### Scraping Workflow (Step-by-Step Approach)
 
 ```
 1. User requests showtimes for "Kyiv"
@@ -297,14 +297,22 @@ Request → Worker Process → GeminiAgent → Gemini API → Response
    a. Determine date range to scrape (incremental scraping)
    b. Acquire lock (atomic MongoDB operation)
    c. Spawn GeminiAgent with date range
-   d. Agent searches web for cinema websites
-   e. Agent extracts showtimes organized by movie
-   f. Agent returns movie-centric structure (movies → theaters → showtimes)
-   g. Merge new data with existing movies/theaters
-   h. Store results in MongoDB
+   d. Step 1: Agent finds all theaters with websites in the city
+   e. Step 2: Agent finds all movies currently playing in those theaters
+   f. Step 3: For each movie, scrape showtimes day-by-day across all theaters
+      - One query per movie per day
+      - Continues until 2 weeks ahead or no movies found
+      - Tracks last showtime date to maintain 2-week coverage
+   g. Merge all results by movie title
+   h. Store results in MongoDB (movie-centric structure)
    i. Release lock
 4. Return showtimes to user (flattened for frontend compatibility)
 ```
+
+**Query Structure**: `movies × days` queries (e.g., 15 movies × 14 days = 210 queries)
+- More efficient than theater-by-theater approach
+- Better data quality and coverage
+- Automatic extension if movies have showtimes beyond initial range
 
 ### Incremental Scraping
 
@@ -317,17 +325,33 @@ This optimization significantly reduces API token usage while maintaining comple
 
 ### Agent Prompt Structure
 
-The agent receives a structured prompt with date range:
+The agent uses a step-by-step approach with separate prompts:
 
+**Step 1: Find Theaters**
 ```
-Task: Scrape showtimes for city "X" from date Y to date Z
-Requirements:
-- Find official cinema websites
-- Extract showtimes in specified date range only
-- Group by movie (movies → theaters → showtimes)
-- Return cinema website (not per-showtime links)
-- Return structured JSON
+Task: Find all cinema/theater websites in [location]
+Return: JSON array with name, address, website
 ```
+
+**Step 2: Find Movies**
+```
+Task: Find all movies currently playing in cinemas in [location]
+Theaters: [list of theaters]
+Return: JSON array with movie_title, movie_description, movie_image_url
+```
+
+**Step 3: Scrape Movie Day**
+```
+Task: Find showtimes for "[movie]" on [date] in [location]
+Theaters to check: [list of theaters]
+Return: JSON with theaters array, each containing showtimes for that day
+```
+
+This decomposition allows:
+- More focused queries (better accuracy)
+- Lower token usage per query
+- Better error handling (can retry individual steps)
+- Automatic date extension tracking
 
 ## Data Flow
 
@@ -353,7 +377,10 @@ Requirements:
    - Checks MongoDB lock status
    - If not locked, acquires lock
    - Spawns GeminiAgent
-   - Agent scrapes web
+   - Agent executes step-by-step scraping:
+     * Finds theaters
+     * Finds movies
+     * Scrapes each movie day-by-day
    - Stores results in MongoDB
    - Releases lock
    ↓
@@ -364,29 +391,33 @@ Requirements:
 10. Displays showtimes to user
 ```
 
-### Daily Refresh Flow
+### On-Demand Scraping Flow
 
 ```
-1. Systemd timer triggers at 06:00 AM
+1. User requests showtimes for a city
    ↓
-2. daily_refresh.py script runs
+2. Worker checks MongoDB for data freshness
    ↓
-3. For each city in locations collection:
+3. If data is stale or missing:
    a. Determine date range to scrape (incremental)
-   b. Acquire lock
+   b. Acquire lock (prevents duplicate scraping)
    c. Spawn GeminiAgent with date range
-   d. Scrape fresh data (only missing dates)
-   e. Merge new movies/theaters with existing data
+   d. Agent executes step-by-step scraping:
+      - Finds theaters
+      - Finds movies
+      - Scrapes each movie day-by-day
+   e. Merge new data with existing movies/theaters
    f. Update MongoDB
    g. Release lock
    ↓
-4. Log results
+4. Return showtimes to user
 ```
 
 **Incremental Scraping Benefits**:
-- If city has 2 weeks of data: Only scrapes day 14 (saves ~93% API tokens)
+- If city has 2 weeks of data: Only scrapes missing days (saves API tokens)
 - If city missing data: Scrapes from latest date to 2 weeks ahead
 - Prevents duplicate scraping of existing data
+- Automatic date extension: If last showtime is 5 days out, next search extends to maintain 2-week coverage
 
 ## Concurrency Control
 
@@ -592,7 +623,7 @@ upstream movie_app_backend {
     ip_hash;  # Sticky sessions
     server 127.0.0.1:8001;
     server 127.0.0.1:8002;
-    # ... up to 8020 (20 workers, E-cores 6-13)
+    # ... up to 8012 (12 workers, E-cores 6-13)
 }
 
 server {
@@ -691,7 +722,7 @@ Key metrics to monitor:
 
 The CineStream architecture is designed for:
 
-- **High Concurrency**: 20 processes handle thousands of requests
+- **High Concurrency**: 12 processes handle thousands of requests
 - **CPU Optimization**: P-cores for database, E-cores for application workers
 - **Reliability**: Process isolation prevents cascading failures
 - **Scalability**: Easy to add more apps or processes

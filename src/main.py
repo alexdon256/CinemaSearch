@@ -8,7 +8,7 @@ import os
 import sys
 import argparse
 import smtplib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from flask import Flask, render_template, request, session, jsonify, redirect, url_for
@@ -1048,53 +1048,112 @@ def api_scrape():
         return jsonify({'status': 'processing', 'message': message}), 202
     
     try:
-        # Determine date range to scrape (incremental scraping - only missing days)
-        date_start, date_end = get_date_range_to_scrape(location_id)
+        from datetime import timedelta, timezone
         
-        # Check if there's actually a date range to scrape (if all dates are present, range will be very small)
-        time_diff = (date_end - date_start).total_seconds()
-        if time_diff < 3600:  # Less than 1 hour means no real date range to scrape
-            # All dates are already present
+        # Get existing showtime dates per movie/theater to optimize scraping
+        # This allows the agent to skip dates/theaters that already have complete data
+        existing_data = get_existing_showtime_dates(location_id)
+        
+        # Determine date range: always scrape from today to 14 days ahead
+        # The agent will use existing_data to intelligently skip what's not needed
+        now = datetime.now(timezone.utc)
+        today = now.date()
+        two_weeks_from_today = today + timedelta(days=14)
+        date_start = now
+        date_end = datetime.combine(two_weeks_from_today, datetime.max.time()).replace(tzinfo=timezone.utc)
+        
+        # Check if we can skip scraping entirely (only if data is complete AND recently verified)
+        # This is a performance optimization - we still need to discover new movies periodically
+        should_skip_scraping = False
+        if existing_data:
+            # Check if all existing movies/theaters have data up to 14 days ahead
+            all_up_to_date = True
+            for title_key, theater_dates in existing_data.items():
+                if not theater_dates:  # No theaters for this movie
+                    all_up_to_date = False
+                    break
+                for theater_key, latest_date in theater_dates.items():
+                    # Ensure latest_date is a date object for comparison
+                    if isinstance(latest_date, datetime):
+                        latest_date = latest_date.date()
+                    elif not isinstance(latest_date, date):
+                        all_up_to_date = False
+                        break
+                    
+                    # If any theater has data less than 14 days ahead, we need to scrape
+                    if latest_date < two_weeks_from_today:
+                        all_up_to_date = False
+                        break
+                if not all_up_to_date:
+                    break
+            
+            # Only skip if data is complete AND we've verified recently (within 24 hours)
+            # This ensures we still discover new movies periodically
+            if all_up_to_date:
+                location = db.locations.find_one({'city_name': location_id})
+                if location:
+                    last_updated = location.get('last_updated')
+                    if last_updated:
+                        if isinstance(last_updated, datetime):
+                            hours_since_update = (now - last_updated).total_seconds() / 3600
+                            # If updated within 24 hours and data is complete, we can skip
+                            if hours_since_update < 24:
+                                should_skip_scraping = True
+        
+        if should_skip_scraping:
+            # Data is complete and recently verified - no scraping needed
+            # This is safe because:
+            # 1. All existing movies/theaters have 14 days of data
+            # 2. We verified this within the last 24 hours
+            # 3. We'll check again on the next request (after 24 hours)
             showtimes = get_showtimes_for_city(location_id)
             return _create_success_response({
                 'status': 'fresh',
-                'message': 'Data is up to date (all dates covered)',
+                'message': 'Data is up to date (all dates covered, verified recently)',
                 'showtimes': showtimes
             })
         
-        # Spawn AI agent to scrape only the missing date range
+        # Spawn AI agent to scrape
+        # The agent will:
+        # 1. Find theaters (Step 1) - discovers new theaters
+        # 2. Find movies (Step 2) - discovers new movies
+        # 3. Scrape showtimes (Step 3) - skips dates/theaters that already have data
         agent = ClaudeAgent()
-        result = agent.scrape_city_showtimes(city, country, state, date_start, date_end)
+        result = agent.scrape_city_showtimes(city, country, state, date_start, date_end, existing_data=existing_data)
         
         if result.get('success'):
-            # Only update status to 'fresh' if we actually got movies
-            # Don't mark as 'fresh' if scraping "succeeded" but returned no movies or had errors
+            # Scraping succeeded - update status to 'fresh'
+            # Even if no new movies were found, the scraping process:
+            # 1. Verified existing data completeness
+            # 2. Discovered any new theaters/movies
+            # 3. Updated any missing showtimes
+            
             movies_found = result.get('movies') and len(result.get('movies', [])) > 0
             
-            if movies_found:
-                # Update location status with city/state/country info
-                # IMPORTANT: Clear error_message when scraping succeeds (so we don't show stale errors)
-                db.locations.update_one(
-                    {'city_name': location_id},
-                    {
-                        '$set': {
-                            'city': city,
-                            'state': state or '',
-                            'country': country,
-                            'status': 'fresh',
-                            'last_updated': datetime.now(timezone.utc)
-                        },
-                        '$unset': {
-                            'error_message': ''  # Clear any previous error messages on success
-                        }
+            # Always update status to 'fresh' on successful scrape
+            # The agent's per-movie/theater optimization ensures we only scrape what's needed
+            # If scraping succeeded, it means we've verified/updated the data
+            db.locations.update_one(
+                {'city_name': location_id},
+                {
+                    '$set': {
+                        'city': city,
+                        'state': state or '',
+                        'country': country,
+                        'status': 'fresh',
+                        'last_updated': datetime.now(timezone.utc)
                     },
-                    upsert=True
-                )
-            else:
-                # Scraping "succeeded" but no movies found - don't mark as 'fresh'
-                # Keep existing status (might be 'error' or 'stale')
-                print(f"Scraping succeeded but no movies found for {location_id}, not updating status to 'fresh'")
-                # Don't update status - leave it as is (could be 'error' from previous attempt)
+                    '$unset': {
+                        'error_message': ''  # Clear any previous error messages on success
+                    }
+                },
+                upsert=True
+            )
+            
+            if not movies_found:
+                # Scraping succeeded but no new movies found
+                # This is normal when all data was already up to date
+                print(f"Scraping succeeded for {location_id} but no new movies found (all data was up to date)")
             
             # Insert/update movies (merge with existing, don't delete first)
             if result.get('movies'):
@@ -1279,33 +1338,50 @@ def api_scrape():
         print(f"Scraping error: {traceback.format_exc()}")
         return _create_error_response(error_message, 'api_key_error' if is_api_key_error else 'scraping_error')
 
-def get_date_range_to_scrape(city_id):
+def _normalize_theater_key(name: str, address: str):
+    """Normalize theater name and address for consistent matching"""
+    # Normalize: lowercase, strip, remove extra spaces
+    normalized_name = ' '.join(name.lower().strip().split())
+    normalized_address = ' '.join(address.lower().strip().split())
+    return (normalized_name, normalized_address)
+
+def get_existing_showtime_dates(city_id):
     """
-    Determine what date range needs to be scraped (incremental - only missing days).
-    Only scrapes missing days up to 2 weeks total from today.
-    Returns (start_date, end_date) - only the missing date range.
+    Get existing showtime dates per movie/theater combination.
+    Returns a dict: {movie_title_key: {(theater_name, theater_address): latest_date}}
     
-    Example: If we have 5 days of data, only scrape days 6-14 (to complete 2 weeks).
+    This allows the agent to skip scraping dates that already have data.
+    Keys are normalized for consistent matching.
     """
     from datetime import timedelta, timezone
     
-    now = datetime.now(timezone.utc)
-    today = now.date()
-    two_weeks_from_today = today + timedelta(days=14)
-    
-    # Find all movies for this city
     movies = list(db.movies.find({'city_id': city_id}))
+    existing_data = {}  # movie_title_key -> {(theater_name, theater_address): latest_date}
     
-    if not movies:
-        # No data yet, scrape full 2 weeks range
-        return now, datetime.combine(two_weeks_from_today, datetime.max.time()).replace(tzinfo=timezone.utc)
-    
-    # Collect all unique dates that have showtimes
-    dates_with_data = set()
     for movie in movies:
+        movie_title = movie.get('movie', {})
+        if isinstance(movie_title, dict):
+            title_key = movie_title.get('en') or movie_title.get('local') or movie_title.get('ua') or ''
+        else:
+            title_key = str(movie_title) if movie_title else ''
+        
+        if not title_key:
+            continue
+        
+        title_key = title_key.lower().strip()
+        
         theaters = movie.get('theaters', [])
+        theater_dates = {}  # (theater_name, theater_address) -> latest_date
+        
         for theater in theaters:
+            theater_name = theater.get('name', '')
+            theater_address = theater.get('address', '')
+            # Normalize theater key for consistent matching
+            theater_key = _normalize_theater_key(theater_name, theater_address)
+            
             showtimes = theater.get('showtimes', [])
+            latest_date = None
+            
             for st in showtimes:
                 start_time = st.get('start_time')
                 if isinstance(start_time, datetime):
@@ -1315,36 +1391,17 @@ def get_date_range_to_scrape(city_id):
                     else:
                         start_time_utc = start_time.astimezone(timezone.utc)
                     # Get the date (ignore time)
-                    date_with_data = start_time_utc.date()
-                    dates_with_data.add(date_with_data)
+                    showtime_date = start_time_utc.date()
+                    if latest_date is None or showtime_date > latest_date:
+                        latest_date = showtime_date
+            
+            if latest_date:
+                theater_dates[theater_key] = latest_date
+        
+        if theater_dates:
+            existing_data[title_key] = theater_dates
     
-    if not dates_with_data:
-        # No valid showtimes found, scrape full range
-        return now, datetime.combine(two_weeks_from_today, datetime.max.time()).replace(tzinfo=timezone.utc)
-    
-    # Find missing dates between today and 2 weeks from today
-    missing_dates = []
-    current_date = today
-    while current_date <= two_weeks_from_today:
-        if current_date not in dates_with_data:
-            missing_dates.append(current_date)
-        current_date += timedelta(days=1)
-    
-    if not missing_dates:
-        # We already have all 14 days, no scraping needed
-        # Return a very small range (just today) to indicate no new data needed
-        # But the caller should handle this case
-        return now, now + timedelta(hours=1)
-    
-    # Scrape only the missing date range
-    scrape_start_date = min(missing_dates)
-    scrape_end_date = max(missing_dates)
-    
-    # Convert to datetime (start of first missing day, end of last missing day)
-    scrape_start = datetime.combine(scrape_start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
-    scrape_end = datetime.combine(scrape_end_date, datetime.max.time()).replace(tzinfo=timezone.utc)
-    
-    return scrape_start, scrape_end
+    return existing_data
 
 def get_showtimes_for_city(city_name):
     """Helper to get formatted showtimes for a city (flattened from movies structure)"""

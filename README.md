@@ -14,18 +14,18 @@ CineStream is a high-performance, localized movie showtime aggregation platform 
 - 🎯 **Incremental Scraping**: Intelligently scrapes only missing date ranges, reducing API token usage by up to 93%
 - 📦 **Movie-Centric Data Model**: Efficient structure that stores movie images once per movie, not per showtime
 - 🌍 **Multi-Language Support**: Full localization for Ukrainian (UA), English (EN), and Russian (RU)
-- ⚡ **High Concurrency**: 20 parallel worker processes per application for maximum throughput
+- ⚡ **High Concurrency**: 12 parallel worker processes per application for maximum throughput
 - 🔒 **Enterprise Security**: SSL/TLS encryption, secure environment variables, MongoDB authentication
 - 🎨 **Modern UI**: Professional, responsive design with donation integration
 - 📊 **Visitor Analytics**: Built-in visitor counter with MongoDB persistence
-- 🔄 **Automated Refresh**: Daily background jobs to keep data fresh
+- 🔄 **On-Demand Scraping**: Data is scraped on-demand when users request showtimes
 - 🚀 **Auto-Start on Boot**: All services configured to start automatically on system boot
 
 ## Architecture Highlights
 
 ### Shared-Nothing Parallel Model
 
-- **10 Independent Processes**: Each application runs as 10 separate OS processes
+- **12 Independent Processes**: Each application runs as 12 separate OS processes
 - **Sticky Sessions**: Nginx uses `ip_hash` to route users to the same backend process
 - **GIL Bypass**: Each process has its own Python interpreter, bypassing the GIL
 - **Fault Isolation**: One crashed process doesn't affect others
@@ -49,7 +49,7 @@ This installs:
 - Python 3, Nginx, Git, Node.js, Go
 - yay (AUR helper) - automatically installed if not present
 - MongoDB (via yay/AUR - mongodb-bin package)
-- Claude CLI tools
+- Google Gemini API dependencies
 - CPU affinity management
 - Automatically deploys the first application (cinestream)
 
@@ -97,9 +97,9 @@ sudo ./deploy.sh deploy-app myapp
 ```
 
 **Port Assignment:**
-- First app (`cinestream`): ports 8001-8020
-- Second app (`myapp`): ports 8021-8040
-- Third app: ports 8041-8060
+- First app (`cinestream`): ports 8001-8012
+- Second app (`myapp`): ports 8013-8024
+- Third app: ports 8025-8036
 - And so on...
 
 ### 4. Domain Configuration
@@ -149,8 +149,7 @@ This command will:
 │   │   ├── agent.py         # Gemini AI agent wrapper
 │   │   └── lock.py          # Concurrency locking
 │   ├── scripts/
-│   │   ├── init_db.py       # Database schema initialization
-│   │   └── daily_refresh.py # Daily background job
+│   │   └── init_db.py       # Database schema initialization
 │   └── templates/
 │       └── index.html       # Frontend template
 ├── docs/
@@ -158,9 +157,11 @@ This command will:
 │   ├── MULTIPLE_APPS.md     # Guide for deploying multiple applications
 │   ├── SITES.md             # Service management guide
 │   ├── ARCHITECTURE.md      # System architecture documentation
+│   ├── SCRAPING_STRATEGY.md # Detailed scraping strategy documentation
 │   ├── DOMAINS.md           # Domain configuration and SSL setup
 │   ├── SECURITY.md          # Security configuration
-│   └── CPU_AFFINITY.md      # CPU affinity configuration
+│   ├── CPU_AFFINITY.md      # CPU affinity configuration
+│   └── SSH_TROUBLESHOOTING.md # SSH connectivity troubleshooting
 └── README.md                # This file
 ```
 
@@ -171,7 +172,9 @@ Comprehensive documentation is available in the `docs/` directory:
 - **[SETUP.md](docs/SETUP.md)**: Complete server initialization guide
 - **[SITES.md](docs/SITES.md)**: Service management and monitoring
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)**: System design and data flow
+- **[SCRAPING_STRATEGY.md](docs/SCRAPING_STRATEGY.md)**: Detailed scraping strategy documentation
 - **[CPU_AFFINITY.md](docs/CPU_AFFINITY.md)**: CPU affinity configuration
+- **[SSH_TROUBLESHOOTING.md](docs/SSH_TROUBLESHOOTING.md)**: SSH connectivity troubleshooting
 
 ## Deployment Commands
 
@@ -211,7 +214,7 @@ Example:
 sudo ./deploy.sh set-domain movies.example.com
 ```
 
-This configures Nginx to route the domain to your application's 20 worker processes (app name is auto-detected or can be specified).
+This configures Nginx to route the domain to your application's 12 worker processes (app name is auto-detected or can be specified).
 
 ### Install SSL Certificate
 
@@ -310,14 +313,34 @@ The system uses a **movie-centric** data model:
 - Each theater contains an array of **showtimes**
 - This structure eliminates duplicate movie images and reduces API token usage
 
+### Step-by-Step Scraping Strategy
+
+The system uses a decomposed approach for efficient scraping:
+
+1. **Find Theaters**: One query to discover all cinema websites in the city
+2. **Find Movies**: One query to discover all movies currently playing
+3. **Scrape Movie-by-Movie**: For each movie, scrape day-by-day across all theaters
+   - One query per movie per day
+   - Continues until 2 weeks ahead or no movies found
+   - Automatically extends if movies have showtimes beyond initial range
+
+**Benefits**:
+- More focused queries (better accuracy)
+- Lower token usage per query
+- Better error handling (can retry individual steps)
+- Automatic date extension tracking
+
 ### Incremental Scraping
 
 The system intelligently determines what date range to scrape:
-- If 2 weeks of data exists: Only scrapes the missing day (day 14)
+- If 2 weeks of data exists: Only scrapes missing days
 - If data is missing: Scrapes from latest date to 2 weeks ahead
 - If no data: Scrapes full 2-week range
+- **Automatic Extension**: If last showtime is 5 days out, next search extends to maintain 2-week coverage
 
 This optimization significantly reduces API token usage while maintaining complete data coverage.
+
+See [SCRAPING_STRATEGY.md](docs/SCRAPING_STRATEGY.md) for detailed documentation.
 
 See `src/scripts/init_db.py` for schema details.
 
@@ -342,7 +365,7 @@ Users can switch languages via the header selector. Language preference is store
 
 ## Performance
 
-- **Concurrency**: 10 processes per application
+- **Concurrency**: 12 processes per application
 - **Throughput**: Handles thousands of concurrent requests
 - **Caching**: In-memory caching per worker process
 - **Database**: Optimized indexes and TTL for automatic cleanup
